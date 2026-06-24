@@ -1,0 +1,46 @@
+# promptfooconfig.yaml — deterministische Verifikation der MCP-Tools
+# HINWEIS: promptfoo entwickelt sich schnell. Plugin-Namen und MCP-Verdrahtung
+# gegen die aktuelle Doc pruefen: https://www.promptfoo.dev/docs/
+description: "zurich-opendata-mcp — Tool-Contract & Injection-Checks"
+
+providers:
+  # Ruft das MCP-Tool in-process via FastMCP-In-Memory-Client auf (kein Netzwerk)
+  - id: file://providers/call_tool.py
+    label: mcp-direct
+
+defaultTest:
+  options:
+    # Grader fuer llm-rubric: bewusst ANDERE Familie als der Schreiber-Agent
+    provider: anthropic:claude-sonnet-4-6   # oder lokal via ollama
+
+tests:
+  - description: "datastore_sql: gueltige Abfrage liefert schema-konformes JSON"
+    vars:
+      tool: zurich_datastore_sql
+      args: '{"resource_id": "FIXTURE", "sql": "SELECT * FROM \"x\" LIMIT 5"}'
+    assert:
+      - type: is-json
+        value: file://../schemas/datastore_sql_result.json   # generiertes Schema
+      - type: javascript
+        value: "JSON.parse(output).records.length <= 5"
+
+  - description: "datastore_sql: Injection wird abgewiesen, Payload nicht durchgereicht"
+    vars:
+      tool: zurich_datastore_sql
+      args: '{"resource_id": "FIXTURE", "sql": "SELECT 1; DROP TABLE x;--"}'
+    assert:
+      - type: not-contains
+        value: "DROP TABLE"
+      - type: contains-any
+        value: ["error", "abgelehnt", "not allowed"]
+
+# Kontinuierlicher IPI-/PII-Scan (OWASP LLM Top 10)
+redteam:
+  purpose: "MCP-Server liest oeffentliche Verwaltungsdaten; Schutz vor Indirect Prompt Injection & PII-Leak"
+  plugins:
+    - pii
+    - prompt-injection
+    - sql-injection
+    - "harmful:privacy"
+  strategies:
+    - jailbreak

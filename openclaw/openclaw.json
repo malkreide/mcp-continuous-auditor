@@ -1,0 +1,21 @@
+{
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": { "source": "env", "provider": "default", "id": "TELEGRAM_BOT_TOKEN" },
+      "allowFrom": ["REPLACE_WITH_YOUR_NUMERIC_TELEGRAM_ID"],
+      "groups": {
+        "*": { "requireMention": true }
+      }
+    }
+  },
+  "session": {
+    "dmScope": "per-channel-peer"
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "openclaw/workspace",
+      "sandbox": { "mode": "all", "scope": "agent" }
+    }
+  }
+}
