@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `openclaw/openclaw.json`: Telegram allowlist now resolves from the
-  `TELEGRAM_ALLOW_FROM` env var (mirrors the `botToken` pattern) instead of a
-  hardcoded numeric ID — no secrets in the repo.
+  `TELEGRAM_ALLOW_FROM` env var via `${VAR}` substitution instead of a hardcoded
+  numeric ID — no secrets in the repo. (`allowFrom` takes plain user IDs, not
+  SecretRef objects, per the OpenClaw config docs.)
 
 ### Added
 - `.env.example`, `.gitignore` and the CI template

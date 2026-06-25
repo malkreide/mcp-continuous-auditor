@@ -3,9 +3,7 @@
     "telegram": {
       "enabled": true,
       "botToken": { "source": "env", "provider": "default", "id": "TELEGRAM_BOT_TOKEN" },
-      "allowFrom": [
-        { "source": "env", "provider": "default", "id": "TELEGRAM_ALLOW_FROM" }
-      ],
+      "allowFrom": ["${TELEGRAM_ALLOW_FROM}"],
       "groups": {
         "*": { "requireMention": true }
       }
