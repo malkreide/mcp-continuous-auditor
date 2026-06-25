@@ -1,0 +1,59 @@
+# CI = the deterministic source of truth (Plan Phase 0 + Phase 2).
+#
+# TEMPLATE for the TARGET MCP-server repo (e.g. zurich-opendata-mcp) — NOT the
+# auditor. pytest/mypy/ruff run against the MCP server code, and promptfoo evals
+# the server's tools in-process. In the auditor repo there is no src/ to test,
+# so this file ships as `.yml.template` and does not execute here.
+#
+# To activate in the target repo: copy to `.github/workflows/ci.yml`, then mark
+# the `verify` and `promptfoo` jobs as REQUIRED status checks in branch
+# protection on `main`. No deploy, no push to main — humans are the merge gate.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ruff + mypy + pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+      - name: Lint
+        run: uv run ruff check
+      - name: Type-check
+        run: uv run mypy .
+      - name: Test
+        run: uv run pytest
+
+  promptfoo:
+    name: promptfoo eval (contract + red-team)
+    runs-on: ubuntu-latest
+    needs: verify
+    env:
+      # Independent grader — different model family than the writer agent.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Sync Python deps (FastMCP in-memory client)
+        run: uv sync --all-extras --dev
+      - name: Run promptfoo
+        # Adjust the config path to wherever you copy promptfoo/ in the target repo.
+        run: npx -y promptfoo@latest eval -c promptfoo/promptfooconfig.yaml
