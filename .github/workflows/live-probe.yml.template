@@ -1,0 +1,92 @@
+# Live-probe drift job (Plan Phase 2c) — the ONE job that touches the live APIs.
+#
+# TEMPLATE for the TARGET MCP-server repo (e.g. zurich-opendata-mcp), NOT the
+# auditor. Ships as `.yml.template` so GitHub does not run it in the auditor repo
+# (no live endpoints, no issue noise). To activate in the target repo: copy to
+# `.github/workflows/live-probe.yml`.
+#
+# Weekly, it queries the REAL Zürich endpoints ONCE each, compares the response
+# STRUCTURE (not values) against the recorded fixtures, and opens (or updates) a
+# single tracking issue on drift. The deterministic offline gate stays in ci.yml
+# (promptfoo + schemas/generate_schemas.py --check) — this job only watches for
+# upstream change so a drift becomes a ticket, never a surprise red PR.
+
+name: live-probe-drift
+
+on:
+  schedule:
+    # Mondays 06:17 UTC. Odd minute to avoid the top-of-hour scheduler stampede.
+    - cron: "17 6 * * 1"
+  workflow_dispatch: {}
+
+# Least privilege: read code, write issues (to file/append the drift ticket).
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: live-probe-drift
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: probe live endpoints vs fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Probe live endpoints (stdlib only, no deps)
+        id: probe
+        env:
+          DRIFT_REPORT: live-probe-report.md
+        run: python scripts/live_probe.py
+
+      - name: Open or update the drift tracking issue
+        if: steps.probe.outputs.drift == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('live-probe-report.md', 'utf8');
+            const marker = '<!-- live-probe-drift -->';
+            const title = '[live-probe] Schema drift vs recorded fixtures';
+            const { owner, repo } = context.repo;
+            const issueBody = `${marker}\n\n${body}\n\n— run ${context.runId} (${context.sha.slice(0,7)})`;
+
+            // Ensure the label exists (createIssue would 422 on an unknown label).
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: 'schema-drift' });
+            } catch (e) {
+              await github.rest.issues.createLabel({
+                owner, repo, name: 'schema-drift', color: 'b60205',
+                description: 'Upstream/live schema drift detected by the weekly live-probe',
+              });
+            }
+
+            const existing = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: 'schema-drift', per_page: 100,
+            });
+            const hit = existing.data.find(i => (i.body || '').includes(marker));
+
+            if (hit) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: hit.number,
+                body: `Drift still present on the latest weekly probe:\n\n${body}`,
+              });
+              core.notice(`Updated existing drift issue #${hit.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner, repo, title, body: issueBody, labels: ['schema-drift'],
+              });
+              core.notice(`Opened drift issue #${created.data.number}`);
+            }
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-probe-report
+          path: live-probe-report.md
+          if-no-files-found: ignore

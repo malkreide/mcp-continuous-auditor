@@ -1,0 +1,19 @@
+{
+  "_comment": "Recorded UPSTREAM response of the Zürich CKAN datastore_search_sql endpoint (https://data.stadt-zuerich.ch/api/3/action/datastore_search_sql). Replayed via the mocked httpx client; the live-probe job (scripts/live_probe.py) diffs the real endpoint's STRUCTURE against this. Re-record with a real one-shot call — never let a test hit the live API.",
+  "help": "https://data.stadt-zuerich.ch/api/3/action/help_show?name=datastore_search_sql",
+  "success": true,
+  "result": {
+    "sql": "SELECT * FROM \"x\" LIMIT 5",
+    "records": [
+      {"_id": 1, "station": "Zürich, Stampfenbachstrasse", "datum": "2026-06-20", "wert": 42.1},
+      {"_id": 2, "station": "Zürich, Schimmelstrasse", "datum": "2026-06-20", "wert": 17.5},
+      {"_id": 3, "station": "Zürich, Rosengartenstrasse", "datum": "2026-06-20", "wert": 63.0}
+    ],
+    "fields": [
+      {"id": "_id", "type": "int"},
+      {"id": "station", "type": "text"},
+      {"id": "datum", "type": "text"},
+      {"id": "wert", "type": "numeric"}
+    ]
+  }
+}

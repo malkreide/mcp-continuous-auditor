@@ -1,0 +1,23 @@
+{
+  "_comment": "Probes for the weekly live-probe drift job (scripts/live_probe.py). Each probe hits ONE real Zürich endpoint and is compared STRUCTURALLY against its recorded fixture under promptfoo/fixtures/. URLs are representative of the Zürich CKAN/WFS surface — confirm them against the target server's actual endpoint config (zurich-opendata-mcp) before relying on them. Keep this list to read-only GET/SELECT queries only.",
+  "probes": [
+    {
+      "name": "datastore_search_sql",
+      "fixture": "datastore_sql",
+      "method": "GET",
+      "url": "https://data.stadt-zuerich.ch/api/3/action/datastore_search_sql?sql=SELECT%20*%20FROM%20%22a2f7c7d4-3f2a-4f9a-9b3d-000000000000%22%20LIMIT%203"
+    },
+    {
+      "name": "geo_wfs_stadtkreise",
+      "fixture": "geo_layer_stadtkreise",
+      "method": "GET",
+      "url": "https://www.ogd.stadt-zuerich.ch/wfs/geoportal/Stadtkreise?service=WFS&version=1.1.0&request=GetFeature&outputFormat=application/json&typename=adm_stadtkreise_a"
+    },
+    {
+      "name": "geo_wfs_quartiere",
+      "fixture": "geo_layer_quartiere",
+      "method": "GET",
+      "url": "https://www.ogd.stadt-zuerich.ch/wfs/geoportal/Statistische_Quartiere?service=WFS&version=1.1.0&request=GetFeature&outputFormat=application/json&typename=adm_statistische_quartiere_a"
+    }
+  ]
+}

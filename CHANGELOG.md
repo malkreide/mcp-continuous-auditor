@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Phase 2 deterministic verification artifacts** (target-repo templates):
+  - `schemas/generate_schemas.py`: derives each tool's output JSON-Schema from
+    its FastMCP return type via the in-memory client; `--check` mode fails CI if
+    a committed schema drifts from the type hints. Plus `schemas/README.md` and
+    a representative `schemas/zurich_datastore_sql.json` /
+    hand-authored `schemas/geojson_featurecollection.json` (RFC 7946).
+  - `promptfoo/providers/call_tool.py`: implemented the FastMCP in-memory
+    provider — calls a tool (or reads a resource) with outbound `httpx` patched
+    via `AsyncMock` against `promptfoo/fixtures/` (no live network) and returns
+    the raw JSON. Server import + fixtures dir are env-configurable.
+  - `promptfoo/fixtures/`: recorded upstream responses backing the contract and
+    injection tests (datastore SQL, two GeoJSON layers, STRB, an IPI payload).
+  - `promptfoo/promptfooconfig.yaml`: `is-json` contract checks for
+    `zurich_datastore_sql` and the two GeoJSON layer surfaces, SQL/STRB injection
+    negative-tests, an indirect-prompt-injection "data stays data" rubric (graded
+    by an independent model family), and the `pii`/`prompt-injection`/
+    `sql-injection` red-team block.
+  - `.github/workflows/ci.yml.template`: the `promptfoo` job is documented as the
+    REQUIRED check and now runs the schema-drift gate
+    (`generate_schemas.py --check`) before the eval.
+  - `.github/workflows/live-probe.yml.template` + `scripts/live_probe.py`
+    (+ `scripts/live_probe.manifest.json`): weekly cron that queries the real
+    Zürich endpoints once, compares response *structure* (not values) against the
+    recorded fixtures, and opens/updates a single `schema-drift` tracking issue on
+    divergence. Stdlib-only, never fails the cron on a flaky endpoint.
+
 ### Changed
 - `docs/audits/2026-06-27.md`: replaced the *blocked* placeholder with the
   **real, completed** read-only audit of `zurich-opendata-mcp` v0.3.3 (run in a
