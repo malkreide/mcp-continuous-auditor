@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `openclaw/workspace/skills/python-auditor/SKILL.md`: workspace copy of the
+  Phase-1 auditor skill (OpenClaw loads skills from the configured `workspace`).
+  `requires.bins: [uv, ruff, mypy, pytest]`; runs ruff+mypy+pytest on every
+  analysis and quotes the exact `file:line` from stderr on any non-zero exit.
+  Report-only in Phase 1.
+- `docs/audits/2026-06-27.md`: first read-only audit of `zurich-opendata-mcp`.
+  Records the toolchain run as **blocked** (target source not present in the
+  control-plane env / out of GitHub scope) — no pass/fail claimed without an
+  observed exit code — and lays out the tool/resource priority matrix (P0
+  SQL-injection for `zurich_datastore_sql`, P1 schema-validation for GeoJSON
+  tools).
 - `docs/deployment/raspberry-pi.md`: deployment guide for running the OpenClaw
   orchestrator on a dedicated, network-isolated **Raspberry Pi 5 (8 GB)** — now
   the recommended deployment for security reasons (hardware/network isolation of
