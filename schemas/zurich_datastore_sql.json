@@ -1,0 +1,41 @@
+{
+  "$comment": "GENERATED from the FastMCP return type of zurich_datastore_sql (datastore.py:160) by schemas/generate_schemas.py. Do not hand-edit — regenerate. A diff here is schema drift: an upstream CKAN shape change or a return-type edit. Review it; do not silently adapt.",
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "additionalProperties": true,
+  "properties": {
+    "fields": {
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "records": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "sql": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "fields",
+    "records"
+  ],
+  "title": "zurich_datastore_sql output",
+  "type": "object"
+}

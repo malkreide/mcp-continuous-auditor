@@ -1,0 +1,15 @@
+{
+  "_comment": "Recorded UPSTREAM response backing search_stadtratsbeschluesse (strb.py:146). The single-quote in the query is doubled by _strb_where_clause/_sql_escape so the payload stays inside the SQL literal; this fixture is the harmless result that comes back. Contract: no raw `DROP TABLE` is forwarded or echoed.",
+  "success": true,
+  "result": {
+    "records": [
+      {"strb_nr": "0001/2026", "titel": "Genehmigung Quartierplan", "departement": "Tiefbau- und Entsorgungsdepartement", "datum": "2026-01-14"}
+    ],
+    "fields": [
+      {"id": "strb_nr", "type": "text"},
+      {"id": "titel", "type": "text"},
+      {"id": "departement", "type": "text"},
+      {"id": "datum", "type": "text"}
+    ]
+  }
+}

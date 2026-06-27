@@ -39,12 +39,18 @@ jobs:
         run: uv run pytest
 
   promptfoo:
+    # REQUIRED status check. Mark this job ("promptfoo eval (contract + red-team)")
+    # as required in branch protection on `main` so a PR cannot merge while the
+    # schema-drift gate or any contract/injection assertion is red (Plan Phase 2:
+    # "a PR with a deliberately broken schema is stopped red by CI").
     name: promptfoo eval (contract + red-team)
     runs-on: ubuntu-latest
     needs: verify
     env:
       # Independent grader — different model family than the writer agent.
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Import path of the FastMCP server instance in the target repo.
+      MCP_SERVER_IMPORT: zurich_opendata_mcp.server:mcp
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,6 +60,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Sync Python deps (FastMCP in-memory client)
         run: uv sync --all-extras --dev
-      - name: Run promptfoo
+      - name: Schema-drift gate — regenerate from type hints, fail on any diff
+        # Deterministic: if a tool's return type (or upstream shape) changed and
+        # the committed schemas/ were not regenerated, this exits non-zero.
+        run: uv run python schemas/generate_schemas.py --check
+      - name: Run promptfoo (contract asserts + injection + red-team)
         # Adjust the config path to wherever you copy promptfoo/ in the target repo.
         run: npx -y promptfoo@latest eval -c promptfoo/promptfooconfig.yaml

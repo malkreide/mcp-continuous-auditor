@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::2056"}},
+  "features": [
+    {
+      "type": "Feature",
+      "id": "stzh.adm_statzonen_beleben_a.11",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[2683100.0, 1247100.0], [2683300.0, 1247100.0], [2683300.0, 1247300.0], [2683100.0, 1247300.0], [2683100.0, 1247100.0]]]
+      },
+      "properties": {"objid": "11", "qnr": 11, "qname": "Rathaus"}
+    },
+    {
+      "type": "Feature",
+      "id": "stzh.adm_statzonen_beleben_a.13",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[2682100.0, 1246100.0], [2682300.0, 1246100.0], [2682300.0, 1246300.0], [2682100.0, 1246300.0], [2682100.0, 1246100.0]]]
+      },
+      "properties": {"objid": "13", "qnr": 13, "qname": "Lindenhof"}
+    }
+  ]
+}

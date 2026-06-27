@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::2056"}},
+  "features": [
+    {
+      "type": "Feature",
+      "id": "stzh.adm_stadtkreise_a.1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[2683000.0, 1247000.0], [2683500.0, 1247000.0], [2683500.0, 1247500.0], [2683000.0, 1247500.0], [2683000.0, 1247000.0]]]
+      },
+      "properties": {"objid": "1", "knr": 1, "kname": "Kreis 1"}
+    },
+    {
+      "type": "Feature",
+      "id": "stzh.adm_stadtkreise_a.2",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[2682000.0, 1246000.0], [2682500.0, 1246000.0], [2682500.0, 1246500.0], [2682000.0, 1246500.0], [2682000.0, 1246000.0]]]
+      },
+      "properties": {"objid": "2", "knr": 2, "kname": "Kreis 2"}
+    }
+  ]
+}

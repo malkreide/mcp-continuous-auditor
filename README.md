@@ -85,7 +85,9 @@ or a cheap VPS. Trade-offs are documented in the same guide.
 ```
 openclaw/         OpenClaw gateway config + policy-as-code (SOUL/AGENTS/TOOLS)
 skills/           python-auditor, fastmcp-testing, promptfoo-eval
-promptfoo/        deterministic asserts, schema-drift, red-team
+schemas/          generated tool-output JSON-Schemas = the drift detector
+promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures
+scripts/          audit harness + weekly live-probe drift detector
 .github/          CI = the source of truth (template for the target repo)
 docs/plans/       the v2 build plan
 docs/deployment/  Raspberry Pi deployment guide (recommended host) + alternatives
