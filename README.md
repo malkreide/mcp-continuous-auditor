@@ -84,12 +84,14 @@ or a cheap VPS. Trade-offs are documented in the same guide.
 
 ```
 openclaw/         OpenClaw gateway config + policy-as-code (SOUL/AGENTS/TOOLS)
+openclaw/cron/    nightly-audit cron job spec + installer (daily 03:00 → Telegram)
 skills/           python-auditor, fastmcp-testing, promptfoo-eval
 schemas/          generated tool-output JSON-Schemas = the drift detector
 promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures
-scripts/          audit harness + weekly live-probe drift detector
+scripts/          audit harness, weekly live-probe + nightly-audit cron core
 .github/          CI = the source of truth (template for the target repo)
 docs/plans/       the v2 build plan
+docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)
 docs/deployment/  Raspberry Pi deployment guide (recommended host) + alternatives
 ```
 

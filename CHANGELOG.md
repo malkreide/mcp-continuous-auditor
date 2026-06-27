@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Phase 4 nightly-audit OpenClaw cron** (daily 03:00 Europe/Zurich):
+  - `scripts/nightly-audit.sh`: the deterministic core. Pulls the target
+    read-only (git over HTTPS, no push), runs ruff + mypy + pytest, the
+    schema-drift gate (`generate_schemas.py --check`) and the promptfoo eval
+    (tool-output contract + OWASP red-team), then writes a concise report +
+    `summary.json` under the gitignored `.audit/`. Exit code is the contract:
+    `0` green / `2` findings / `1` hard-fail.
+  - `scripts/nightly_audit_report.py`: classifies the gate exit codes + the
+    promptfoo JSON into schema-drift vs red-team vs toolchain failure, and —
+    crucially — separates a *finding* (a red eval) from an **unresolvable
+    model/provider error**, which HARD-fails (exit 1) instead of being reported
+    as a pass ("hart fehlschlagen, nicht still ausweichen").
+  - `openclaw/cron/nightly-audit.json`: the version-controlled job spec
+    (isolated session, explicit `model` + `fallbacks: []` so OpenClaw fails the
+    run on an unresolvable model, `--announce` to Telegram) and the agent prompt
+    that opens/updates `schema-drift`/`redteam` issues, gates any draft PR behind
+    an explicit Telegram OK (branch `fix/<slug>`, never `main`), and pushes the
+    report.
+  - `openclaw/cron/install.sh`: idempotent registration via `openclaw cron
+    create`. Requires an explicit `OPENCLAW_AUDIT_MODEL` (no default) and passes
+    `--fallbacks ""`, so the job is never registered against a silent model.
+  - `docs/cron/nightly-audit.md`: flow, the issue-auto/PR-gated-on-OK split, the
+    three-layer model hard-fail, install + management.
 - **Phase 2 deterministic verification artifacts** (target-repo templates):
   - `schemas/generate_schemas.py`: derives each tool's output JSON-Schema from
     its FastMCP return type via the in-memory client; `--check` mode fails CI if
