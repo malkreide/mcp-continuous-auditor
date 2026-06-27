@@ -7,17 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- `openclaw/openclaw.json`: Telegram allowlist now resolves from the
-  `TELEGRAM_ALLOW_FROM` env var via `${VAR}` substitution instead of a hardcoded
-  numeric ID — no secrets in the repo. (`allowFrom` takes plain user IDs, not
-  SecretRef objects, per the OpenClaw config docs.)
-
 ### Added
+- `docs/deployment/raspberry-pi.md`: deployment guide for running the OpenClaw
+  orchestrator on a dedicated, network-isolated **Raspberry Pi 5 (8 GB)** — now
+  the recommended deployment for security reasons (hardware/network isolation of
+  the credential-holding process from the work PC). Keeps both alternatives
+  (local Linux VM, cheap VPS) with their trade-offs.
+
 - `.env.example`, `.gitignore` and the CI template
   (`.github/workflows/ci.yml.template`) that 0.1.0 referenced but did not ship.
   The CI template targets the MCP-server repo (ruff + mypy + pytest + promptfoo)
   and is inert in the auditor repo by design.
+
+### Changed
+- Architecture (`docs/plans/2026-06-24-continuous-auditor-v2.md`): added a **Host
+  layer** to the target architecture — dedicated Pi 5 as the recommended isolated
+  host, with hardware isolation as the outermost of three security layers
+  (host → Docker sandbox → forkd). Both READMEs (EN/DE) gained a **Deployment**
+  section linking the guide.
+- `openclaw/openclaw.json`: Telegram allowlist now resolves from the
+  `TELEGRAM_ALLOW_FROM` env var via `${VAR}` substitution instead of a hardcoded
+  numeric ID — no secrets in the repo. (`allowFrom` takes plain user IDs, not
+  SecretRef objects, per the OpenClaw config docs.)
 
 ## [0.1.0] - 2026-06-24
 

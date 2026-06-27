@@ -64,14 +64,32 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 | `GITHUB_TOKEN` | Fine-grained PAT, Ziel-Repo, nur PR |
 | `TARGET_REPO` | z.B. `malkreide/zurich-opendata-mcp` |
 
+## Deployment
+
+Die LLM-Inferenz läuft in der Cloud (Anthropic API) — lokal läuft nur der
+OpenClaw-Orchestrator. Da dieser Prozess das GitHub-PAT + den Anthropic-Key hält
+und Shell-Tools startet, ist die **empfohlene Betriebsart** ein dediziertes,
+netz-isoliertes Gerät statt deines Arbeits-PCs.
+
+**Empfohlen: ein dedizierter Raspberry Pi 5 (8 GB).** Die Last ist leicht
+(Orchestrierung + API-Calls, kein lokales Modell), und ein separates Gerät fügt
+eine echte Hardware-/Netzwerk-Isolationsschicht über die bestehende Docker-Sandbox
+und den fein-granularen PAT hinzu. Vollständige Anleitung (OS-Setup, ARM64-Checks,
+Egress-Allowlist, systemd-Härtung):
+**[docs/deployment/raspberry-pi.md](docs/deployment/raspberry-pi.md)**.
+
+Gleichwertige **Alternativen** bleiben unterstützt: eine lokale Linux-VM in
+eigenem Subnetz oder ein günstiger VPS. Die Trade-offs stehen in derselben Anleitung.
+
 ## Projektstruktur
 
 ```
-openclaw/    OpenClaw-Gateway-Config + Policy-as-Code (SOUL/AGENTS/TOOLS)
-skills/      python-auditor, fastmcp-testing, promptfoo-eval
-promptfoo/   deterministische Asserts, Schema-Drift, Red-Team
-.github/     CI = die Wahrheitsinstanz (Template fuer das Ziel-Repo)
-docs/plans/  der v2-Bauplan
+openclaw/         OpenClaw-Gateway-Config + Policy-as-Code (SOUL/AGENTS/TOOLS)
+skills/           python-auditor, fastmcp-testing, promptfoo-eval
+promptfoo/        deterministische Asserts, Schema-Drift, Red-Team
+.github/          CI = die Wahrheitsinstanz (Template fuer das Ziel-Repo)
+docs/plans/       der v2-Bauplan
+docs/deployment/  Raspberry-Pi-Anleitung (empfohlener Host) + Alternativen
 ```
 
 ## Roadmap
