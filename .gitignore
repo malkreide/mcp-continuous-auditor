@@ -20,6 +20,11 @@ promptfoo-output.*
 # Audit work dir — cloned target source + run logs (scripts/audit-target.sh)
 .audit/
 
+# Phase-5 rollout artifacts — base images, per-run overlays, seeds, rendered
+# cloud-init, and the listener's generated per-connection handler.
+deploy/.images/
+deploy/microvm/channel/_receive-one.sh
+
 # OS / editor
 .DS_Store
 *.swp

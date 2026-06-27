@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Phase 5 rollout kit** (`deploy/`) — runnable scripts to actually deploy the
+  hardening layers on a local Linux VM (Broker = host VM with OpenClaw +
+  credentials + TensorZero; Worker = throwaway microVM per run, no credentials,
+  vsock-only result channel):
+  - `deploy/00-preflight.sh`: host readiness (nested KVM, qemu, socat,
+    cloud-image-utils, envsubst, docker, vhost-vsock) — fails loud with a
+    remediation line per blocker, changes nothing.
+  - `deploy/tensorzero/up.sh` + `episode-tokens.sh`: bring up the gateway +
+    ClickHouse, healthcheck + smoke an inference, and sum one run's tokens from
+    ClickHouse so the per-run cost-cap uses the REAL writer+grader total.
+  - `deploy/microvm/{build-worker-image.sh,run-worker.sh,worker-cloud-init.yaml.tmpl}`
+    + `channel/broker-listener.sh`: build a Debian-cloud-image Worker + cloud-init
+    seed, boot ONE throwaway microVM per run (fresh qcow2 overlay, discarded
+    after), run `nightly-audit.sh` read-only inside it, and ship only
+    summary.json + report.md back over vsock to the host dropbox. Received data
+    is treated as untrusted (fixed filename extraction, no exec).
+  - `scripts/nightly-audit.sh`: when `TENSORZERO_GATEWAY` is set, tags each run
+    with an episode id and feeds the gateway's real per-run token total to
+    `budget_guard` (falls back to the promptfoo count otherwise).
+  - `docs/deployment/phase5-rollout.md`: the end-to-end runbook (preflight →
+    TensorZero → Worker microVM → egress allowlist → cron cutover) with a
+    "fertig wenn" gate per step and a one-line rollback. `.env.example` gained
+    `TENSORZERO_GATEWAY` / `CLICKHOUSE_HTTP`; `.gitignore` excludes the generated
+    images/overlays/seed.
 - **Phase 5 hardening & scaling** (optional — budget guardrails implemented;
   forkd/TensorZero prepared as ops guides + config templates):
   - `scripts/budget_guard.py` + `tests/test_budget_guard.py`: the budget
