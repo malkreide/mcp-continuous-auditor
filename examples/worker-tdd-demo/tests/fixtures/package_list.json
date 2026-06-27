@@ -1,0 +1,11 @@
+{
+  "_comment": "Recorded CKAN package_list response (truncated) — fastmcp-testing skill: mock httpx, never hit the live API.",
+  "success": true,
+  "result": [
+    "bevoelkerung_jahr",
+    "verkehrszaehlung_moto",
+    "luftqualitaet_stundenwerte",
+    "wahlresultate_gemeinderat",
+    "baumkataster"
+  ]
+}
