@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Phase 5 hardening & scaling** (optional — budget guardrails implemented;
+  forkd/TensorZero prepared as ops guides + config templates):
+  - `scripts/budget_guard.py` + `tests/test_budget_guard.py`: the budget
+    leitplanken as runnable, stdlib-only code (15 unit tests, `python3 -m
+    unittest tests.test_budget_guard`). A **circuit breaker** (opens after N
+    consecutive hard-fails or a budget breach; half-open trial after a cooldown;
+    a green/findings run closes it), a **token ceiling** (per-run + rolling
+    window, read from the promptfoo `--output` JSON), and validation/surfacing of
+    the **max-iterations** knob. State lives atomically in the gitignored
+    `.audit/budget-state.json`.
+  - `scripts/nightly-audit.sh`: wired the guard in as step `0` (preflight — an
+    open breaker writes a hard-fail-shaped report+summary and exits, so a skipped
+    run is routed like any other "did not pass", never announced green) and step
+    `6` (record — feeds the outcome + measured tokens back for the next run,
+    without rewriting today's verdict). Opt out with `BUDGET_GUARD=0`.
+  - `docs/budget/guardrails.md`: the three guardrails, the breaker state machine,
+    the exit-code contract, and how max-iterations maps to OpenClaw/TensorZero.
+  - `docs/deployment/forkd-isolation.md`: the microVM/KVM ops guide — the
+    untrusted-reader vs. credential-holder two-VM split, both the x86
+    (forkd/Cloud Hypervisor/Firecracker) and ARM64 (QEMU `microvm` on KVM) paths,
+    the vsock channel invariant (results cross, never raw code), and a migration
+    checklist. Marked optional / "erst wenn stabil".
+  - `docs/observability/tensorzero.md` + `tensorzero/tensorzero.toml` +
+    `tensorzero/docker-compose.yml`: the LLM gateway between OpenClaw and the
+    provider — per-run cost-caps (episode-tagged token totals fed to the guard),
+    A/B variants (writer vs. cheaper candidate, judged against the deterministic
+    gate, never the model), and a ClickHouse audit-trail. Provider key lives only
+    in the gateway env; bound to localhost.
+  - `.env.example`: documented the optional `BUDGET_*`, `CLICKHOUSE_*` and
+    `ANTHROPIC_BASE_URL` knobs (all with safe defaults / commented out).
 - **Phase 4 nightly-audit OpenClaw cron** (daily 03:00 Europe/Zurich):
   - `scripts/nightly-audit.sh`: the deterministic core. Pulls the target
     read-only (git over HTTPS, no push), runs ruff + mypy + pytest, the

@@ -88,11 +88,15 @@ openclaw/         OpenClaw-Gateway-Config + Policy-as-Code (SOUL/AGENTS/TOOLS)
 openclaw/cron/    nightly-audit Cron-Job-Spec + Installer (taeglich 03:00 → Telegram)
 skills/           python-auditor, fastmcp-testing, promptfoo-eval
 promptfoo/        deterministische Asserts, Schema-Drift, Red-Team
-scripts/          Audit-Harness, woechentlicher Live-Probe + nightly-audit-Cron-Kern
+scripts/          Audit-Harness, Live-Probe + nightly-audit-Cron-Kern + Budget-Guard
+tensorzero/       Phase 5: LLM-Gateway-Config + Stack (Cost-Caps, A/B, Audit-Trail)
+tests/            stdlib-Unit-Tests (Budget-Guard)
 .github/          CI = die Wahrheitsinstanz (Template fuer das Ziel-Repo)
 docs/plans/       der v2-Bauplan
 docs/cron/        der taegliche nightly-audit-Cron (Ablauf, Modell-Hard-Fail, Install)
-docs/deployment/  Raspberry-Pi-Anleitung (empfohlener Host) + Alternativen
+docs/deployment/  Raspberry-Pi (empfohlener Host) + Phase-5 forkd/microVM-Isolation
+docs/budget/      Phase-5 Budget-Leitplanken (Token-Ceiling, Circuit Breaker)
+docs/observability/ Phase-5 TensorZero-Gateway (Cost-Caps, A/B, Audit-Trail)
 ```
 
 ## Roadmap

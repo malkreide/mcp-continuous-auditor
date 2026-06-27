@@ -88,11 +88,15 @@ openclaw/cron/    nightly-audit cron job spec + installer (daily 03:00 → Teleg
 skills/           python-auditor, fastmcp-testing, promptfoo-eval
 schemas/          generated tool-output JSON-Schemas = the drift detector
 promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures
-scripts/          audit harness, weekly live-probe + nightly-audit cron core
+scripts/          audit harness, weekly live-probe + nightly-audit core + budget guard
+tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
+tests/            stdlib unit tests (budget guard)
 .github/          CI = the source of truth (template for the target repo)
 docs/plans/       the v2 build plan
 docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)
-docs/deployment/  Raspberry Pi deployment guide (recommended host) + alternatives
+docs/deployment/  Raspberry Pi (recommended host) + Phase 5 forkd/microVM isolation
+docs/budget/      Phase 5 budget guardrails (token ceiling, circuit breaker)
+docs/observability/ Phase 5 TensorZero gateway (cost-caps, A/B, audit-trail)
 ```
 
 ## Roadmap

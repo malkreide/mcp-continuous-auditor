@@ -1,0 +1,44 @@
+# TensorZero gateway + ClickHouse (Phase 5) — TEMPLATE.
+#
+# Brings up the LLM gateway that sits between OpenClaw and the Anthropic provider,
+# plus the ClickHouse store that holds the audit-trail (every model call, its
+# tokens and cost). Pin the image tags to a known-good release; `:latest` drifts.
+#
+# Secrets come from the environment / an .env file — NEVER commit real keys
+# (mirror the repo's .env.example discipline). Bind the gateway to localhost so it
+# is reachable only from the OpenClaw process on the same isolated host.
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine   # pin to a tested tag
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-tensorzero}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ports:
+      - "127.0.0.1:8123:8123"      # localhost only
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    image: tensorzero/gateway:latest   # pin to a tested release tag
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      # The provider key lives ONLY in the gateway's env, not in OpenClaw and not
+      # in tensorzero.toml. This is the point of the gateway: one place holds it.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      TENSORZERO_CLICKHOUSE_URL: "http://${CLICKHOUSE_USER:-tensorzero}:${CLICKHOUSE_PASSWORD}@clickhouse:8123/tensorzero"
+    volumes:
+      - ./tensorzero.toml:/app/config/tensorzero.toml:ro
+    command: ["--config-file", "/app/config/tensorzero.toml"]
+    ports:
+      - "127.0.0.1:3000:3000"      # OpenClaw points its provider base URL here
+
+volumes:
+  clickhouse-data:

@@ -1,0 +1,77 @@
+# TensorZero gateway config (Phase 5) — between OpenClaw and the provider.
+#
+# This is a reviewable TEMPLATE. Keys/sections move between TensorZero releases —
+# validate against the version you pin in docker-compose.yml before relying on it.
+# See docs/observability/tensorzero.md for the why and the wiring.
+#
+# Goals (Plan Phase 5): cost-caps per cron run, A/B between variants, and a full
+# audit-trail of every model call (stored in ClickHouse, queried out-of-band).
+# Secrets (the Anthropic key) come from the gateway's ENVIRONMENT, never inline.
+
+# --- Models -------------------------------------------------------------------
+# Each logical model routes to one or more concrete providers. The writer agent
+# and the independent grader MUST stay different families (Plan: "Schreiber !=
+# Prüfer") — keep them as distinct models so the A/B and the audit-trail show it.
+
+[models.auditor-writer]
+routing = ["anthropic"]
+
+[models.auditor-writer.providers.anthropic]
+type = "anthropic"
+model_name = "claude-opus-4-8"          # writer/orchestrator family
+
+[models.auditor-grader]
+routing = ["anthropic"]
+
+[models.auditor-grader.providers.anthropic]
+type = "anthropic"
+model_name = "claude-haiku-4-5-20251001" # independent grader (different tier/family)
+
+# A cheaper candidate used only on the A/B arm below — lets us measure whether a
+# smaller model holds the audit quality before switching the default.
+[models.auditor-candidate]
+routing = ["anthropic"]
+
+[models.auditor-candidate.providers.anthropic]
+type = "anthropic"
+model_name = "claude-sonnet-4-6"
+
+# --- Function: the nightly audit turn ----------------------------------------
+# OpenClaw calls THIS function instead of a raw provider. Two variants split the
+# traffic (A/B); both are recorded with their cost so the audit-trail can compare.
+
+[functions.nightly_audit]
+type = "chat"
+
+[functions.nightly_audit.variants.baseline]
+type = "chat_completion"
+model = "auditor-writer"
+weight = 0.5
+# Hard per-call guardrails enforced provider-side, BEFORE tokens are spent:
+max_tokens = 8000          # ceiling on a single completion (cost-cap building block)
+# json_mode / temperature etc. as needed by your OpenClaw payload.
+
+[functions.nightly_audit.variants.candidate]
+type = "chat_completion"
+model = "auditor-candidate"
+weight = 0.5
+max_tokens = 8000
+
+# --- Function: the independent grader (promptfoo's graded asserts) ------------
+[functions.audit_grader]
+type = "chat"
+
+[functions.audit_grader.variants.default]
+type = "chat_completion"
+model = "auditor-grader"
+weight = 1.0
+max_tokens = 2000
+
+# --- Notes --------------------------------------------------------------------
+# * Retries / fallbacks / timeouts are configured per provider/variant (consult
+#   your version's schema) — this is where a "circuit" lives provider-side, which
+#   complements scripts/budget_guard.py's run-level breaker.
+# * Per-run COST cap: TensorZero records tokens+cost per inference into ClickHouse
+#   tagged with an episode id. nightly-audit.sh tags each run with one episode id
+#   (TENSORZERO_EPISODE_ID); budget_guard.py reads that run's total and enforces
+#   the hard per-run ceiling. See docs/observability/tensorzero.md.
