@@ -81,6 +81,15 @@ command -v uv  >/dev/null || hard_fail "uv not found (required for ruff/mypy/pyt
 # announced as a pass). Opt out with BUDGET_GUARD=0.
 BUDGET_GUARD="${BUDGET_GUARD:-1}"
 export BUDGET_STATE="${BUDGET_STATE:-${AUDIT_DIR}/budget-state.json}"
+
+# When a TensorZero gateway is configured (Phase-5 rollout), tag every model call
+# of THIS run with one episode id so its true token total can be summed for the
+# per-run cost-cap. Harmless when the gateway is absent.
+if [ -n "${TENSORZERO_GATEWAY:-}" ] && [ -z "${TENSORZERO_EPISODE_ID:-}" ]; then
+  export TENSORZERO_EPISODE_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null \
+    || python3 -c 'import uuid; print(uuid.uuid4())')"
+  echo "==> TensorZero episode: ${TENSORZERO_EPISODE_ID}"
+fi
 if [ "${BUDGET_GUARD}" != "0" ] && [ "${BUDGET_GUARD}" != "off" ]; then
   if python3 "${HERE}/budget_guard.py" preflight \
        --target "${TARGET_REPO}" \
@@ -173,9 +182,18 @@ outcome_rc=$?
 # code (no --strict), so a budget breach trips the breaker for *tomorrow*, not a
 # rewrite of today's green/findings verdict.
 if [ "${BUDGET_GUARD}" != "0" ] && [ "${BUDGET_GUARD}" != "off" ]; then
+  # Prefer TensorZero's full per-run token total (writer + grader) when the
+  # gateway is in use; otherwise fall back to the promptfoo-only count.
+  budget_tokens=()
+  if [ -n "${TENSORZERO_GATEWAY:-}" ] && [ -n "${TENSORZERO_EPISODE_ID:-}" ]; then
+    ep_tokens="$("${REPO_ROOT}/deploy/tensorzero/episode-tokens.sh" "${TENSORZERO_EPISODE_ID}" 2>/dev/null)" \
+      && [ -n "${ep_tokens}" ] && budget_tokens=(--tokens "${ep_tokens}")
+  fi
+  if [ "${#budget_tokens[@]}" -eq 0 ]; then
+    budget_tokens=(--promptfoo-json "${pf_json}")
+  fi
   python3 "${HERE}/budget_guard.py" record \
-    --exit-code "${outcome_rc}" \
-    --promptfoo-json "${pf_json}" || true
+    --exit-code "${outcome_rc}" "${budget_tokens[@]}" || true
 fi
 
 echo

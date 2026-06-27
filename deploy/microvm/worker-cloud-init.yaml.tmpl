@@ -1,0 +1,73 @@
+#cloud-config
+# Worker microVM bootstrap (Phase-5 rollout) — TEMPLATE.
+#
+# This is the untrusted-reader VM: it clones the auditor + reads the target
+# READ-ONLY, runs the deterministic gates, and ships ONLY the result
+# (summary.json + report.md) back to the Broker over vsock. It holds NO
+# credentials — no GitHub PAT, no Anthropic key, no Telegram token.
+#
+# Placeholders (filled by build-worker-image.sh via envsubst):
+#   ${AUDITOR_REPO}  e.g. https://github.com/malkreide/mcp-continuous-auditor.git
+#   ${AUDITOR_REF}   e.g. main
+#   ${TARGET_REPO}   e.g. malkreide/zurich-opendata-mcp
+#   ${BROKER_CID}    host CID for the vsock channel (the host is always CID 2)
+#   ${BROKER_PORT}   vsock port the Broker listener is bound to (e.g. 9000)
+
+package_update: true
+packages: [git, curl, ca-certificates, python3, socat, build-essential]
+
+write_files:
+  # The in-guest audit runner. Invoked once at first boot (runcmd below).
+  - path: /opt/worker-audit.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -uo pipefail
+      export HOME=/root
+      echo "[worker] installing toolchain (uv, node)"
+      curl -fsSL https://astral.sh/uv/install.sh | sh || true
+      export PATH="/root/.local/bin:/root/.cargo/bin:${PATH}"
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs || true
+
+      echo "[worker] cloning auditor"
+      rm -rf /opt/auditor
+      git clone --depth 1 --branch "${AUDITOR_REF}" "${AUDITOR_REPO}" /opt/auditor \
+        || { echo "[worker] clone failed"; }
+
+      echo "[worker] running nightly-audit (read-only) against ${TARGET_REPO}"
+      # The Worker disables the budget guard's state writes here (BUDGET_GUARD=0):
+      # the breaker lives on the Broker side where the run history persists across
+      # throwaway VMs. The deterministic gates + report still run in full.
+      ( cd /opt/auditor && TARGET_REPO="${TARGET_REPO}" BUDGET_GUARD=0 \
+          bash scripts/nightly-audit.sh ) ; rc=$?
+      echo "[worker] nightly-audit exit=${rc}"
+
+      echo "[worker] shipping result to Broker over vsock (${BROKER_CID}:${BROKER_PORT})"
+      bash /opt/worker-send.sh "${BROKER_CID}" "${BROKER_PORT}" "${rc}" \
+        || echo "[worker] vsock send failed"
+
+      echo "[worker] done — powering off (throwaway VM)"
+      poweroff
+
+  # Streams the result bundle to the Broker. Sends NOTHING but the deterministic
+  # outputs — never the cloned target source or raw API payloads.
+  - path: /opt/worker-send.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -uo pipefail
+      cid="$1"; port="$2"; rc="$3"
+      ad=/opt/auditor/.audit
+      # Frame: a one-line header with the exit code, then a tar of the two result
+      # files. The Broker validates the header and treats the bundle as untrusted.
+      {
+        printf 'AUDIT-RESULT rc=%s\n' "${rc}"
+        tar -C "${ad}" -cf - nightly-summary.json nightly-report.md 2>/dev/null
+      } | socat - "VSOCK-CONNECT:${cid}:${port}"
+
+runcmd:
+  - [ bash, /opt/worker-audit.sh ]
+
+# Throwaway hardening: no password login, no SSH in (the channel is vsock-only).
+ssh_pwauth: false
+disable_root: false
