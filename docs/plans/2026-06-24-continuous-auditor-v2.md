@@ -160,8 +160,18 @@ Telegram pusht. Bei nicht aufloesbarem Modell: hart fehlschlagen, nicht still au
 
 - **forkd** statt Docker: microVM/KVM-Isolation, getrennte VMs fuer Untrusted-Reader vs.
   Credential-Halter (v0.4/0.5, Linux-only — erst wenn stabil).
+  → Ops-Guide (x86- + ARM-Pfad, Zwei-VM-Split, Migrations-Checkliste):
+  [docs/deployment/forkd-isolation.md](../deployment/forkd-isolation.md).
 - **TensorZero** zwischen OpenClaw und Provider: Cost-Caps pro Cron-Lauf, A/B, Audit-Trail.
+  → Gateway-Config + Stack + Wiring: [docs/observability/tensorzero.md](../observability/tensorzero.md),
+  `tensorzero/tensorzero.toml`, `tensorzero/docker-compose.yml`.
 - Budget-Leitplanken: Max-Iterationen, Token-Ceiling, Circuit Breaker.
+  → **Implementiert**: `scripts/budget_guard.py` (in `nightly-audit.sh` eingehängt),
+  Tests `tests/test_budget_guard.py`, Doku [docs/budget/guardrails.md](../budget/guardrails.md).
+
+**Status:** Budget-Leitplanken sind lauffähig + getestet. forkd und TensorZero
+sind als Ops-Guides + Config-Templates vorbereitet (Infrastruktur auf dem Host) —
+einzuschalten „erst wenn stabil".
 
 ---
 

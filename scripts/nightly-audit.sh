@@ -37,6 +37,9 @@
 #                       (default: zurich_opendata_mcp.server:mcp)
 #   PROMPTFOO_CONFIG    path to promptfooconfig.yaml inside the target checkout
 #                       (default: promptfoo/promptfooconfig.yaml)
+#   BUDGET_GUARD        Phase-5 budget guardrails (default: on; set 0/off to skip)
+#                       — circuit breaker + token ceiling, see budget_guard.py /
+#                       docs/budget/guardrails.md. Tunable via BUDGET_* env vars.
 #
 set -uo pipefail   # NOT -e: we must observe every gate's exit code, not abort on the first red one.
 
@@ -70,6 +73,28 @@ hard_fail() {
 
 command -v git >/dev/null || hard_fail "git not found"
 command -v uv  >/dev/null || hard_fail "uv not found (required for ruff/mypy/pytest + schema gate)"
+
+# --- 0) budget guard preflight (Phase 5) --------------------------------------
+# The circuit breaker stops us from re-spending tokens on a wedged environment.
+# If it is OPEN, budget_guard writes a hard-fail-shaped report+summary here and
+# exits 75; we surface that to the cron agent as exit 1 (a skipped audit is never
+# announced as a pass). Opt out with BUDGET_GUARD=0.
+BUDGET_GUARD="${BUDGET_GUARD:-1}"
+export BUDGET_STATE="${BUDGET_STATE:-${AUDIT_DIR}/budget-state.json}"
+if [ "${BUDGET_GUARD}" != "0" ] && [ "${BUDGET_GUARD}" != "off" ]; then
+  if python3 "${HERE}/budget_guard.py" preflight \
+       --target "${TARGET_REPO}" \
+       --out-report "${report_path}" --out-summary "${summary_path}"; then
+    : # breaker closed / half-open trial — proceed.
+  else
+    pf_rc=$?
+    if [ "${pf_rc}" -eq 75 ]; then
+      echo "==> budget guard: circuit OPEN — audit skipped (see ${report_path})"
+      exit 1   # map the protective skip onto the cron agent's hard-fail contract.
+    fi
+    hard_fail "budget guard preflight errored (exit ${pf_rc})"
+  fi
+fi
 
 # --- 1) provision (read-only against the target) ------------------------------
 if [ -d "${src_dir}/.git" ]; then
@@ -141,6 +166,17 @@ python3 "${HERE}/nightly_audit_report.py" \
   --target "${TARGET_REPO}" --sha "${sha}" \
   --out-report "${report_path}" --out-summary "${summary_path}"
 outcome_rc=$?
+
+# --- 6) budget guard record (Phase 5) -----------------------------------------
+# Feed the outcome + measured token usage back to the breaker for the next run.
+# Recording reflects what already happened — it never changes this run's exit
+# code (no --strict), so a budget breach trips the breaker for *tomorrow*, not a
+# rewrite of today's green/findings verdict.
+if [ "${BUDGET_GUARD}" != "0" ] && [ "${BUDGET_GUARD}" != "off" ]; then
+  python3 "${HERE}/budget_guard.py" record \
+    --exit-code "${outcome_rc}" \
+    --promptfoo-json "${pf_json}" || true
+fi
 
 echo
 echo "===== NIGHTLY AUDIT  ${TARGET_REPO}@${sha} ====="
