@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `docs/audits/2026-06-27.md`: replaced the *blocked* placeholder with the
+  **real, completed** read-only audit of `zurich-opendata-mcp` v0.3.3 (run in a
+  session with target access, folded back here as the canonical Phase-1 record).
+  All gates green; 24 tools / 5 resources enumerated with `file:line`; P0 SQL
+  surface confirmed clean (validators re-run offline); one P1 watch-item — an
+  unescaped CQL passthrough in `zurich_geo_features.property_filter` (geo.py:100)
+  — plus the broad mypy `ignore_errors` override flagged as a frozen type gate.
+
 ### Added
 - `scripts/audit-target.sh`: provisioning + run harness that unblocks a real
   read-only audit. Clones/pins the target MCP repo into a gitignored `.audit/`
