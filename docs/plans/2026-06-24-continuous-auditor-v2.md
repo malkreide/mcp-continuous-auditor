@@ -11,17 +11,34 @@ ein Mensch ist immer das Merge-Gate.
 
 | Schicht | Komponente | Rolle | Phase |
 |---|---|---|---|
+| Host | Dedizierter Raspberry Pi 5 (8 GB), netz-isoliert | OpenClaw-Orchestrator getrennt vom Arbeits-PC | 1 |
 | Kontrolle | OpenClaw + Telegram | Befehle, Reports, Approval-Gate | 1 |
 | Policy | SOUL.md / AGENTS.md / TOOLS.md | harte Invarianten (read-before-write, PR-only) | 1 |
 | Skills | python-auditor, fastmcp-testing, promptfoo-eval | standardisierte Workflows | 1–2 |
 | Wahrheitsinstanz | pytest + promptfoo + ruff/mypy in CI | deterministisches Bestanden/Durchgefallen | 2 |
-| Sicherheit | Docker-Sandbox -> spaeter forkd | Blast-Radius, Privilege Separation | 1 / 5 |
+| Sicherheit | Hardware-Isolation -> Docker-Sandbox -> spaeter forkd | Blast-Radius, Privilege Separation | 1 / 5 |
 | Proaktivitaet | OpenClaw Cron | taeglicher Read-only-Audit -> Telegram | 4 |
 | Observability/Budget | TensorZero (optional) | Cost-Caps, Audit-Trail | 5 |
 
-**Fluss:** Cron -> Orchestrator (Telegram) -> liest Repo read-only -> meldet Findings
--> *Mensch genehmigt* -> Worker oeffnet PR auf Branch -> GitHub Actions = Gate
--> *Mensch merged*. Niemals Push auf `main`.
+**Fluss:** Cron -> Orchestrator (Telegram, auf isoliertem Host) -> liest Repo
+read-only -> meldet Findings -> *Mensch genehmigt* -> Worker oeffnet PR auf Branch
+-> GitHub Actions = Gate -> *Mensch merged*. Niemals Push auf `main`.
+
+### Host-Schicht: warum ein dediziertes Gerät (empfohlen)
+
+Die LLM-Inferenz laeuft in der Cloud (Anthropic API); lokal laeuft nur der
+OpenClaw-Orchestrator — der Prozess mit dem groessten Blast-Radius (haelt
+GitHub-PAT + Anthropic-Key, startet Shell-Tools). Diesen auf einen **dedizierten,
+netz-isolierten Raspberry Pi 5 (8 GB)** statt auf den Arbeits-PC zu legen, ist
+die **empfohlene Betriebsart**: keine privaten Daten auf dem Geraet, eigenes
+VLAN, harte Egress-Allowlist. Die Last ist leicht (Orchestrierung + API-Calls,
+kein lokales Modell). Damit wird Hardware-Isolation zur aeussersten der drei
+Sicherheitsschichten (Host -> Docker-Sandbox -> spaeter forkd).
+
+Gleichwertige **Alternativen** bleiben unterstuetzt: (A) lokale Linux-VM in
+eigenem Subnetz (keine Extra-Hardware, aber gleiche physische Maschine);
+(B) guenstiger VPS (vollstaendig getrennt, aber Credentials in der Cloud).
+Vollstaendige Anleitung: [docs/deployment/raspberry-pi.md](../deployment/raspberry-pi.md).
 
 ---
 

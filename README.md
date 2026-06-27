@@ -64,14 +64,31 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 | `GITHUB_TOKEN` | Fine-grained PAT, target repo, PR-only |
 | `TARGET_REPO` | e.g. `malkreide/zurich-opendata-mcp` |
 
+## Deployment
+
+The LLM inference runs in the cloud (Anthropic API) — locally, only the OpenClaw
+orchestrator runs. Since that process holds the GitHub PAT + Anthropic key and
+runs shell tools, the **recommended deployment** is a dedicated, network-isolated
+device rather than your work PC.
+
+**Recommended: a dedicated Raspberry Pi 5 (8 GB).** The workload is light
+(orchestration + API calls, no local model), and a separate device adds a real
+hardware/network isolation layer on top of the existing Docker sandbox and
+fine-grained PAT. See **[docs/deployment/raspberry-pi.md](docs/deployment/raspberry-pi.md)**
+for the full guide (OS setup, ARM64 checks, egress allowlist, systemd hardening).
+
+Equivalent **alternatives** remain supported: a local Linux VM in its own subnet,
+or a cheap VPS. Trade-offs are documented in the same guide.
+
 ## Project Structure
 
 ```
-openclaw/    OpenClaw gateway config + policy-as-code (SOUL/AGENTS/TOOLS)
-skills/      python-auditor, fastmcp-testing, promptfoo-eval
-promptfoo/   deterministic asserts, schema-drift, red-team
-.github/     CI = the source of truth (template for the target repo)
-docs/plans/  the v2 build plan
+openclaw/         OpenClaw gateway config + policy-as-code (SOUL/AGENTS/TOOLS)
+skills/           python-auditor, fastmcp-testing, promptfoo-eval
+promptfoo/        deterministic asserts, schema-drift, red-team
+.github/          CI = the source of truth (template for the target repo)
+docs/plans/       the v2 build plan
+docs/deployment/  Raspberry Pi deployment guide (recommended host) + alternatives
 ```
 
 ## Roadmap
