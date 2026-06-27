@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `scripts/audit-target.sh`: provisioning + run harness that unblocks a real
+  read-only audit. Clones/pins the target MCP repo into a gitignored `.audit/`
+  work dir (read-only against the target — no writes, no push), runs
+  `ruff`+`mypy`+`pytest`, and captures each exit code + log under
+  `.audit/logs/`. Honors `TOOLS.md` (git-over-HTTPS only, no `curl | sh`, token
+  never inlined). Must run on a host whose egress allowlist permits the target.
+- `docs/audits/README.md`: how a real audit is produced (harness provisions +
+  runs; the `python-auditor` agent interprets the logs and writes the report)
+  and where it must run. `docs/audits/2026-06-27.md` §4 now points at the harness.
+- `.gitignore`: ignore the `.audit/` work dir (cloned target + run logs).
 - `openclaw/workspace/skills/python-auditor/SKILL.md`: workspace copy of the
   Phase-1 auditor skill (OpenClaw loads skills from the configured `workspace`).
   `requires.bins: [uv, ruff, mypy, pytest]`; runs ruff+mypy+pytest on every

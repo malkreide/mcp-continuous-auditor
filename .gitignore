@@ -17,6 +17,9 @@ node_modules/
 .promptfoo/
 promptfoo-output.*
 
+# Audit work dir — cloned target source + run logs (scripts/audit-target.sh)
+.audit/
+
 # OS / editor
 .DS_Store
 *.swp
