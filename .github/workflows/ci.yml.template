@@ -47,8 +47,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: verify
     env:
-      # Independent grader — different model family than the writer agent.
+      # Writer family (the audited/tool provider path may use Anthropic).
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Independent grader — a DIFFERENT model family than the writer agent, so a
+      # correlated failure mode cannot pass its own output. The config defaults the
+      # llm-rubric grader to a non-Anthropic family; this key backs that default.
+      # (Set GRADER_PROVIDER to a local ollama model to run the grader with no
+      #  cloud key at all — see promptfoo/promptfooconfig.yaml.)
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GRADER_PROVIDER: ${{ vars.GRADER_PROVIDER }}
+      # Pin the truth-engine — never eval at @latest (a moving deterministic gate).
+      PROMPTFOO_VERSION: "0.121.17"
       # Import path of the FastMCP server instance in the target repo.
       MCP_SERVER_IMPORT: zurich_opendata_mcp.server:mcp
     steps:
@@ -66,4 +75,8 @@ jobs:
         run: uv run python schemas/generate_schemas.py --check
       - name: Run promptfoo (contract asserts + injection + red-team)
         # Adjust the config path to wherever you copy promptfoo/ in the target repo.
-        run: npx -y promptfoo@latest eval -c promptfoo/promptfooconfig.yaml
+        # Pinned version (never @latest); --grader override keeps writer != checker.
+        run: |
+          npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
+            -c promptfoo/promptfooconfig.yaml \
+            ${GRADER_PROVIDER:+--grader "$GRADER_PROVIDER"}

@@ -17,7 +17,7 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 
 - **Read-only zuerst** — der Agent berichtet, bevor er je schreibt.
 - **Deterministische Wahrheitsinstanz** — promptfoo-YAML-Asserts + JSON-Schema-Drift-Checks in der CI.
-- **Unabhängiger Grader** — LLM-bewertete Checks nutzen eine andere Modell-Familie als der Schreiber.
+- **Unabhängiger Grader** — LLM-bewertete Checks nutzen eine echt andere Modell-*Familie* als der Schreiber (Schreiber ist Anthropic → Grader defaultet auf `openai:gpt-4o-mini` oder ein lokales Ollama-Modell), damit ein korrelierter blinder Fleck nicht seinen eigenen Output durchwinkt.
 - **Kontinuierliches Red-Teaming** — OWASP LLM Top 10 (Prompt Injection, PII-Leak) gegen die MCP-Oberfläche.
 - **Mensch als Merge-Gate** — der Agent öffnet nur PRs, pusht nie auf `main`.
 - **Proaktiv** — ein täglicher Cron-Audit postet einen Report nach Telegram.
@@ -29,7 +29,7 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 - Docker (Agenten-Sandbox)
 - Telegram-Bot-Token (via [@BotFather](https://t.me/BotFather)) und deine numerische Telegram-User-ID
 - Fine-grained GitHub-PAT, auf das Ziel-Repo beschränkt (contents + pull-requests, **keine** Secrets)
-- Anthropic-API-Key (unabhängiger Grader)
+- Anthropic-API-Key (Schreiber / Tool-Provider-Familie) **und** ein unabhängiger Grader *anderer* Familie — ein OpenAI-Key (Default `openai:gpt-4o-mini`) oder ein lokales Ollama-Modell (`GRADER_PROVIDER=ollama:chat:llama3.1`, ohne Cloud-Key)
 
 ## Installation
 
@@ -60,7 +60,9 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot-Token von @BotFather |
 | `TELEGRAM_ALLOW_FROM` | Deine numerische Telegram-User-ID (Gating) |
-| `ANTHROPIC_API_KEY` | Unabhängiges Grader-Modell |
+| `ANTHROPIC_API_KEY` | Schreiber / Tool-Provider-Familie |
+| `OPENAI_API_KEY` | Unabhängiger Grader (Default `openai:gpt-4o-mini`; andere Familie als der Schreiber) |
+| `GRADER_PROVIDER` | Optionaler Grader-Override, z.B. `ollama:chat:llama3.1` (lokal, kein Cloud-Key) |
 | `GITHUB_TOKEN` | Fine-grained PAT, Ziel-Repo, nur PR |
 | `TARGET_REPO` | z.B. `malkreide/zurich-opendata-mcp` |
 
