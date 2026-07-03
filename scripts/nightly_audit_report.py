@@ -54,6 +54,32 @@ def _load_promptfoo(path: Path) -> dict[str, Any] | None:
         return None
 
 
+# Gate exit codes carried in a Worker evidence file (see nightly-audit.sh). The
+# Worker ships raw evidence; the trusted Broker re-classifies from it, so a
+# compromised Worker cannot forge a green verdict (Analysis S2).
+_GATE_NAMES = ("ruff", "mypy", "pytest", "schema_drift", "promptfoo_rc")
+
+
+def _load_evidence(path: Path) -> dict[str, Any]:
+    """Parse a Worker-produced evidence file. UNTRUSTED and best-effort: an absent
+    or garbled file yields {} so every gate later defaults to 'could-not-run' and
+    the run classifies as HARD-FAIL, never green."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _gate_from_evidence(gates: dict[str, Any], name: str) -> int:
+    """A gate's exit code from evidence, defaulting to 127 (could-not-run) when
+    absent/unparseable — a garbled evidence file must never read as green."""
+    try:
+        return int(gates[name])
+    except (KeyError, TypeError, ValueError):
+        return 127
+
+
 def _results_block(pf: dict[str, Any]) -> dict[str, Any]:
     """promptfoo nests results under `results` (object) across versions; tolerate
     both the wrapped object and a bare list."""
@@ -277,17 +303,37 @@ def render_report(s: dict[str, Any]) -> str:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--ruff", type=int, required=True)
-    p.add_argument("--mypy", type=int, required=True)
-    p.add_argument("--pytest", type=int, required=True)
-    p.add_argument("--schema-drift", type=int, required=True, dest="schema_drift")
-    p.add_argument("--promptfoo-rc", type=int, required=True, dest="promptfoo_rc")
+    # Gate exit codes: pass each flag directly (host run), OR --from-evidence to
+    # read them from a Worker evidence JSON (Broker-side classification, S2).
+    p.add_argument("--ruff", type=int)
+    p.add_argument("--mypy", type=int)
+    p.add_argument("--pytest", type=int)
+    p.add_argument("--schema-drift", type=int, dest="schema_drift")
+    p.add_argument("--promptfoo-rc", type=int, dest="promptfoo_rc")
+    p.add_argument("--from-evidence", default="", dest="from_evidence",
+                   help="read gate exit codes (+ target/sha) from a Worker evidence JSON")
     p.add_argument("--promptfoo-json", default="", dest="promptfoo_json")
-    p.add_argument("--target", required=True)
+    p.add_argument("--target", default="")
     p.add_argument("--sha", default="unknown")
     p.add_argument("--out-report", required=True, dest="out_report")
     p.add_argument("--out-summary", required=True, dest="out_summary")
     args = p.parse_args()
+
+    if args.from_evidence:
+        ev = _load_evidence(Path(args.from_evidence))
+        gates = ev.get("gates") if isinstance(ev.get("gates"), dict) else {}
+        for name in _GATE_NAMES:
+            setattr(args, name, _gate_from_evidence(gates, name))
+        if not args.target:
+            args.target = str(ev.get("target") or "unknown")
+        if not args.sha or args.sha == "unknown":
+            args.sha = str(ev.get("target_sha") or "unknown")
+    else:
+        missing = [f"--{n.replace('_', '-')}" for n in _GATE_NAMES if getattr(args, n) is None]
+        if missing:
+            p.error("missing gate flags: " + ", ".join(missing) + " (or pass --from-evidence)")
+        if not args.target:
+            p.error("--target is required (or pass --from-evidence carrying it)")
 
     summary = build_summary(args)
     report = render_report(summary)

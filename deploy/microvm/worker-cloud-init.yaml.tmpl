@@ -49,8 +49,10 @@ write_files:
       echo "[worker] done — powering off (throwaway VM)"
       poweroff
 
-  # Streams the result bundle to the Broker. Sends NOTHING but the deterministic
-  # outputs — never the cloned target source or raw API payloads.
+  # Streams the RAW EVIDENCE to the Broker — the gate exit codes (nightly-evidence.json)
+  # plus the promptfoo JSON — never a self-declared verdict, never the cloned target
+  # source or raw API payloads. The trusted Broker re-classifies from this, so a
+  # compromised Worker cannot forge a green outcome (Analysis S2).
   - path: /opt/worker-send.sh
     permissions: "0755"
     content: |
@@ -58,11 +60,13 @@ write_files:
       set -uo pipefail
       cid="$1"; port="$2"; rc="$3"
       ad=/opt/auditor/.audit
-      # Frame: a one-line header with the exit code, then a tar of the two result
-      # files. The Broker validates the header and treats the bundle as untrusted.
+      # Copy the promptfoo output up to a flat name so the Broker can classify from it.
+      cp -f "${ad}/logs/promptfoo.json" "${ad}/promptfoo.json" 2>/dev/null || true
+      # Frame: a one-line header with the exit code, then a tar of the raw evidence.
+      # The Broker validates the header and treats the bundle as untrusted.
       {
         printf 'AUDIT-RESULT rc=%s\n' "${rc}"
-        tar -C "${ad}" -cf - nightly-summary.json nightly-report.md 2>/dev/null
+        tar -C "${ad}" -cf - nightly-evidence.json promptfoo.json 2>/dev/null
       } | socat - "VSOCK-CONNECT:${cid}:${port}"
 
 runcmd:

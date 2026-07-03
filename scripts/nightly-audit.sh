@@ -37,6 +37,12 @@
 #                       (default: zurich_opendata_mcp.server:mcp)
 #   PROMPTFOO_CONFIG    path to promptfooconfig.yaml inside the target checkout
 #                       (default: promptfoo/promptfooconfig.yaml)
+#   PROMPTFOO_VERSION   pinned promptfoo version — the truth-engine is NOT run at
+#                       @latest (that would make a "deterministic" gate reload a
+#                       moving target every night). Default: 0.121.17.
+#   GRADER_PROVIDER     llm-rubric grader — MUST be a different model family than
+#                       the writer agent (writer != checker). Passed to promptfoo
+#                       as --grader when set; otherwise the config default is used.
 #   BUDGET_GUARD        Phase-5 budget guardrails (default: on; set 0/off to skip)
 #                       — circuit breaker + token ceiling, see budget_guard.py /
 #                       docs/budget/guardrails.md. Tunable via BUDGET_* env vars.
@@ -51,6 +57,9 @@ TARGET_REF="${TARGET_REF:-${1:-main}}"
 AUDIT_DIR="${AUDIT_DIR:-${REPO_ROOT}/.audit}"
 MCP_SERVER_IMPORT="${MCP_SERVER_IMPORT:-zurich_opendata_mcp.server:mcp}"
 PROMPTFOO_CONFIG="${PROMPTFOO_CONFIG:-promptfoo/promptfooconfig.yaml}"
+# Pin the truth-engine: a deterministic gate must not silently reload a new
+# promptfoo (plugin renames / behaviour changes) on every run. Bump deliberately.
+PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-0.121.17}"
 
 repo_name="${TARGET_REPO##*/}"
 src_dir="${AUDIT_DIR}/${repo_name}"
@@ -152,9 +161,14 @@ echo "==> promptfoo eval (${PROMPTFOO_CONFIG})"
 pf_json="${log_dir}/promptfoo.json"
 rm -f "${pf_json}"
 if [ -f "${src_dir}/${PROMPTFOO_CONFIG}" ]; then
-  ( cd "${src_dir}" && npx -y promptfoo@latest eval \
+  # Grader override: keep writer != checker. Only pass --grader when the operator
+  # set GRADER_PROVIDER (else the config's own cross-family default is used).
+  pf_grader=()
+  [ -n "${GRADER_PROVIDER:-}" ] && pf_grader=(--grader "${GRADER_PROVIDER}")
+  ( cd "${src_dir}" && npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
       -c "${PROMPTFOO_CONFIG}" \
       --output "${pf_json}" \
+      "${pf_grader[@]}" \
       --no-progress-bar ) \
     >"${log_dir}/promptfoo.log" 2>&1
   rc_pf=$?
@@ -165,6 +179,28 @@ else
   # infrastructure failure, never a silent "surface looks safe".
   rc_pf=127
 fi
+
+# --- 4b) emit raw evidence (for Broker-side classification, S2) ----------------
+# In the microVM rollout the untrusted Worker ships THIS file (raw gate exit codes)
+# plus the promptfoo JSON — never a self-declared verdict. The trusted Broker then
+# re-runs the classifier over it (nightly_audit_report.py --from-evidence), so a
+# compromised Worker cannot forge a green outcome. Values are integers / a hex sha
+# / the operator-set target, so no untrusted string is interpolated here.
+evidence_path="${AUDIT_DIR}/nightly-evidence.json"
+cat > "${evidence_path}" <<EOF
+{
+  "schema": 1,
+  "target": "${TARGET_REPO}",
+  "target_sha": "${sha}",
+  "gates": {
+    "ruff": ${rc_ruff},
+    "mypy": ${rc_mypy},
+    "pytest": ${rc_pytest},
+    "schema_drift": ${rc_schema},
+    "promptfoo_rc": ${rc_pf}
+  }
+}
+EOF
 
 # --- 5) classify + report -----------------------------------------------------
 echo "==> aggregating into ${report_path}"

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security / Changed — hardening from the solution review (S1–S3, T2)
+- **Broker-side classification (S2)** — the untrusted Worker microVM no longer
+  ships a self-declared verdict. `scripts/nightly-audit.sh` now emits a raw
+  `nightly-evidence.json` (gate exit codes) and the Worker sends only that + the
+  promptfoo JSON over vsock; the **trusted Broker** re-derives the verdict with
+  its own classifier (`nightly_audit_report.py --from-evidence`). Missing/garbled
+  evidence classifies as **hard-fail, never green**, and an exit-code/promptfoo
+  mismatch (forged all-zero exit codes) is caught — a compromised Worker can no
+  longer forge a pass. New `tests/test_nightly_audit_report.py` (6 tests) pins the
+  forgery-resistance. Also fixed a latent portability bug: the Broker's tar
+  extraction used the non-portable `--no-absolute-names` (rejected by GNU tar 1.35);
+  the path-traversal guard is the explicit exact-name member list, which is portable.
+- **Worker egress interlock (S3)** — `deploy/microvm/run-worker.sh` refuses to boot
+  unless the host egress allowlist is loaded, and runs qemu as a dedicated
+  unprivileged UID so the ruleset actually binds (override `EGRESS_ALLOWLIST=off`
+  for isolated dev hosts, loud warning). New `deploy/microvm/egress-allowlist.nft`
+  (+ `apply-egress-allowlist.sh`) ships the nftables ruleset as code: DNS + web to
+  the public internet only, host-LAN/link-local dropped, all other ports denied.
+  Corrected the misleading `restrict=off` comment (SLIRP isolates the guest from
+  the host LAN but does NOT limit which internet hosts it reaches — that is the
+  host firewall's job) and the `restrict=on` example in `forkd-isolation.md` (it
+  would sever the guest from the network entirely). `00-preflight.sh` now checks
+  for `nft` + the loaded table.
+- **Cross-family grader (S1)** — the llm-rubric grader now defaults to a genuinely
+  DIFFERENT model family than the (Anthropic) writer: `openai:gpt-4o-mini`, or a
+  local `ollama:chat:llama3.1` via `GRADER_PROVIDER` (zero cloud key), passed to
+  promptfoo with `--grader`. Fixed the previous `anthropic:claude-sonnet-4-6` /
+  `claude-haiku-4-5` defaults (same family as the writer — not an independent
+  check) in `promptfoo/promptfooconfig.yaml`, `tensorzero/tensorzero.toml`, the CI
+  template, `.env.example`, both READMEs, and the cron/Pi docs.
+- **Pinned truth-engine (T2)** — CI and `nightly-audit.sh` no longer run
+  `promptfoo@latest` (a deterministic gate must not reload a moving target). Pinned
+  to `0.121.17` via a single `PROMPTFOO_VERSION` knob; bump deliberately.
+
 ### Added
 - **Phase 5 rollout kit** (`deploy/`) — runnable scripts to actually deploy the
   hardening layers on a local Linux VM (Broker = host VM with OpenClaw +

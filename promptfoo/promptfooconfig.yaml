@@ -20,8 +20,15 @@ providers:
 
 defaultTest:
   options:
-    # Grader for llm-rubric: deliberately a DIFFERENT family than the writer agent.
-    provider: anthropic:claude-sonnet-4-6 # or run a local model via ollama
+    # Grader for llm-rubric — writer != checker. The writer/tool path is Anthropic
+    # (Claude), so the grader is deliberately a DIFFERENT family to avoid a
+    # correlated blind spot: an Anthropic writer graded by Anthropic shares failure
+    # modes and is NOT an independent check.
+    #   Default:   openai:gpt-4o-mini   (needs OPENAI_API_KEY)
+    #   No cloud:  ollama:chat:llama3.1 (fully local, zero cloud key)
+    #   Override:  set GRADER_PROVIDER — CI / nightly-audit.sh pass it via --grader.
+    # Do NOT set this back to an Anthropic model while the writer is Anthropic.
+    provider: openai:gpt-4o-mini
 
 tests:
   # ─── (1) is-json contract: schemas are the drift detector ──────────────────

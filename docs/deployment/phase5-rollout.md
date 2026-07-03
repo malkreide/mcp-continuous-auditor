@@ -104,26 +104,43 @@ bash deploy/microvm/run-worker.sh
 
 Das erzeugt ein frisches qcow2-Overlay, bootet die Worker-VM (eigener
 Gast-Kernel via KVM), die VM klont den Auditor, läuft `nightly-audit.sh`
-**read-only** gegen das Ziel, schickt `summary.json` + `report.md` über vsock zum
-Broker und **schaltet sich ab**. Das Overlay wird verworfen.
+**read-only** gegen das Ziel, schickt die **rohe Evidenz** (`nightly-evidence.json`
+= Gate-Exit-Codes + die promptfoo-JSON) über vsock zum Broker und **schaltet sich
+ab**. Das Overlay wird verworfen. (`run-worker.sh` bootet nur mit geladener
+Egress-Allowlist — siehe §3 — sonst verweigert es den Start.)
 
-**Fertig wenn:** der Listener loggt `received -> ./.audit/incoming/<ts>-<pid>/`
-und dort liegen `nightly-summary.json` + `nightly-report.md`. Der Worker hat dabei
-**nie** einen Credential gesehen, und es überquerte **kein** roher Ziel-Code den
-Kanal — nur das deterministische Ergebnis.
+**Fertig wenn:** der Listener loggt `received -> …/<ts>-<pid>/ (…; broker-classified:
+<outcome>)` und dort liegen `nightly-summary.json` + `nightly-report.md` — **vom
+Broker** aus der Evidenz erzeugt, nicht vom Worker. Der Worker hat dabei **nie**
+einen Credential gesehen, es überquerte **kein** roher Ziel-Code den Kanal, und das
+Verdikt stammt nicht aus der untrusted VM (fehlende/verfälschte Evidenz → hard-fail).
 
 ---
 
 ## 3. Egress-Allowlist (Host-Firewall)
 
-Die VM-User-Mode-Netzwerke sind absichtlich nicht der Durchsetzungspunkt. Pinne
-den Egress am Host (nftables/Router), passend zu `TOOLS.md`, **asymmetrisch**:
+Die VM-User-Mode-Netzwerke (SLIRP) sind absichtlich **nicht** der Durchsetzungspunkt:
+SLIRP isoliert den Gast zwar vom Host-LAN, begrenzt aber **nicht**, welche
+Internet-Hosts er erreicht. Pinne den Egress am Host (nftables), **asymmetrisch**:
 
-- **Worker-VM** → nur `github.com` (anon, read-only) + die Zürcher Endpunkte.
-- **Broker** (Host-VM) → `api.anthropic.com`, `api.github.com`, Telegram.
+- **Worker-VM** → DNS + Web (80/443) ins öffentliche Internet, **kein** Host-LAN,
+  keine sonstigen Ports (kein SMTP-Exfil, kein C2 auf Random-Ports).
+- **Broker** (Host-VM) → `api.anthropic.com`, `api.openai.com` (Grader),
+  `api.github.com`, Telegram.
 
-Keine Seite erreicht die Egress-Ziele der anderen. (Konkrete nftables-Regeln je
-nach deinem Subnetz-Layout — der Worker bekommt ein eigenes Tap/Bridge-Segment.)
+Die Worker-Regeln sind als Code mitgeliefert und werden UID-scoped durchgesetzt
+(SLIRP-Egress lässt sich nur über die UID des qemu-Prozesses greifen):
+
+```bash
+sudo deploy/microvm/apply-egress-allowlist.sh   # legt User 'mcpworker' an + lädt die nft-Tabelle
+```
+
+`run-worker.sh` **verweigert den Start**, solange die Tabelle `inet
+mcp_worker_egress` nicht geladen ist, und startet qemu als `mcpworker`, damit die
+Regeln greifen (Override nur für isolierte Dev-Hosts: `EGRESS_ALLOWLIST=off`). Die
+Ruleset-Datei: `deploy/microvm/egress-allowlist.nft`. Eine strengere
+**Domain-**Allowlist (nur github/openai/… statt „jedes 443") braucht einen
+Filter-Proxy — siehe `docs/deployment/forkd-isolation.md`.
 
 ---
 
@@ -132,8 +149,9 @@ nach deinem Subnetz-Layout — der Worker bekommt ein eigenes Tap/Bridge-Segment
 Im Zielbild ruft der OpenClaw-Cron (`openclaw/cron/nightly-audit.json`) nicht mehr
 `nightly-audit.sh` direkt auf, sondern:
 
-1. `deploy/microvm/run-worker.sh` (Worker macht den read-only Audit),
-2. liest das Ergebnis aus `./.audit/incoming/<neueste>/nightly-summary.json`,
+1. `deploy/microvm/run-worker.sh` (Worker macht den read-only Audit, schickt rohe
+   Evidenz; der `broker-listener` **klassifiziert sie auf der Broker-Seite**),
+2. liest die **Broker-erzeugte** `./.audit/incoming/<neueste>/nightly-summary.json`,
 3. routet nach dem **Exit-Code** exakt wie heute (grün → Announce; Findings →
    Issue + nach Telegram-OK ein `fix/<slug>`-Draft-PR; hard-fail → stoppen).
 

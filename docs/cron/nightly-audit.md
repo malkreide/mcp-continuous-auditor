@@ -96,9 +96,10 @@ TELEGRAM_ANNOUNCE_TO="123456789" \                   # your Telegram chat/user i
 - For a Telegram forum topic, use `TELEGRAM_ANNOUNCE_TO="-1001234567890:topic:42"`.
 
 > **Writer ≠ checker.** Keep `OPENCLAW_AUDIT_MODEL` a *different* model family
-> than the promptfoo grader (`defaultTest.options.provider`, currently
-> `anthropic:claude-sonnet-4-6`) so the agent interpreting the audit is not the
-> model grading it (README "Independent grader").
+> than the promptfoo grader (`defaultTest.options.provider`, default
+> `openai:gpt-4o-mini`; override with `GRADER_PROVIDER`) so the agent interpreting
+> the audit is not the model grading it (README "Independent grader"). The writer
+> is Anthropic, so the grader must NOT be an Anthropic model.
 
 `openclaw/cron/nightly-audit.json` is the version-controlled source of truth for
 the schedule and the agent prompt; `install.sh` reads it and fills the `${…}`

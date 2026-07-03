@@ -124,7 +124,8 @@ in `TOOLS.md`:
 | Ziel | Wofür |
 |---|---|
 | `api.telegram.org` | Kontrollebene (Befehle, Reports) |
-| `api.anthropic.com` | LLM-Provider / unabhängiger Grader |
+| `api.anthropic.com` | LLM-Provider (Schreiber / Tool-Provider-Familie) |
+| `api.openai.com` | unabhängiger Grader (Default `openai:gpt-4o-mini`) — entfällt bei lokalem `GRADER_PROVIDER=ollama:…` |
 | `github.com`, `api.github.com`, `*.githubusercontent.com` | Ziel-Repo, PRs |
 | Zürcher Open-Data-Endpunkte | nur zum Aufzeichnen der Fixtures |
 

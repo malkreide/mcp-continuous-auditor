@@ -1,0 +1,59 @@
+#!/usr/sbin/nft -f
+#
+# egress-allowlist.nft — host-side egress control for the Worker microVM.
+#
+# WHY THIS EXISTS (Analysis S3): run-worker.sh boots the Worker with QEMU
+# user-mode networking (SLIRP). SLIRP already isolates the guest from the host
+# LAN (it is NAT, not a bridge) — but it does NOT restrict WHICH internet hosts
+# the guest reaches. With SLIRP the guest's packets leave as the host qemu
+# *process's* own connections, so they cannot be matched by guest-IP/interface;
+# the only reliable per-Worker handle is the UID the qemu process runs as.
+#
+# Therefore: run-worker.sh launches qemu as a dedicated unprivileged user
+# (WORKER_RUN_AS, default `mcpworker`), and this ruleset constrains exactly that
+# UID's outbound traffic. Everything else on the host is untouched.
+#
+# POLICY (fail-closed — default deny):
+#   - DNS (53) allowed to any resolver (incl. a LAN one) so name resolution works;
+#   - the host LAN / link-local ranges are DROPPED (no lateral movement into the
+#     home/work network — the highest-value control);
+#   - HTTP/HTTPS (80/443) allowed to the PUBLIC internet only (GitHub, astral/uv,
+#     npm/nodesource, Debian mirrors, the LLM provider + grader, Zürich endpoints);
+#   - everything else (SMTP exfil, arbitrary high ports / C2) is DROPPED.
+#
+# This is a PORT + LAN allowlist. A stricter per-DOMAIN allowlist (only github/
+# openai/… ) cannot be done with stateless nft against a CDN's shifting IPs — put
+# a filtering forward-proxy in front for that (see docs/deployment/forkd-isolation.md).
+#
+# Own table so it is ADDITIVE — it never flushes the operator's existing firewall.
+# Apply with: deploy/microvm/apply-egress-allowlist.sh  (creates the user + loads this)
+
+table inet mcp_worker_egress {
+	chain egress {
+		type filter hook output priority 0; policy accept;
+
+		# Only constrain the dedicated Worker UID; all other host traffic returns
+		# to the normal policy untouched. (nft resolves the name at load time.)
+		meta skuid != "mcpworker" return
+
+		# Loopback is always fine.
+		oifname "lo" accept
+
+		# DNS must work (SLIRP resolves guest lookups via the host resolver, which
+		# may itself be a LAN IP) — allow it before the RFC1918 drop below.
+		udp dport 53 accept
+		tcp dport 53 accept
+
+		# NEVER let the Worker reach the host LAN / link-local — lateral movement
+		# into the operator's network is the thing hardware isolation is FOR.
+		ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 127.0.0.0/8 } drop
+		ip6 daddr { fc00::/7, fe80::/10, ::1/128 } drop
+
+		# Allow HTTP/HTTPS to the public internet (clone auditor + target, install
+		# uv/node, apt mirrors, call the LLM provider/grader, record Zürich fixtures).
+		tcp dport { 80, 443 } accept
+
+		# Default deny: no SMTP, no plain non-web ports, no arbitrary C2 channel.
+		counter drop
+	}
+}

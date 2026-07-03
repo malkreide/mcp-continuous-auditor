@@ -17,7 +17,7 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 
 - **Read-only first** — the agent reports before it ever writes.
 - **Deterministic ground truth** — promptfoo YAML asserts + JSON-schema drift checks, run in CI.
-- **Independent grader** — LLM-graded checks use a different model family than the writer.
+- **Independent grader** — LLM-graded checks use a genuinely different model *family* than the writer (writer is Anthropic → grader defaults to `openai:gpt-4o-mini`, or a local Ollama model), so a correlated blind spot can't pass its own output.
 - **Continuous red-teaming** — OWASP LLM Top 10 (prompt injection, PII leakage) against the MCP surface.
 - **Human merge gate** — the agent opens PRs only; it never pushes to `main`.
 - **Proactive** — a daily cron audit posts a report to Telegram.
@@ -29,7 +29,7 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 - Docker (agent sandbox)
 - A Telegram bot token (via [@BotFather](https://t.me/BotFather)) and your numeric Telegram user ID
 - A fine-grained GitHub PAT scoped to the target repo (contents + pull-requests, **no** secrets)
-- An Anthropic API key (independent grader)
+- An Anthropic API key (writer / tool-provider family) **and** an independent grader of a *different* family — an OpenAI key (default `openai:gpt-4o-mini`) or a local Ollama model (`GRADER_PROVIDER=ollama:chat:llama3.1`, no cloud key)
 
 ## Installation
 
@@ -60,7 +60,9 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
 | `TELEGRAM_ALLOW_FROM` | Your numeric Telegram user ID (gating) |
-| `ANTHROPIC_API_KEY` | Independent grader model |
+| `ANTHROPIC_API_KEY` | Writer / tool-provider family |
+| `OPENAI_API_KEY` | Independent grader (default `openai:gpt-4o-mini`; a different family than the writer) |
+| `GRADER_PROVIDER` | Optional grader override, e.g. `ollama:chat:llama3.1` (local, no cloud key) |
 | `GITHUB_TOKEN` | Fine-grained PAT, target repo, PR-only |
 | `TARGET_REPO` | e.g. `malkreide/zurich-opendata-mcp` |
 

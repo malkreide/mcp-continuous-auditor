@@ -56,6 +56,7 @@ need qemu-img  "sudo apt install -y qemu-utils"
 need socat     "sudo apt install -y socat        # vsock result channel"
 need cloud-localds "sudo apt install -y cloud-image-utils   # builds the cloud-init seed"
 need envsubst  "sudo apt install -y gettext-base   # renders the cloud-init template"
+need nft       "sudo apt install -y nftables       # Worker egress allowlist (S3)"
 need git       "sudo apt install -y git"
 need curl      "sudo apt install -y curl"
 need python3   "sudo apt install -y python3"
@@ -74,6 +75,14 @@ fi
 # vhost-vsock (the worker<->broker channel rides this)
 if [ -e /dev/vhost-vsock ]; then ok "/dev/vhost-vsock present"
 else note "INFO /dev/vhost-vsock missing — run: sudo modprobe vhost_vsock (load at boot via /etc/modules-load.d/)"; fi
+
+# Worker egress allowlist (S3): run-worker.sh refuses to boot without it. Not a
+# hard blocker here (it is loaded later by apply-egress-allowlist.sh) — just flag it.
+if command -v nft >/dev/null 2>&1 && nft list table inet mcp_worker_egress >/dev/null 2>&1; then
+  ok "egress allowlist loaded (inet mcp_worker_egress)"
+else
+  note "INFO egress allowlist not loaded yet — run: sudo deploy/microvm/apply-egress-allowlist.sh"
+fi
 
 echo
 if [ "${fail}" -eq 0 ]; then

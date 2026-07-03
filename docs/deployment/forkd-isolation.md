@@ -118,15 +118,31 @@ Skizze (eine Broker-VM, Worker pro Lauf via Overlay-Image):
 qemu-img create -f qcow2 -b worker-base.qcow2 -F qcow2 worker-run.qcow2
 qemu-system-aarch64 -M microvm -accel kvm -cpu host -smp 2 -m 2048 \
   -kernel Image -drive file=worker-run.qcow2,if=virtio,format=qcow2 \
-  -netdev user,id=n0,restrict=on \
+  -netdev user,id=n0,restrict=off \
   -device virtio-net-device,netdev=n0 \
   -nographic   # KEIN Mount der Credentials, KEIN Pfad zur Broker-VM
 ```
 
-Der Kanal zwischen den VMs läuft über **virtio-vsock** (kein TCP/IP nötig): VM-B
-schreibt `nightly-summary.json` + den Report in den vsock; VM-A liest ihn,
-entscheidet anhand des Exit-Codes über Issue/PR und ruft das Modell. Roher
-Ziel-Code überquert den Kanal **nie**.
+> **`restrict=off`, nicht `on`.** QEMU-`restrict=on` würde den Gast **komplett**
+> vom Netz trennen — dann scheitert schon der Auditor-/Ziel-Clone. Der Worker
+> *muss* raus (GitHub/uv/npm/Zürich); die eigentliche Begrenzung („nur DNS+Web,
+> kein Host-LAN, keine Random-Ports") gehört auf die **Host-Firewall**, UID-scoped
+> auf den qemu-Prozess. Als Code mitgeliefert: `deploy/microvm/egress-allowlist.nft`
+> + `apply-egress-allowlist.sh`; `run-worker.sh` verweigert den Start ohne die
+> geladene Tabelle. Eine **Domain-**Allowlist (statt „jedes 443") braucht einen
+> Filter-Forward-Proxy vor dem Gast.
+
+Der Kanal zwischen den VMs läuft über **virtio-vsock** (kein TCP/IP nötig): der
+Worker schreibt nur **rohe Evidenz** (`nightly-evidence.json` = die Gate-Exit-Codes
++ die promptfoo-JSON) in den vsock — **kein** selbst erklärtes Verdikt. Der
+**vertrauenswürdige Broker klassifiziert selbst** (`nightly_audit_report.py
+--from-evidence`) und entscheidet anhand *seines* Exit-Codes über Issue/PR. So kann
+ein kompromittierter Worker kein „grün" fälschen: fehlende/verfälschte Evidenz wird
+zum hard-fail, nie zu grün (Analysis S2). Roher Ziel-Code überquert den Kanal **nie**.
+Restrisiko: ein voll kompromittierter Worker kann noch *in sich schlüssige* grüne
+Evidenz liefern (alle Exit-Codes 0 + saubere promptfoo-JSON) — dagegen hülfe nur
+Ergebnis-Attestierung (out of scope). Der Gewinn: Auslassung, Verfälschung oder ein
+Exit-Code/promptfoo-Widerspruch lesen sich nicht mehr als grün.
 
 > Wenn dir der ARM-Pfad zu jung ist: **bleib bei der Docker-Sandbox** auf dem Pi
 > (Status quo) und ziehe die microVM-Trennung erst auf einem x86-Host nach. Genau
@@ -140,13 +156,15 @@ Ziel-Code überquert den Kanal **nie**.
 | Sandbox | **eine** Docker-Sandbox (`sandbox.mode=all`) | **zwei microVMs** (Broker / Worker) |
 | Credentials | im Sandbox-Prozess | **nur** in der Broker-VM |
 | Untrusted-Verarbeitung | im selben Prozess | **nur** in der Worker-VM |
-| Kanal | in-process | schmaler vsock (Job rein / Report raus) |
+| Kanal | in-process | schmaler vsock (Job rein / rohe Evidenz raus, Broker klassifiziert) |
 
-`scripts/nightly-audit.sh` bleibt unverändert das deterministische Herzstück —
-es läuft künftig **innerhalb der Worker-VM**. Sein Exit-Code (`0/2/1`) ist genau
-das, was über den vsock-Kanal zur Broker-VM geht. Die Budget-Leitplanken
-([../budget/guardrails.md](../budget/guardrails.md)) laufen in der Worker-VM mit;
-der `record`-Schritt schreibt den State in das (Worker-lokale) `.audit/`.
+`scripts/nightly-audit.sh` bleibt das deterministische Herzstück — es läuft
+**innerhalb der Worker-VM** und produziert dort die rohe Evidenz. Die
+**Klassifikation** (`nightly_audit_report.py`) läuft dagegen auf der **Broker-Seite**
+über die empfangene Evidenz, damit das Verdikt nicht aus der untrusted VM stammt.
+Die Budget-Leitplanken ([../budget/guardrails.md](../budget/guardrails.md)) laufen
+ebenfalls auf dem **Broker** (der Worker läuft mit `BUDGET_GUARD=0`, weil seine VM
+throwaway ist und keine Historie über Läufe hält).
 
 ## Migrations-Checkliste
 
@@ -156,8 +174,9 @@ der `record`-Schritt schreibt den State in das (Worker-lokale) `.audit/`.
    `nightly-audit.sh`, **keine** Credentials. Egress auf GitHub-anon + Zürich.
 4. **Broker-VM** bauen: hält PAT + Anthropic-Key, ruft Modell + öffnet PRs.
    Egress nur Anthropic + GitHub-API.
-5. vsock-Kanal: Worker → (summary.json + report) → Broker. Schema validieren,
-   Inhalt als untrusted behandeln (AGENTS.md), nie als Shell interpolieren.
+5. vsock-Kanal: Worker → (rohe Evidenz: `nightly-evidence.json` + promptfoo-JSON) →
+   Broker; der **Broker klassifiziert** (`--from-evidence`). Inhalt als untrusted
+   behandeln (AGENTS.md), nie als Shell interpolieren; fehlende Evidenz = hard-fail.
 6. Worker pro Lauf wegwerfen (frische rootfs/Overlay). Broker langlebig.
 7. Erst danach `sandbox.mode` in `openclaw.json` entsprechend zurückfahren.
 
