@@ -47,29 +47,12 @@ seed="${IMG_DIR}/worker-seed.iso"
 # The Worker runs untrusted read-only code next to the credential-holding Broker.
 # Refuse to boot it with open egress: require the host allowlist to be loaded AND
 # run qemu as the UID that ruleset filters, so exfil / C2 / host-LAN access is
-# actually blocked — not merely documented.
-EGRESS_ALLOWLIST="${EGRESS_ALLOWLIST:-on}"
-WORKER_RUN_AS="${WORKER_RUN_AS:-mcpworker}"
-RUN_AS=()
-if [ "${EGRESS_ALLOWLIST}" != "0" ] && [ "${EGRESS_ALLOWLIST}" != "off" ]; then
-  if ! command -v nft >/dev/null 2>&1 || ! nft list table inet mcp_worker_egress >/dev/null 2>&1; then
-    cat >&2 <<EOF
-FATAL: Worker egress allowlist not active — refusing to boot with open egress.
-  Load it first (as root):  sudo deploy/microvm/apply-egress-allowlist.sh
-  Dev only, UNRESTRICTED egress on an already-isolated host:  EGRESS_ALLOWLIST=off $0
-EOF
-    exit 1
-  fi
-  id "${WORKER_RUN_AS}" >/dev/null 2>&1 \
-    || { echo "FATAL: WORKER_RUN_AS='${WORKER_RUN_AS}' does not exist — run apply-egress-allowlist.sh" >&2; exit 1; }
-  if   command -v runuser >/dev/null 2>&1; then RUN_AS=(runuser -u "${WORKER_RUN_AS}" --)
-  elif command -v sudo    >/dev/null 2>&1; then RUN_AS=(sudo -n -u "${WORKER_RUN_AS}" --)
-  else echo "FATAL: need runuser or sudo to drop privileges to ${WORKER_RUN_AS}" >&2; exit 1; fi
-  echo "==> egress allowlist active — qemu runs as ${WORKER_RUN_AS} (constrained outbound)"
-else
-  echo "!! WARNING: EGRESS_ALLOWLIST=off — Worker boots with UNRESTRICTED outbound egress." >&2
-  echo "!! Only acceptable on a host that is itself network-isolated. Never in the rollout." >&2
-fi
+# actually blocked — not merely documented. The interlock is factored into a
+# sourceable helper so it can be unit-tested without /dev/kvm or a base image; it
+# sets the RUN_AS array (privilege-drop prefix) and fails closed.
+# shellcheck source=deploy/microvm/_egress-interlock.sh
+source "${HERE}/_egress-interlock.sh"
+resolve_worker_run_as || exit 1
 
 run_id="$(cat /proc/sys/kernel/random/uuid 2>/dev/null | cut -c1-8 || echo run)"
 overlay="${IMG_DIR}/worker-run-${run_id}.qcow2"
