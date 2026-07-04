@@ -176,7 +176,14 @@ else
     || hard_fail "git clone failed (egress allowlist? target private?)"
 fi
 git -C "${src_dir}" checkout --quiet "${TARGET_REF}" || hard_fail "checkout ${TARGET_REF} failed"
-git -C "${src_dir}" reset --hard --quiet "origin/${TARGET_REF}" 2>/dev/null || true
+# Fast-forward to the remote tip ONLY when TARGET_REF is a branch (origin/<ref>
+# exists); a tag/SHA has no origin/<ref> and checkout already positioned HEAD. A
+# failed reset is never swallowed (Analysis T-G): auditing a stale checkout is a
+# HARD failure, not a silent pass.
+if git -C "${src_dir}" rev-parse --verify --quiet "origin/${TARGET_REF}" >/dev/null; then
+  git -C "${src_dir}" reset --hard --quiet "origin/${TARGET_REF}" \
+    || hard_fail "git reset to origin/${TARGET_REF} failed — refusing to audit a stale checkout"
+fi
 sha="$(git -C "${src_dir}" rev-parse --short HEAD)"
 echo "==> ${TARGET_REPO} @ ${TARGET_REF} (${sha})"
 
@@ -226,12 +233,23 @@ if [ -f "${src_dir}/${PROMPTFOO_CONFIG}" ]; then
   # set GRADER_PROVIDER (else the config's own cross-family default is used).
   pf_grader=()
   [ -n "${GRADER_PROVIDER:-}" ] && pf_grader=(--grader "${GRADER_PROVIDER}")
-  ( cd "${src_dir}" && npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
+  # Prefer the PINNED local install — `npm ci` from the committed lockfile gives a
+  # reproducible, integrity-checked transitive tree (Analysis T-G). Fall back to a
+  # version-pinned npx when the target ships no lockfile in the promptfoo dir.
+  pf_dir="${src_dir}/$(dirname "${PROMPTFOO_CONFIG}")"
+  pf_cmd=(npx -y "promptfoo@${PROMPTFOO_VERSION}")
+  if pf_bin="$("${HERE}/install-promptfoo.sh" "${pf_dir}" 2>>"${log_dir}/promptfoo.log")"; then
+    pf_cmd=("${pf_bin}")
+    echo "==> using pinned promptfoo: ${pf_bin}"
+  else
+    echo "==> no pinned lockfile in ${pf_dir} — falling back to npx promptfoo@${PROMPTFOO_VERSION}"
+  fi
+  ( cd "${src_dir}" && "${pf_cmd[@]}" eval \
       -c "${PROMPTFOO_CONFIG}" \
       --output "${pf_json}" \
       "${pf_grader[@]}" \
       --no-progress-bar ) \
-    >"${log_dir}/promptfoo.log" 2>&1
+    >>"${log_dir}/promptfoo.log" 2>&1
   rc_pf=$?
 else
   echo "    no ${PROMPTFOO_CONFIG} in target — red-team/contract layer missing" \

@@ -5,8 +5,9 @@
 # Per run we create a fresh qcow2 overlay on top of the read-only base image, so a
 # compromised audit never survives the run (forkd-isolation.md: "Worker pro Lauf
 # wegwerfen"). Networking is restricted (user-mode, the host firewall/nftables is
-# where you pin the egress allowlist — GitHub-anon + Zürich only). The only path
-# to the Broker is the vsock device; there is no shared filesystem and no SSH.
+# where you pin the egress allowlist — a PORT + LAN + fixed-DNS-resolver policy
+# (a per-DOMAIN allowlist needs the forward-proxy, deploy/microvm/forward-proxy/)).
+# The only path to the Broker is the vsock device; no shared filesystem, no SSH.
 #
 # Run on the host VM AFTER build-worker-image.sh and with the Broker listener up.
 #

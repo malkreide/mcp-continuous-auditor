@@ -8,8 +8,8 @@
 >   Anthropic-Key, Telegram) + das TensorZero-Gateway + ClickHouse, alles an
 >   `127.0.0.1` gebunden.
 > - **Worker = throwaway microVM pro Lauf**: `nightly-audit.sh` read-only,
->   **keine** Credentials, Egress nur GitHub-anon + Zürich, spricht mit dem Broker
->   **nur** über vsock.
+>   **keine** Credentials, Egress nft-begrenzt (Port + LAN + DNS-Set; Domain-
+>   Allowlist via Forward-Proxy, §3), spricht mit dem Broker **nur** über vsock.
 >
 > Das ist die pragmatische Minimaltopologie mit vollem Isolations-Gewinn: die VM,
 > die untrusted Daten verarbeitet, hält nie Credentials. Die volle Zwei-microVM-
@@ -127,24 +127,34 @@ Die VM-User-Mode-Netzwerke (SLIRP) sind absichtlich **nicht** der Durchsetzungsp
 SLIRP isoliert den Gast zwar vom Host-LAN, begrenzt aber **nicht**, welche
 Internet-Hosts er erreicht. Pinne den Egress am Host (nftables), **asymmetrisch**:
 
-- **Worker-VM** → DNS + Web (80/443) ins öffentliche Internet, **kein** Host-LAN,
-  keine sonstigen Ports (kein SMTP-Exfil, kein C2 auf Random-Ports).
-- **Broker** (Host-VM) → `api.anthropic.com`, `api.openai.com` (Grader),
-  `api.github.com`, Telegram.
+- **Worker-VM** → DNS **nur an ein festes Resolver-Set** (kein „beliebiger
+  Nameserver"-Tunnel, Analysis S-C) + Web (80/443) ins öffentliche Internet,
+  **kein** Host-LAN, keine sonstigen Ports (kein SMTP-Exfil, kein C2 auf
+  Random-Ports).
+- **Broker** (Host-VM) → dieselbe Form (`broker-egress-allowlist.nft`), gedacht
+  für `api.anthropic.com`, `api.openai.com` (Grader), `api.github.com`, Telegram.
 
-Die Worker-Regeln sind als Code mitgeliefert und werden UID-scoped durchgesetzt
-(SLIRP-Egress lässt sich nur über die UID des qemu-Prozesses greifen):
+Beide Regelsätze sind jetzt als Code mitgeliefert und werden UID-scoped
+durchgesetzt (SLIRP-Egress lässt sich nur über die UID des qemu-/Broker-Prozesses
+greifen):
 
 ```bash
-sudo deploy/microvm/apply-egress-allowlist.sh   # legt User 'mcpworker' an + lädt die nft-Tabelle
+sudo deploy/microvm/apply-egress-allowlist.sh          # User 'mcpworker' + Worker-nft
+sudo nft -f deploy/microvm/broker-egress-allowlist.nft # Broker-nft (Prozess als 'mcpbroker' laufen lassen)
 ```
 
 `run-worker.sh` **verweigert den Start**, solange die Tabelle `inet
 mcp_worker_egress` nicht geladen ist, und startet qemu als `mcpworker`, damit die
-Regeln greifen (Override nur für isolierte Dev-Hosts: `EGRESS_ALLOWLIST=off`). Die
-Ruleset-Datei: `deploy/microvm/egress-allowlist.nft`. Eine strengere
-**Domain-**Allowlist (nur github/openai/… statt „jedes 443") braucht einen
-Filter-Proxy — siehe `docs/deployment/forkd-isolation.md`.
+Regeln greifen (Override nur für isolierte Dev-Hosts: `EGRESS_ALLOWLIST=off`).
+
+**Was nft erzwingt vs. nicht:** eine **PORT + LAN + DNS-Set**-Allowlist — **nicht**,
+welche Web-**Domains** 443 erreicht (stateless nft kann CDN-IPs nicht per Domain
+greifen). Bis der **Domain-**Filter steht, ist HTTPS-Exfil an einen beliebigen
+Host über `tcp dport 443 accept` weiter möglich (Worker: kein Credential, Ziel
+öffentlich → Rest-Risiko Pivot/C2; **Broker: hält Credentials → dort zuerst**).
+Die Domain-Allowlist (nur github/openai/… statt „jedes 443") liefert der
+**Forward-Proxy**: `deploy/microvm/forward-proxy/` (tinyproxy + `worker-allow.txt`
+/ `broker-allow.txt`).
 
 ---
 

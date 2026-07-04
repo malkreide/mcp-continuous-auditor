@@ -118,6 +118,19 @@ class BrokerPipelineTest(unittest.TestCase):
         self.assertEqual(s["outcome"], "hard-fail")
         self.assertFalse(s["green"])
 
+    def test_length_prefixed_frame_reads_exact(self) -> None:
+        # Analysis T-G: a header declaring len=<bytes> makes the Broker read exactly
+        # that many bytes (no line-framing desync). Exact length -> clean extract.
+        members = {
+            "nightly-evidence.json": self._evidence(_GREEN_GATES),
+            "promptfoo.json": json.dumps({"results": {"stats": {"errors": 0}, "results": []}}).encode(),
+        }
+        tarb = _tar_bytes(members)
+        header = f"AUDIT-RESULT rc=0 len={len(tarb)}\n".encode()
+        s = self._run_payload(header + tarb)
+        self.assertEqual(s["outcome"], "green")
+        self.assertTrue(s["green"])
+
     # --- the path-traversal guard (exact-name extraction) ---------------------
 
     def test_hostile_members_are_not_extracted(self) -> None:

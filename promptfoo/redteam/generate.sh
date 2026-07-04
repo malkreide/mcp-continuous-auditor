@@ -33,13 +33,21 @@ out="${HERE}/redteam.generated.yaml"
 command -v npx >/dev/null || { echo "FATAL: npx (node) required" >&2; exit 127; }
 [ -f "${config}" ] || { echo "FATAL: ${config} not found" >&2; exit 1; }
 
-echo "==> redteam generate (pinned promptfoo@${PROMPTFOO_VERSION}, attacker=${REDTEAM_ATTACKER}, numTests=${NUM_TESTS})"
+# Prefer the PINNED local install (reproducible transitive tree from the committed
+# lockfile, Analysis T-G); fall back to a version-pinned npx.
+pf_dir="$(cd "${HERE}/.." && pwd)"
+pf_cmd=(npx -y "promptfoo@${PROMPTFOO_VERSION}")
+if pf_bin="$("${HERE}/../../scripts/install-promptfoo.sh" "${pf_dir}")"; then
+  pf_cmd=("${pf_bin}")
+fi
+
+echo "==> redteam generate (${pf_cmd[0]}, attacker=${REDTEAM_ATTACKER}, numTests=${NUM_TESTS})"
 echo "    config : ${config}"
 echo "    output : ${out}  (commit this via a reviewed PR)"
 
 # `redteam generate` reads the redteam: block and writes concrete adversarial test
-# cases. Pin the version + attacker model so the output is a deliberate artifact.
-npx -y "promptfoo@${PROMPTFOO_VERSION}" redteam generate \
+# cases. Pinned version + attacker model so the output is a deliberate artifact.
+"${pf_cmd[@]}" redteam generate \
   -c "${config}" \
   -o "${out}" \
   --provider "${REDTEAM_ATTACKER}" \

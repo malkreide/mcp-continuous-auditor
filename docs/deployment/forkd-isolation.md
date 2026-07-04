@@ -171,9 +171,12 @@ throwaway ist und keine Historie über Läufe hält).
 1. Docker-Sandbox stabil grün, Phase 4 läuft Wochen ohne hard-fail.
 2. Host wählen: x86 (Pfad A) oder Pi/ARM (Pfad B). `/dev/kvm` prüfen.
 3. **Worker-VM** bauen: Toolchain (uv, ruff, mypy, pytest, node/promptfoo),
-   `nightly-audit.sh`, **keine** Credentials. Egress auf GitHub-anon + Zürich.
+   `nightly-audit.sh`, **keine** Credentials. Egress: nft-Port+LAN+DNS-Set
+   (`egress-allowlist.nft`); Domain-Allowlist (GitHub/PyPI/npm/Zürich) via
+   Forward-Proxy (`deploy/microvm/forward-proxy/`).
 4. **Broker-VM** bauen: hält PAT + Anthropic-Key, ruft Modell + öffnet PRs.
-   Egress nur Anthropic + GitHub-API.
+   Egress: `broker-egress-allowlist.nft`; Domain-Allowlist (Anthropic/OpenAI/
+   GitHub-API/Telegram) via Forward-Proxy (`broker-allow.txt`).
 5. vsock-Kanal: Worker → (rohe Evidenz: `nightly-evidence.json` + promptfoo-JSON) →
    Broker; der **Broker klassifiziert** (`--from-evidence`). Inhalt als untrusted
    behandeln (AGENTS.md), nie als Shell interpolieren; fehlende Evidenz = hard-fail.
