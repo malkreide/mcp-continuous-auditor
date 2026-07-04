@@ -70,9 +70,13 @@ jobs:
         # Deterministic: if a tool's return type (or upstream shape) changed and
         # the committed schemas/ were not regenerated, this exits non-zero.
         run: uv run python schemas/generate_schemas.py --check
+      - name: Install pinned promptfoo (npm ci from committed lockfile)
+        # Reproducible transitive tree, integrity-checked — never re-resolves ranges
+        # against a moving registry (Analysis T-G).
+        run: cd promptfoo && npm ci --no-audit --no-fund
       - name: Run promptfoo determ profile (no model key required)
         run: |
-          npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
+          promptfoo/node_modules/.bin/promptfoo eval \
             -c promptfoo/promptfooconfig.determ.yaml
 
   graded:
@@ -118,10 +122,13 @@ jobs:
               fi
               echo "::warning::same-family grader allowed via ALLOW_SAME_FAMILY_GRADER=1 — not an independent check." ;;
           esac
+      - name: Install pinned promptfoo (npm ci from committed lockfile)
+        # Reproducible, integrity-checked transitive tree (Analysis T-G).
+        run: cd promptfoo && npm ci --no-audit --no-fund
       - name: Run promptfoo graded profile (llm-rubric + committed red-team)
-        # Pinned version (never @latest); --grader override keeps writer != checker.
+        # --grader override keeps writer != checker.
         run: |
-          npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
+          promptfoo/node_modules/.bin/promptfoo eval \
             -c promptfoo/promptfooconfig.yaml \
             ${GRADER_PROVIDER:+--grader "$GRADER_PROVIDER"}
       - name: Evaluate the generated red-team set (if committed)
@@ -129,7 +136,7 @@ jobs:
         # a reviewed PR; eval it here when present so the expanded cases gate too.
         run: |
           if [ -f promptfoo/redteam/redteam.generated.yaml ]; then
-            npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
+            promptfoo/node_modules/.bin/promptfoo eval \
               -c promptfoo/redteam/redteam.generated.yaml \
               ${GRADER_PROVIDER:+--grader "$GRADER_PROVIDER"}
           else

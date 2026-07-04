@@ -1,0 +1,7 @@
+# Broker forward-proxy domain allowlist (tinyproxy, FilterExtended On, default-deny).
+# The credential side only needs the LLM provider + grader, the GitHub API, and
+# the Telegram API. Nothing else — a compromise here must not exfiltrate anywhere.
+(^|\.)api\.anthropic\.com$
+(^|\.)api\.openai\.com$
+(^|\.)api\.github\.com$
+(^|\.)api\.telegram\.org$

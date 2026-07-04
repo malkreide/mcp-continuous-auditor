@@ -1,0 +1,14 @@
+# Worker forward-proxy domain allowlist (tinyproxy, FilterExtended On, default-deny).
+# One POSIX extended regex per line; each matches an allowed host. The Worker only
+# needs: the auditor + target on GitHub, the Python/Node/Debian package sources,
+# and the Zürich open-data endpoints the fixtures were recorded against.
+(^|\.)github\.com$
+(^|\.)githubusercontent\.com$
+(^|\.)codeload\.github\.com$
+(^|\.)pypi\.org$
+(^|\.)files\.pythonhosted\.org$
+(^|\.)registry\.npmjs\.org$
+(^|\.)astral\.sh$
+(^|\.)deb\.debian\.org$
+(^|\.)security\.debian\.org$
+(^|\.)data\.stadt-zuerich\.ch$

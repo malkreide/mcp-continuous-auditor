@@ -14,21 +14,36 @@
 # UID's outbound traffic. Everything else on the host is untouched.
 #
 # POLICY (fail-closed — default deny):
-#   - DNS (53) allowed to any resolver (incl. a LAN one) so name resolution works;
+#   - DNS (53) allowed ONLY to a fixed resolver set (Analysis S-C) — not to *any*
+#     resolver, which was a plain DNS tunnel / exfil channel. Default: Quad9 +
+#     Cloudflare. If your Worker must use a different resolver, edit @dns_allow;
+#     with SLIRP the guest should be pointed at one of these (public) resolvers.
 #   - the host LAN / link-local ranges are DROPPED (no lateral movement into the
 #     home/work network — the highest-value control);
-#   - HTTP/HTTPS (80/443) allowed to the PUBLIC internet only (GitHub, astral/uv,
-#     npm/nodesource, Debian mirrors, the LLM provider + grader, Zürich endpoints);
+#   - HTTP/HTTPS (80/443) allowed to the PUBLIC internet (GitHub, astral/uv,
+#     npm/PyPI, Debian mirrors, the LLM provider + grader, Zürich endpoints);
 #   - everything else (SMTP exfil, arbitrary high ports / C2) is DROPPED.
 #
-# This is a PORT + LAN allowlist. A stricter per-DOMAIN allowlist (only github/
-# openai/… ) cannot be done with stateless nft against a CDN's shifting IPs — put
-# a filtering forward-proxy in front for that (see docs/deployment/forkd-isolation.md).
+# SCOPE OF WHAT THIS ENFORCES: a PORT + LAN + fixed-DNS-resolver allowlist. It does
+# NOT restrict WHICH web domains 443 reaches — a stricter per-DOMAIN allowlist
+# (only github/openai/pypi/zürich…) cannot be done with stateless nft against a
+# CDN's shifting IPs. For that put the filtering forward-proxy in front:
+# deploy/microvm/forward-proxy/ (tinyproxy + a domain allowlist). Until the proxy
+# is in place, HTTPS EXFIL to an arbitrary host is still possible — the Worker
+# holds no credentials and the target is public, so the residual risk is a pivot/
+# C2 channel, not credential loss.
 #
 # Own table so it is ADDITIVE — it never flushes the operator's existing firewall.
 # Apply with: deploy/microvm/apply-egress-allowlist.sh  (creates the user + loads this)
 
 table inet mcp_worker_egress {
+	# Fixed DNS resolvers the Worker may talk to (Quad9 + Cloudflare). Edit to your
+	# resolver if needed; the point is a KNOWN set, not "any nameserver".
+	set dns_allow {
+		type ipv4_addr
+		elements = { 9.9.9.9, 149.112.112.112, 1.1.1.1, 1.0.0.1 }
+	}
+
 	chain egress {
 		type filter hook output priority 0; policy accept;
 
@@ -39,10 +54,10 @@ table inet mcp_worker_egress {
 		# Loopback is always fine.
 		oifname "lo" accept
 
-		# DNS must work (SLIRP resolves guest lookups via the host resolver, which
-		# may itself be a LAN IP) — allow it before the RFC1918 drop below.
-		udp dport 53 accept
-		tcp dport 53 accept
+		# DNS ONLY to the fixed resolver set (before the RFC1918 drop). This closes
+		# the "any resolver" DNS tunnel; a LAN resolver is intentionally NOT allowed.
+		ip daddr @dns_allow udp dport 53 accept
+		ip daddr @dns_allow tcp dport 53 accept
 
 		# NEVER let the Worker reach the host LAN / link-local — lateral movement
 		# into the operator's network is the thing hardware isolation is FOR.
@@ -50,7 +65,7 @@ table inet mcp_worker_egress {
 		ip6 daddr { fc00::/7, fe80::/10, ::1/128 } drop
 
 		# Allow HTTP/HTTPS to the public internet (clone auditor + target, install
-		# uv/node, apt mirrors, call the LLM provider/grader, record Zürich fixtures).
+		# uv/node, apt/PyPI mirrors, call the LLM provider/grader, Zürich fixtures).
 		tcp dport { 80, 443 } accept
 
 		# Default deny: no SMTP, no plain non-web ports, no arbitrary C2 channel.

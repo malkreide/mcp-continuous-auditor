@@ -42,13 +42,20 @@ fi
 header="$(printf '%s' "${header}" | tr -d '\000-\037\177' | cut -c1-200)"
 printf '%s\n' "${header}" > "${run_dir}/header.txt"
 
+# Length-prefixed frame (Analysis T-G): if the header declares len=<bytes>, read
+# EXACTLY that many (bounded by STREAM_LIMIT) so the stream cannot desync; a legacy
+# sender without len= falls back to the size cap. Either way head -c bounds the
+# Broker disk and timeout bounds the time (S-D).
+declared="$(printf '%s' "${header}" | sed -n 's/.*len=\([0-9][0-9]*\).*/\1/p')"
+read_bytes="${STREAM_LIMIT}"
+if [ -n "${declared}" ] && [ "${declared}" -le "${STREAM_LIMIT}" ] 2>/dev/null; then
+  read_bytes="${declared}"
+fi
 # Extract ONLY the two evidence files by EXACT name — the explicit member list is
 # the path-traversal guard (any other/absolute/`..` member simply does not match).
-# BOUND the stream size (head -c) and the total time (timeout) so an endless or
-# stalled tar cannot exhaust the Broker's disk or a handler process (S-D).
 timeout "${STREAM_TIMEOUT}" sh -c \
   'head -c "$1" | tar -C "$2" -xf - nightly-evidence.json promptfoo.json 2>/dev/null' \
-  _ "${STREAM_LIMIT}" "${run_dir}" || true
+  _ "${read_bytes}" "${run_dir}" || true
 
 # Reject SYMLINK members. `tar -x <exact names>` blocks traversal, but a member
 # that is itself a symlink would be extracted AS a symlink — turning the

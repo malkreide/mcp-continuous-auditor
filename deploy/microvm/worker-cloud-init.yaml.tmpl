@@ -97,12 +97,17 @@ write_files:
       ad=/opt/auditor/.audit
       # Copy the promptfoo output up to a flat name so the Broker can classify from it.
       cp -f "${ad}/logs/promptfoo.json" "${ad}/promptfoo.json" 2>/dev/null || true
-      # Frame: a one-line header with the exit code, then a tar of the raw evidence.
-      # The Broker validates the header and treats the bundle as untrusted.
-      {
-        printf 'AUDIT-RESULT rc=%s\n' "${rc}"
-        tar -C "${ad}" -cf - nightly-evidence.json promptfoo.json 2>/dev/null
-      } | socat - "VSOCK-CONNECT:${cid}:${port}"
+      # LENGTH-PREFIXED frame (Analysis T-G): a one-line header carrying the exit
+      # code AND the exact tar byte count, then the tar of raw evidence. Declaring
+      # the length lets the Broker read precisely that many bytes so the stream can
+      # never desync (the header line was the only frame delimiter before). The
+      # Broker validates the header and treats the bundle as untrusted.
+      tarf="$(mktemp)"
+      tar -C "${ad}" -cf "${tarf}" nightly-evidence.json promptfoo.json 2>/dev/null || true
+      len="$(wc -c < "${tarf}" | tr -d ' ')"
+      { printf 'AUDIT-RESULT rc=%s len=%s\n' "${rc}" "${len}"; cat "${tarf}"; } \
+        | socat - "VSOCK-CONNECT:${cid}:${port}"
+      rm -f "${tarf}"
 
 runcmd:
   - [ bash, /opt/worker-audit.sh ]

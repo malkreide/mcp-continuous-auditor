@@ -1,0 +1,31 @@
+# tinyproxy.conf.tmpl — domain-allowlist forward proxy for the microVM egress
+# (Analysis S-C). TEMPLATE: fill ${ALLOWLIST} (an absolute path to worker-allow.txt
+# or broker-allow.txt) and render/copy to tinyproxy.conf.
+#
+# This is the tier the nft files cannot provide: nft is a PORT + LAN allowlist,
+# but "only github/pypi/openai/telegram/…" is a per-DOMAIN policy. tinyproxy
+# applies the domain allowlist to both plain HTTP requests and HTTPS CONNECT
+# targets, default-deny — so egress is restricted to named hosts, not "any 443".
+
+Port 8888
+# With QEMU SLIRP the guest reaches the host loopback as 10.0.2.2, so a proxy bound
+# to 127.0.0.1 here is reachable from the Worker as http://10.0.2.2:8888. On the
+# Broker side, bind 127.0.0.1 and point the Broker's https_proxy at it locally.
+Listen 127.0.0.1
+Timeout 600
+
+# Only the local host (the SLIRP NAT / the Broker process) may use the proxy.
+Allow 127.0.0.1
+
+# Domain allowlist: default-deny, only hosts matching a line in ${ALLOWLIST} pass.
+Filter "${ALLOWLIST}"
+FilterDefaultDeny Yes
+FilterExtended On
+FilterCaseSensitive Off
+
+# HTTPS is CONNECT to 443; allow 80 for plain metadata/mirror endpoints.
+ConnectPort 443
+ConnectPort 80
+
+# No disk cache of proxied content; quiet logging.
+LogLevel Warning

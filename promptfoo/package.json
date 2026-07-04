@@ -1,0 +1,9 @@
+{
+  "name": "mcp-auditor-promptfoo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pinned promptfoo truth-engine for the MCP continuous auditor (Analysis T-G). The committed package-lock.json pins the FULL transitive tree with integrity hashes, so `npm ci` reproduces the exact deterministic gate every run instead of re-resolving `npx -y promptfoo@x` against a moving registry.",
+  "dependencies": {
+    "promptfoo": "0.121.17"
+  }
+}
