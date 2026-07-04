@@ -12,6 +12,8 @@ Covers:
 
 - `test_budget_guard.py` — the Phase-5 budget guardrails.
 - `test_nightly_audit_report.py` — the audit classifier (unit level).
+- `test_sync_findings_issues.py` — deterministic findings→issue routing: which
+  issues a summary implies + open-vs-comment dedup, no network (Analysis U-C).
 - `test_broker_pipeline.py` — the **real** Broker handler
   (`deploy/microvm/channel/_receive-one.sh`) driven end-to-end: verdict
   re-derivation + the tar path-traversal guard (Analysis S2). Needs `bash` + `tar`.

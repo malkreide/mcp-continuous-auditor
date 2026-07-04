@@ -80,14 +80,20 @@ orchestrator runs. Since that process holds the GitHub PAT + Anthropic key and
 runs shell tools, the **recommended deployment** is a dedicated, network-isolated
 device rather than your work PC.
 
-**Recommended: a dedicated Raspberry Pi 5 (8 GB).** The workload is light
-(orchestration + API calls, no local model), and a separate device adds a real
-hardware/network isolation layer on top of the existing Docker sandbox and
-fine-grained PAT. See **[docs/deployment/raspberry-pi.md](docs/deployment/raspberry-pi.md)**
-for the full guide (OS setup, ARM64 checks, egress allowlist, systemd hardening).
+**Start at Tier 0** — the whole auditor on one Linux box with OpenClaw's Docker
+sandbox + the deterministic gates, **no** microVM / TensorZero. The security core
+(read-only, PR-only, writer≠checker, deterministic truth, hard-fail discipline) is
+already there; the heavier isolation tiers are optional and adopted one at a time.
+See **[docs/deployment/tier-0.md](docs/deployment/tier-0.md)** for the tier table.
 
-Equivalent **alternatives** remain supported: a local Linux VM in its own subnet,
-or a cheap VPS. Trade-offs are documented in the same guide.
+**Recommended host: a dedicated Raspberry Pi 5 (8 GB)** (still Tier 0 — a *host*
+choice). A separate device adds a real hardware/network isolation layer on top of
+the Docker sandbox and fine-grained PAT. See
+**[docs/deployment/raspberry-pi.md](docs/deployment/raspberry-pi.md)** for the full
+guide. Equivalent alternatives: a local Linux VM in its own subnet, or a cheap VPS.
+
+Optional hardening tiers: host egress allowlist + forward-proxy → microVM
+Broker/Worker split → TensorZero cost-cap (see the tier table).
 
 ## Project Structure
 
@@ -97,7 +103,8 @@ openclaw/cron/    nightly-audit cron job spec + installer (daily 03:00 → Teleg
 skills/           python-auditor, fastmcp-testing, promptfoo-eval
 schemas/          generated tool-output JSON-Schemas = the drift detector
 promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures
-scripts/          audit harness, weekly live-probe + nightly-audit core + budget guard
+scripts/          audit harness, live-probe, nightly-audit core, budget guard,
+                  deterministic findings→issue routing, pinned-promptfoo installer
 tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
 tests/            stdlib unit tests (budget guard)
 .github/          CI = the source of truth (template for the target repo)
@@ -111,6 +118,13 @@ docs/observability/ Phase 5 TensorZero gateway (cost-caps, A/B, audit-trail)
 ## Roadmap
 
 Phase 0 baseline → 1 read-only auditor → 2 promptfoo CI gate → 3 PR-only writer → 4 cron + red-team → 5 hardening (forkd, TensorZero). See [docs/plans](docs/plans).
+
+> **Phase 3 status — the finding → fix → PR write path is agent-assisted and
+> human-initiated, not an automated pipeline.** It is demonstrated end-to-end in
+> [`examples/worker-tdd-demo/`](examples/worker-tdd-demo/) (RED test → fix → GREEN
+> → PR) and governed by the TDD invariants in `openclaw/workspace/AGENTS.md`, but a
+> Worker only cuts a `fix/<slug>` PR after your explicit Telegram OK, per finding —
+> there is no committed automation that turns a finding into a PR on its own.
 
 ## Changelog
 
