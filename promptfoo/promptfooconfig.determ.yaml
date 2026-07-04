@@ -1,0 +1,98 @@
+# promptfooconfig.determ.yaml — the KEY-LESS deterministic profile (Analysis T-C).
+#
+# This profile runs the tool-output CONTRACT + the deterministic injection
+# negative-tests. Every assertion here is deterministic (is-json / javascript /
+# contains / not-contains) and the only provider is the in-process FastMCP call
+# (file://providers/call_tool.py) — so it needs **no model key at all**.
+#
+# WHY A SEPARATE PROFILE: the credential-free Worker microVM
+# (deploy/microvm/worker-cloud-init.yaml.tmpl) holds no API keys by design. The
+# monolithic config's llm-rubric grader + generative red-team need a key, so the
+# Worker would hard-fail on them every night. The Worker therefore runs ONLY this
+# profile (PROMPTFOO_PROFILE=determ); the llm-rubric + red-team layer lives in the
+# graded profile (promptfooconfig.yaml), run in CI-with-secrets and by a keyed
+# operator run — never on the credential-free Worker.
+#
+# A determ-only pass is NOT a full pass: nightly_audit_report.py stamps the run's
+# profile so a green determ run is never read as "red-team clear".
+description: "zurich-opendata-mcp — deterministic contract + schema-drift + injection (key-less)"
+
+providers:
+  # Calls the MCP tool/resource in-process via the FastMCP in-memory client.
+  - id: file://providers/call_tool.py
+    label: mcp-direct
+
+tests:
+  # ─── (1) is-json contract: schemas are the drift detector ──────────────────
+  - description: "datastore_sql: valid query returns schema-conformant JSON"
+    vars:
+      tool: zurich_datastore_sql
+      fixture: datastore_sql
+      args: '{"resource_id": "FIXTURE", "sql": "SELECT * FROM \"x\" LIMIT 5"}'
+    assert:
+      - type: is-json
+        value: file://../schemas/zurich_datastore_sql.json
+      - type: javascript
+        value: "JSON.parse(output).records.length <= 5"
+
+  - description: "geo layer A (Stadtkreise): GeoJSON FeatureCollection is schema-conformant"
+    vars:
+      resource: "zurich://geo/stadtkreise"
+      fixture: geo_layer_stadtkreise
+    assert:
+      - type: is-json
+        value: file://../schemas/geojson_featurecollection.json
+      - type: javascript
+        value: "JSON.parse(output).type === 'FeatureCollection'"
+
+  - description: "geo layer B (Quartiere): GeoJSON FeatureCollection is schema-conformant"
+    vars:
+      resource: "zurich://geo/quartiere"
+      fixture: geo_layer_quartiere
+    assert:
+      - type: is-json
+        value: file://../schemas/geojson_featurecollection.json
+      - type: javascript
+        value: "JSON.parse(output).features.every(f => f.type === 'Feature')"
+
+  # The zurich_geo_features TOOL returns a Markdown summary, not GeoJSON
+  # (audit 2026-06-27). Encode that as a contract so a future switch to raw
+  # JSON shows up as a failed expectation, not a silent change.
+  - description: "geo_features tool: Markdown summary, intentionally NOT raw GeoJSON"
+    vars:
+      tool: zurich_geo_features
+      fixture: geo_layer_stadtkreise
+      args: '{"layer_id": "stadtkreise"}'
+    assert:
+      - type: javascript
+        value: |
+          (() => { try { JSON.parse(output); return false; } catch { return true; } })()
+
+  # ─── (2) injection negative-tests (deterministic — no grader needed) ────────
+  - description: "datastore_sql: stacked-statement injection is rejected, payload not forwarded"
+    vars:
+      tool: zurich_datastore_sql
+      # Rejected by _validate_select_only BEFORE any network call -> no fixture.
+      args: '{"resource_id": "FIXTURE", "sql": "SELECT 1; DROP TABLE x;--"}'
+    assert:
+      - type: not-contains
+        value: "DROP TABLE"
+      - type: contains-any
+        value: ["error", "Error", "abgelehnt", "not allowed", "rejected", "invalid"]
+
+  - description: "datastore_sql: non-SELECT (DELETE) is rejected"
+    vars:
+      tool: zurich_datastore_sql
+      args: '{"resource_id": "FIXTURE", "sql": "DELETE FROM \"x\""}'
+    assert:
+      - type: contains-any
+        value: ["error", "Error", "abgelehnt", "not allowed", "rejected", "SELECT"]
+
+  - description: "search_stadtratsbeschluesse: quote in query is escaped, no raw DROP forwarded"
+    vars:
+      tool: search_stadtratsbeschluesse
+      fixture: strb_search
+      args: '{"query": "x''; DROP TABLE y;--"}'
+    assert:
+      - type: not-contains
+        value: "DROP TABLE y"

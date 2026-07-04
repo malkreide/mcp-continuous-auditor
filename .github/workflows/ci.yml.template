@@ -6,8 +6,14 @@
 # so this file ships as `.yml.template` and does not execute here.
 #
 # To activate in the target repo: copy to `.github/workflows/ci.yml`, then mark
-# the `verify` and `promptfoo` jobs as REQUIRED status checks in branch
+# the `verify`, `determ` and `graded` jobs as REQUIRED status checks in branch
 # protection on `main`. No deploy, no push to main — humans are the merge gate.
+#
+# The promptfoo layer is split at the credential boundary (Analysis T-C):
+#   * determ — key-less contract + schema-drift + injection. No secrets, so it
+#              runs on every PR (incl. forks). This is the deterministic gate.
+#   * graded — the model-graded layer (llm-rubric + committed red-team). Needs a
+#              grader key; runs the profile the credential-free Worker never does.
 
 name: ci
 
@@ -38,12 +44,42 @@ jobs:
       - name: Test
         run: uv run pytest
 
-  promptfoo:
-    # REQUIRED status check. Mark this job ("promptfoo eval (contract + red-team)")
-    # as required in branch protection on `main` so a PR cannot merge while the
-    # schema-drift gate or any contract/injection assertion is red (Plan Phase 2:
-    # "a PR with a deliberately broken schema is stopped red by CI").
-    name: promptfoo eval (contract + red-team)
+  determ:
+    # REQUIRED status check — the KEY-LESS deterministic gate (contract + schema
+    # drift + injection). No secrets, so it runs on every PR incl. forks. Mark it
+    # required in branch protection so a broken schema / contract stops the PR red
+    # (Plan Phase 2: "a PR with a deliberately broken schema is stopped red by CI").
+    name: promptfoo determ (contract + schema-drift, key-less)
+    runs-on: ubuntu-latest
+    needs: verify
+    env:
+      # Pin the truth-engine — never eval at @latest (a moving deterministic gate).
+      PROMPTFOO_VERSION: "0.121.17"
+      # Import path of the FastMCP server instance in the target repo.
+      MCP_SERVER_IMPORT: zurich_opendata_mcp.server:mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Sync Python deps (FastMCP in-memory client)
+        run: uv sync --all-extras --dev
+      - name: Schema-drift gate — regenerate from type hints, fail on any diff
+        # Deterministic: if a tool's return type (or upstream shape) changed and
+        # the committed schemas/ were not regenerated, this exits non-zero.
+        run: uv run python schemas/generate_schemas.py --check
+      - name: Run promptfoo determ profile (no model key required)
+        run: |
+          npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
+            -c promptfoo/promptfooconfig.determ.yaml
+
+  graded:
+    # REQUIRED status check — the MODEL-GRADED layer (llm-rubric + committed
+    # red-team). This is the profile the credential-free Worker never runs; here in
+    # CI a scoped grader key is available. Runs on every PR from the base repo.
+    name: promptfoo graded (llm-rubric + red-team)
     runs-on: ubuntu-latest
     needs: verify
     env:
@@ -58,9 +94,7 @@ jobs:
       GRADER_PROVIDER: ${{ vars.GRADER_PROVIDER }}
       # Escape hatch for the writer!=grader guard below (leave unset in normal use).
       ALLOW_SAME_FAMILY_GRADER: ${{ vars.ALLOW_SAME_FAMILY_GRADER }}
-      # Pin the truth-engine — never eval at @latest (a moving deterministic gate).
       PROMPTFOO_VERSION: "0.121.17"
-      # Import path of the FastMCP server instance in the target repo.
       MCP_SERVER_IMPORT: zurich_opendata_mcp.server:mcp
     steps:
       - uses: actions/checkout@v4
@@ -84,14 +118,20 @@ jobs:
               fi
               echo "::warning::same-family grader allowed via ALLOW_SAME_FAMILY_GRADER=1 — not an independent check." ;;
           esac
-      - name: Schema-drift gate — regenerate from type hints, fail on any diff
-        # Deterministic: if a tool's return type (or upstream shape) changed and
-        # the committed schemas/ were not regenerated, this exits non-zero.
-        run: uv run python schemas/generate_schemas.py --check
-      - name: Run promptfoo (contract asserts + injection + red-team)
-        # Adjust the config path to wherever you copy promptfoo/ in the target repo.
+      - name: Run promptfoo graded profile (llm-rubric + committed red-team)
         # Pinned version (never @latest); --grader override keeps writer != checker.
         run: |
           npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
             -c promptfoo/promptfooconfig.yaml \
             ${GRADER_PROVIDER:+--grader "$GRADER_PROVIDER"}
+      - name: Evaluate the generated red-team set (if committed)
+        # The generative expansion (promptfoo/redteam/generate.sh) is committed via
+        # a reviewed PR; eval it here when present so the expanded cases gate too.
+        run: |
+          if [ -f promptfoo/redteam/redteam.generated.yaml ]; then
+            npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
+              -c promptfoo/redteam/redteam.generated.yaml \
+              ${GRADER_PROVIDER:+--grader "$GRADER_PROVIDER"}
+          else
+            echo "no committed redteam.generated.yaml — skipping (run promptfoo/redteam/generate.sh to add it)"
+          fi

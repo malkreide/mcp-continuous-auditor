@@ -35,8 +35,18 @@
 #   AUDIT_DIR           work dir, gitignored (default: <repo>/.audit)
 #   MCP_SERVER_IMPORT   FastMCP server ref for the schema gate
 #                       (default: zurich_opendata_mcp.server:mcp)
-#   PROMPTFOO_CONFIG    path to promptfooconfig.yaml inside the target checkout
-#                       (default: promptfoo/promptfooconfig.yaml)
+#   PROMPTFOO_PROFILE   which promptfoo profile to evaluate (Analysis T-C):
+#                         determ  key-less deterministic contract + injection —
+#                                 the credential-free Worker runs ONLY this
+#                                 (promptfoo/promptfooconfig.determ.yaml);
+#                         graded  the model-graded layer (llm-rubric + committed
+#                                 red-team), NEEDS a grader key
+#                                 (promptfoo/promptfooconfig.yaml);
+#                         full    same file as graded (it includes the determ tests).
+#                       Default: determ. A determ-only pass is stamped in the
+#                       summary so it is never read as "red-team clear".
+#   PROMPTFOO_CONFIG    explicit config path inside the target checkout — overrides
+#                       PROMPTFOO_PROFILE when set.
 #   PROMPTFOO_VERSION   pinned promptfoo version — the truth-engine is NOT run at
 #                       @latest (that would make a "deterministic" gate reload a
 #                       moving target every night). Default: 0.121.17.
@@ -61,7 +71,10 @@ TARGET_REPO="${TARGET_REPO:-malkreide/zurich-opendata-mcp}"
 TARGET_REF="${TARGET_REF:-${1:-main}}"
 AUDIT_DIR="${AUDIT_DIR:-${REPO_ROOT}/.audit}"
 MCP_SERVER_IMPORT="${MCP_SERVER_IMPORT:-zurich_opendata_mcp.server:mcp}"
-PROMPTFOO_CONFIG="${PROMPTFOO_CONFIG:-promptfoo/promptfooconfig.yaml}"
+# PROMPTFOO_PROFILE selects the profile evaluated this run; it is resolved to a
+# concrete config path after the hard_fail helper is defined (below). An explicit
+# PROMPTFOO_CONFIG overrides it. Default: determ (key-less — safe on the Worker).
+PROMPTFOO_PROFILE="${PROMPTFOO_PROFILE:-determ}"
 # Pin the truth-engine: a deterministic gate must not silently reload a new
 # promptfoo (plugin renames / behaviour changes) on every run. Bump deliberately.
 PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-0.121.17}"
@@ -84,6 +97,7 @@ hard_fail() {
   echo "FATAL: ${reason}" >&2
   python3 "${HERE}/nightly_audit_report.py" \
     --ruff 127 --mypy 127 --pytest 127 --schema-drift 127 --promptfoo-rc 127 \
+    --promptfoo-profile "${PROMPTFOO_PROFILE}" \
     --target "${TARGET_REPO}" --sha "unknown" \
     --out-report "${report_path}" --out-summary "${summary_path}" >/dev/null 2>&1 || true
   exit 1
@@ -107,6 +121,19 @@ case "${GRADER_PROVIDER:-}" in
     echo "!! WARNING: same-family grader '${GRADER_PROVIDER}' allowed via ALLOW_SAME_FAMILY_GRADER=1 — this is NOT an independent check." >&2
     ;;
 esac
+
+# --- resolve the promptfoo profile -> config (Analysis T-C) --------------------
+# The credential-free Worker runs the key-less `determ` profile; the graded layer
+# (llm-rubric + committed red-team) runs where a key exists (CI-with-secrets / a
+# keyed operator run). An explicit PROMPTFOO_CONFIG overrides the mapping.
+if [ -z "${PROMPTFOO_CONFIG:-}" ]; then
+  case "${PROMPTFOO_PROFILE}" in
+    determ)      PROMPTFOO_CONFIG="promptfoo/promptfooconfig.determ.yaml" ;;
+    graded|full) PROMPTFOO_CONFIG="promptfoo/promptfooconfig.yaml" ;;
+    *) hard_fail "unknown PROMPTFOO_PROFILE='${PROMPTFOO_PROFILE}' — use determ|graded|full" ;;
+  esac
+fi
+echo "==> promptfoo profile: ${PROMPTFOO_PROFILE}  (config: ${PROMPTFOO_CONFIG})"
 
 # --- 0) budget guard preflight (Phase 5) --------------------------------------
 # The circuit breaker stops us from re-spending tokens on a wedged environment.
@@ -226,6 +253,7 @@ cat > "${evidence_path}" <<EOF
   "schema": 1,
   "target": "${TARGET_REPO}",
   "target_sha": "${sha}",
+  "promptfoo_profile": "${PROMPTFOO_PROFILE}",
   "gates": {
     "ruff": ${rc_ruff},
     "mypy": ${rc_mypy},
@@ -242,6 +270,7 @@ python3 "${HERE}/nightly_audit_report.py" \
   --ruff "${rc_ruff}" --mypy "${rc_mypy}" --pytest "${rc_pytest}" \
   --schema-drift "${rc_schema}" \
   --promptfoo-rc "${rc_pf}" --promptfoo-json "${pf_json}" \
+  --promptfoo-profile "${PROMPTFOO_PROFILE}" \
   --target "${TARGET_REPO}" --sha "${sha}" \
   --out-report "${report_path}" --out-summary "${summary_path}"
 outcome_rc=$?

@@ -236,10 +236,18 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     else:
         outcome, exit_code = "findings", EXIT_FINDINGS
 
+    # Which promptfoo profile produced this verdict (Analysis T-C). A determ-only
+    # run did NOT exercise the model-graded layer (llm-rubric + red-team), so a
+    # green determ verdict must never be read as "red-team clear".
+    profile = (getattr(args, "promptfoo_profile", "") or "unknown")
+    graded_layer_ran = profile in ("graded", "full")
+
     return {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "target": args.target,
         "target_sha": args.sha,
+        "promptfoo_profile": profile,
+        "graded_layer_ran": graded_layer_ran,
         "outcome": outcome,
         "exit_code": exit_code,
         "green": green,
@@ -283,7 +291,20 @@ def render_report(s: dict[str, Any]) -> str:
         f"- pytest: {_status(s['gates']['pytest'])}",
         f"- schema-drift gate: {_status(s['gates']['schema_drift_gate'])}",
         f"- promptfoo (contract + red-team): {_status(s['gates']['promptfoo_rc'])}",
+        f"- promptfoo profile: **{s.get('promptfoo_profile', 'unknown')}**",
     ]
+
+    # A determ-only run did not exercise the model-graded layer. Say so loudly so
+    # a green determ verdict is never mistaken for a full red-team pass (T-C).
+    if not s.get("graded_layer_ran", False):
+        lines += [
+            "",
+            "> **Note — deterministic profile only.** This run evaluated the "
+            "key-less contract + injection layer. The model-graded layer "
+            "(llm-rubric + red-team) did **not** run here — it runs in "
+            "CI-with-secrets / a keyed run. A green result means the deterministic "
+            "layer passed, **not** that the red-team is clear.",
+        ]
 
     if s["hard_fail"]:
         lines += ["", "## ⛔ Hard failure"]
@@ -339,6 +360,8 @@ def main() -> int:
     p.add_argument("--from-evidence", default="", dest="from_evidence",
                    help="read gate exit codes (+ target/sha) from a Worker evidence JSON")
     p.add_argument("--promptfoo-json", default="", dest="promptfoo_json")
+    p.add_argument("--promptfoo-profile", default="", dest="promptfoo_profile",
+                   help="which promptfoo profile ran (determ|graded|full); stamped into the summary")
     p.add_argument("--target", default="")
     p.add_argument("--sha", default="unknown")
     p.add_argument("--out-report", required=True, dest="out_report")
@@ -354,6 +377,8 @@ def main() -> int:
             args.target = str(ev.get("target") or "unknown")
         if not args.sha or args.sha == "unknown":
             args.sha = str(ev.get("target_sha") or "unknown")
+        if not args.promptfoo_profile:
+            args.promptfoo_profile = str(ev.get("promptfoo_profile") or "")
     else:
         missing = [f"--{n.replace('_', '-')}" for n in _GATE_NAMES if getattr(args, n) is None]
         if missing:

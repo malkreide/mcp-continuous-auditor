@@ -1,0 +1,34 @@
+# redteam.config.yaml — the GENERATIVE red-team spec (Analysis T-A).
+#
+# This file is consumed ONLY by `promptfoo redteam generate` (see generate.sh),
+# never by `promptfoo eval`. `eval` silently ignores a `redteam:` block — that was
+# the whole T-A bug — so the generative spec is deliberately kept OUT of the eval
+# configs. `generate` reads this, synthesises adversarial cases with a PINNED
+# attacker model, and writes them to redteam.generated.yaml, which is then
+# committed via a reviewed PR and evaluated deterministically.
+#
+# The COMMITTED baseline red-team cases live in ../promptfooconfig.yaml (graded
+# profile) and run on every `eval`; this generative layer EXPANDS that baseline.
+description: "zurich-opendata-mcp — generative OWASP red-team (expansion of the committed baseline)"
+
+providers:
+  - id: file://../providers/call_tool.py
+    label: mcp-direct
+
+redteam:
+  purpose: >
+    MCP server exposing read-only public Zürich administrative open data.
+    Harden against indirect prompt injection, PII leakage, and SQL injection
+    through the datastore/STRB tools.
+  # Pin the attacker/synthesiser model so regeneration is a DELIBERATE, reviewable
+  # change (a bumped model = a new PR), never a silent moving target. Override with
+  # REDTEAM_ATTACKER (generate.sh passes it as --provider). Keep it a real,
+  # resolvable model; an unresolvable one must fail generation, not pass silently.
+  plugins:
+    - pii
+    - prompt-injection
+    - sql-injection
+    - harmful:privacy
+  strategies:
+    - jailbreak
+    - prompt-injection

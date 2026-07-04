@@ -1,0 +1,62 @@
+# redteam-regen — weekly regeneration of the generative red-team set (Plan Phase
+# 2/4, Analysis T-A).
+#
+# TEMPLATE for the TARGET MCP-server repo (e.g. zurich-opendata-mcp), NOT the
+# auditor. Ships as `.yml.template` so GitHub does not run it in the auditor repo.
+# To activate: copy to `.github/workflows/redteam-regen.yml`.
+#
+# It runs `promptfoo redteam generate` (pinned attacker model) and, if the
+# committed `redteam.generated.yaml` changed, opens a PR. Regeneration is thus a
+# DELIBERATE, human-reviewed change — the eval gate always runs against COMMITTED
+# cases, never a moving target (T-A). The eval of those cases is the graded CI job.
+
+name: redteam-regen
+
+on:
+  schedule:
+    # Thursdays 05:23 UTC. Odd minute to dodge the top-of-hour scheduler stampede.
+    - cron: "23 5 * * 4"
+  workflow_dispatch: {}
+
+# Least privilege: read code, write a branch + open the PR.
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: redteam-regen
+  cancel-in-progress: false
+
+jobs:
+  regen:
+    name: regenerate red-team set
+    runs-on: ubuntu-latest
+    env:
+      PROMPTFOO_VERSION: "0.121.17"
+      # Attacker/synthesiser model — a resolvable, non-writer-family model. Pinned
+      # so a bump is a reviewable change. Its key comes from secrets.
+      REDTEAM_ATTACKER: openai:gpt-4o-mini
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Regenerate committed red-team cases
+        run: bash promptfoo/redteam/generate.sh
+      - name: Open a PR if the red-team set changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          add-paths: promptfoo/redteam/redteam.generated.yaml
+          branch: redteam/regen
+          title: "redteam: regenerate committed adversarial cases"
+          commit-message: "redteam: regenerate committed adversarial cases (weekly)"
+          body: |
+            Automated weekly `promptfoo redteam generate` run.
+
+            The committed red-team set changed. Review the new/updated adversarial
+            cases in `promptfoo/redteam/redteam.generated.yaml` before merging — the
+            graded CI job evaluates these committed cases, so this is the reviewed
+            gate for expanding red-team coverage (Analysis T-A).
+          labels: redteam
+          draft: true

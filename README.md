@@ -51,8 +51,15 @@ openclaw start --config openclaw/openclaw.json
 #    -> returns a ruff/mypy/pytest report, read-only, no code changes
 
 # 3. Run the deterministic verification locally
+#    key-less profile (no model key needed):
+promptfoo eval -c promptfoo/promptfooconfig.determ.yaml
+#    full graded profile (llm-rubric + red-team; needs a grader key):
 promptfoo eval -c promptfoo/promptfooconfig.yaml
 ```
+
+> promptfoo is split into two profiles at the credential boundary — a key-less
+> **determ** profile (the credential-free Worker runs only this) and a **graded**
+> profile (llm-rubric + red-team, needs a grader key). See [promptfoo/README.md](promptfoo/README.md).
 
 ## Configuration
 

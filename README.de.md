@@ -51,8 +51,16 @@ openclaw start --config openclaw/openclaw.json
 #    -> liefert einen ruff/mypy/pytest-Report, read-only, ohne Code-Aenderung
 
 # 3. Deterministische Verifikation lokal ausfuehren
+#    key-loses Profil (kein Modell-Key noetig):
+promptfoo eval -c promptfoo/promptfooconfig.determ.yaml
+#    volles graded-Profil (llm-rubric + Red-Team; braucht Grader-Key):
 promptfoo eval -c promptfoo/promptfooconfig.yaml
 ```
+
+> promptfoo ist an der Credential-Grenze in zwei Profile geteilt — ein key-loses
+> **determ**-Profil (nur dieses fährt der credential-freie Worker) und ein
+> **graded**-Profil (llm-rubric + Red-Team, braucht Grader-Key). Siehe
+> [promptfoo/README.md](promptfoo/README.md).
 
 ## Konfiguration
 
