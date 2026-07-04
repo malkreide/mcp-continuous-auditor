@@ -113,7 +113,8 @@ cp .env.example .env        # Tokens eintragen — NIE committen (.gitignore dec
 
 Trage in `.env` ein: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOW_FROM`,
 `ANTHROPIC_API_KEY`, `GITHUB_TOKEN` (fine-grained, nur Ziel-Repo,
-contents + pull-requests, **keine** Secrets), `TARGET_REPO`.
+contents + pull-requests + **issues**, **keine** Secrets — `issues: write` für
+die Findings-Tickets), `TARGET_REPO`.
 
 ## 5. Netzwerk-Isolation (der eigentliche Sicherheitsgewinn)
 
@@ -188,7 +189,7 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 - [ ] Egress-Allowlist am Router aktiv (Tabelle oben), Rest blockiert
 - [ ] Keine eingehenden Portfreigaben
 - [ ] `.env` mit `chmod 600`, nicht im Git
-- [ ] GitHub-PAT fein-granular: nur Ziel-Repo, contents + pull-requests, keine Secrets
+- [ ] GitHub-PAT fein-granular: nur Ziel-Repo, contents + pull-requests + issues, keine Secrets
 - [ ] Docker-Gruppe nur für den Service-Benutzer
 - [ ] `unattended-upgrades` für Sicherheits-Patches aktiv
 - [ ] systemd-Härtung (`NoNewPrivileges`, `ProtectSystem=strict`) gesetzt

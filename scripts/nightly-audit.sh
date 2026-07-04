@@ -43,6 +43,11 @@
 #   GRADER_PROVIDER     llm-rubric grader — MUST be a different model family than
 #                       the writer agent (writer != checker). Passed to promptfoo
 #                       as --grader when set; otherwise the config default is used.
+#                       An Anthropic value is refused (hard-fail) unless
+#                       ALLOW_SAME_FAMILY_GRADER=1 (Analysis S-F).
+#   SCHEMA_GATE         schema-drift gate policy (default on). A missing generator
+#                       in the target is a FINDING; set off to allow a target that
+#                       genuinely ships no output schemas (Analysis T-D).
 #   BUDGET_GUARD        Phase-5 budget guardrails (default: on; set 0/off to skip)
 #                       — circuit breaker + token ceiling, see budget_guard.py /
 #                       docs/budget/guardrails.md. Tunable via BUDGET_* env vars.
@@ -60,6 +65,10 @@ PROMPTFOO_CONFIG="${PROMPTFOO_CONFIG:-promptfoo/promptfooconfig.yaml}"
 # Pin the truth-engine: a deterministic gate must not silently reload a new
 # promptfoo (plugin renames / behaviour changes) on every run. Bump deliberately.
 PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-0.121.17}"
+# Schema-drift gate policy: on by default. A MISSING generator in the target is a
+# finding (fail-closed, Analysis T-D); set SCHEMA_GATE=off to allow a target that
+# genuinely ships no output schemas.
+SCHEMA_GATE="${SCHEMA_GATE:-on}"
 
 repo_name="${TARGET_REPO##*/}"
 src_dir="${AUDIT_DIR}/${repo_name}"
@@ -82,6 +91,22 @@ hard_fail() {
 
 command -v git >/dev/null || hard_fail "git not found"
 command -v uv  >/dev/null || hard_fail "uv not found (required for ruff/mypy/pytest + schema gate)"
+
+# --- writer != checker guard (Analysis S-F) -----------------------------------
+# The auditor writer / tool path is Anthropic. An llm-rubric grader of the SAME
+# family shares the writer's blind spots and is not an independent check. If the
+# operator points GRADER_PROVIDER back at Anthropic, refuse to run (hard-fail)
+# rather than silently produce a correlated "independent" verdict. Deliberate
+# override: ALLOW_SAME_FAMILY_GRADER=1 (with a loud warning). When GRADER_PROVIDER
+# is unset the config's own cross-family default (openai:gpt-4o-mini) is used.
+case "${GRADER_PROVIDER:-}" in
+  anthropic:*|anthropic/*|"anthropic")
+    if [ "${ALLOW_SAME_FAMILY_GRADER:-0}" != "1" ]; then
+      hard_fail "GRADER_PROVIDER='${GRADER_PROVIDER}' is the SAME family as the Anthropic writer — writer != checker. Use a different family (e.g. openai:gpt-4o-mini or ollama:chat:llama3.1), or set ALLOW_SAME_FAMILY_GRADER=1 if you truly intend a correlated grader."
+    fi
+    echo "!! WARNING: same-family grader '${GRADER_PROVIDER}' allowed via ALLOW_SAME_FAMILY_GRADER=1 — this is NOT an independent check." >&2
+    ;;
+esac
 
 # --- 0) budget guard preflight (Phase 5) --------------------------------------
 # The circuit breaker stops us from re-spending tokens on a wedged environment.
@@ -150,10 +175,19 @@ if [ -f "${src_dir}/schemas/generate_schemas.py" ]; then
       uv run python schemas/generate_schemas.py --check ) \
     >"${log_dir}/schema-drift.log" 2>&1
   rc_schema=$?
-else
-  echo "    no schemas/generate_schemas.py in target — gate not present" \
+elif [ "${SCHEMA_GATE}" = "0" ] || [ "${SCHEMA_GATE}" = "off" ]; then
+  echo "    no schemas/generate_schemas.py — schema gate explicitly disabled (SCHEMA_GATE=off)" \
     | tee "${log_dir}/schema-drift.log"
-  rc_schema=0   # absence is not drift; the promptfoo is-json asserts still guard the contract.
+  rc_schema=0
+else
+  # Analysis T-D: a MISSING schema generator was silently treated as a pass, which
+  # let a removed/absent drift detector disable a core gate without failing the
+  # run. Fail closed: absence is a finding (exit 2), not green. Opt out only with
+  # an explicit SCHEMA_GATE=off when the target genuinely has no output schemas.
+  echo "    no schemas/generate_schemas.py in target — schema-drift gate MISSING; " \
+       "treated as a finding (set SCHEMA_GATE=off to allow a target without one)" \
+    | tee "${log_dir}/schema-drift.log"
+  rc_schema=2
 fi
 
 # --- 4) promptfoo eval (contract + OWASP red-team) ----------------------------

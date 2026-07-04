@@ -123,6 +123,38 @@ class ClassifierTest(unittest.TestCase):
         self.assertEqual(s["outcome"], "hard-fail")
         self.assertTrue(s["hard_fail"])
 
+    def test_promptfoo_success_without_output_is_hard_fail(self) -> None:
+        # Analysis S-A: evidence claims promptfoo passed (rc 0) but ships NO
+        # promptfoo JSON. The eval cannot be verified -> hard-fail, never green.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+        })
+        s = self._classify(ev, "")  # no --promptfoo-json
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertFalse(s["green"])
+        self.assertTrue(any("evidence incomplete" in r for r in s["hard_fail_reasons"]))
+
+    def test_unclassified_failure_is_other_not_schema_drift(self) -> None:
+        # Analysis T-F: a failure that is neither a contract/schema assertion nor a
+        # red-team hit must classify as its own 'other' finding — NOT be folded into
+        # schema_drift (which would falsely report a drift).
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": [
+            {"success": False, "testCase": {"description": "injection negative-test"},
+             "gradingResult": {"componentResults": [
+                 {"pass": False, "assertion": {"type": "not-contains"}}]}},
+        ]}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "findings")
+        self.assertFalse(s["green"])
+        self.assertTrue(s["other_findings"])
+        self.assertFalse(s["schema_drift"])  # the key property: not mislabelled
+        self.assertFalse(s["redteam"])
+
     def test_partial_evidence_missing_gate_defaults_to_hard_fail(self) -> None:
         # A gate omitted from the evidence must read as could-not-run (127),
         # never as an implicit pass.
