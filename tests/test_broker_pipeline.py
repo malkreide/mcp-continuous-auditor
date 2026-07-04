@@ -53,10 +53,9 @@ class BrokerPipelineTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _deliver(self, members: dict[str, bytes], header: bytes = b"AUDIT-RESULT rc=0\n") -> dict:
-        """Run the real handler with `header + tar(members)` on stdin; return the
-        Broker-produced nightly-summary.json as a dict."""
-        payload = header + _tar_bytes(members)
+    def _run_payload(self, payload: bytes) -> dict:
+        """Feed raw `payload` (header + tar bytes) to the real handler on stdin;
+        return the Broker-produced nightly-summary.json as a dict."""
         env = {
             "DROPBOX": str(self.dropbox),
             "REPORT_PY": str(REPORT_PY),
@@ -74,6 +73,10 @@ class BrokerPipelineTest(unittest.TestCase):
         self.assertEqual(len(run_dirs), 1, "handler must create exactly one run dir")
         self.run_dir = run_dirs[0]
         return json.loads((self.run_dir / "nightly-summary.json").read_text())
+
+    def _deliver(self, members: dict[str, bytes], header: bytes = b"AUDIT-RESULT rc=0\n") -> dict:
+        """Run the real handler with `header + tar(members)` on stdin."""
+        return self._run_payload(header + _tar_bytes(members))
 
     @staticmethod
     def _evidence(gates: dict, target: str = "o/r", sha: str = "abc1234") -> bytes:
@@ -138,6 +141,33 @@ class BrokerPipelineTest(unittest.TestCase):
         self.assertFalse((self.dropbox / "escape.json").exists())
         self.assertFalse(Path("/tmp/mcp-broker-pwned.json").exists())
         self.assertFalse((self.run_dir / "nested").exists())
+
+    def test_symlink_evidence_member_is_rejected(self) -> None:
+        # Analysis S-D: a member named nightly-evidence.json that is actually a
+        # SYMLINK to a Broker file must be dropped (not followed) — else the
+        # classifier becomes an arbitrary-file read. It reads as ABSENT -> hard-fail.
+        secret = Path(self.tmp.name) / "broker-secret.json"
+        secret.write_text(json.dumps({
+            "target": "o/r", "target_sha": "abc1234", "gates": _GREEN_GATES,
+        }), encoding="utf-8")
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            pj = json.dumps({"results": {"stats": {"errors": 0}, "results": []}}).encode()
+            info = tarfile.TarInfo(name="promptfoo.json")
+            info.size = len(pj)
+            tar.addfile(info, io.BytesIO(pj))
+            link = tarfile.TarInfo(name="nightly-evidence.json")
+            link.type = tarfile.SYMTYPE
+            link.linkname = str(secret)  # point the "evidence" at a Broker file
+            tar.addfile(link)
+
+        s = self._run_payload(b"AUDIT-RESULT rc=0\n" + buf.getvalue())
+        # The symlink was dropped: no evidence file, so the verdict is hard-fail,
+        # and the secret was never consumed as evidence (its green gates ignored).
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertFalse(s["green"])
+        self.assertFalse((self.run_dir / "nightly-evidence.json").exists())
 
 
 if __name__ == "__main__":

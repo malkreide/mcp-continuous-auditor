@@ -94,20 +94,24 @@ bash deploy/microvm/channel/broker-listener.sh 9000 ./.audit/incoming
 # (Im echten Betrieb als systemd-Unit dauerhaft laufen lassen.)
 ```
 
-### 2c. Throwaway-Worker-Lauf
+### 2c. Throwaway-Worker-Lauf (über den Breaker-Orchestrator)
 
-In einem zweiten Terminal:
+In einem zweiten Terminal — nutze `run-audit-cycle.sh` als Broker-Entrypoint
+(er verdrahtet den Budget-Breaker, Analysis T-B), nicht `run-worker.sh` direkt:
 
 ```bash
-bash deploy/microvm/run-worker.sh
+DROPBOX=./.audit/incoming bash deploy/microvm/run-audit-cycle.sh
 ```
 
-Das erzeugt ein frisches qcow2-Overlay, bootet die Worker-VM (eigener
-Gast-Kernel via KVM), die VM klont den Auditor, läuft `nightly-audit.sh`
-**read-only** gegen das Ziel, schickt die **rohe Evidenz** (`nightly-evidence.json`
-= Gate-Exit-Codes + die promptfoo-JSON) über vsock zum Broker und **schaltet sich
-ab**. Das Overlay wird verworfen. (`run-worker.sh` bootet nur mit geladener
-Egress-Allowlist — siehe §3 — sonst verweigert es den Start.)
+`run-audit-cycle.sh` (1) ruft `budget_guard preflight` — bei **offenem** Breaker
+wird der Lauf übersprungen; (2) startet `run-worker.sh`: das erzeugt ein frisches
+qcow2-Overlay, bootet die Worker-VM (eigener Gast-Kernel via KVM), die VM klont
+den Auditor **an einem gepinnten, verifizierten SHA** (Analysis S-B), läuft
+`nightly-audit.sh` **read-only** (`PROMPTFOO_PROFILE=determ`) gegen das Ziel,
+schickt die **rohe Evidenz** über vsock zum Broker und **schaltet sich ab** (das
+Overlay wird verworfen); (3) füttert das klassifizierte Ergebnis in
+`budget_guard record` — ein Lauf **ohne** eingegangene Evidenz zählt als
+Hard-Fail. (`run-worker.sh` bootet nur mit geladener Egress-Allowlist — siehe §3.)
 
 **Fertig wenn:** der Listener loggt `received -> …/<ts>-<pid>/ (…; broker-classified:
 <outcome>)` und dort liegen `nightly-summary.json` + `nightly-report.md` — **vom
@@ -149,16 +153,19 @@ Filter-Proxy — siehe `docs/deployment/forkd-isolation.md`.
 Im Zielbild ruft der OpenClaw-Cron (`openclaw/cron/nightly-audit.json`) nicht mehr
 `nightly-audit.sh` direkt auf, sondern:
 
-1. `deploy/microvm/run-worker.sh` (Worker macht den read-only Audit, schickt rohe
-   Evidenz; der `broker-listener` **klassifiziert sie auf der Broker-Seite**),
+1. `deploy/microvm/run-audit-cycle.sh` (Broker-Orchestrator, Analysis T-B):
+   `budget_guard preflight` → `run-worker.sh` (Worker macht den read-only Audit,
+   schickt rohe Evidenz; der `broker-listener` **klassifiziert sie auf der
+   Broker-Seite**) → `budget_guard record` (fehlende Evidenz = Hard-Fail),
 2. liest die **Broker-erzeugte** `./.audit/incoming/<neueste>/nightly-summary.json`,
 3. routet nach dem **Exit-Code** exakt wie heute (grün → Announce; Findings →
    Issue + nach Telegram-OK ein `fix/<slug>`-Draft-PR; hard-fail → stoppen).
 
 Der Modellaufruf für Schritt 2/3 läuft über das TensorZero-Gateway (Broker),
 der Cost-Cap greift über die Episode-Tokens. Der Breaker-State (`budget_guard`)
-lebt auf der **Broker-Seite** — der Worker läuft mit `BUDGET_GUARD=0`, weil seine
-VM throwaway ist und keine Historie über Läufe hält.
+lebt auf der **Broker-Seite** und wird von `run-audit-cycle.sh` gefüttert (nicht
+mehr funktionslos, Analysis T-B) — der Worker läuft mit `BUDGET_GUARD=0`, weil
+seine VM throwaway ist und keine Historie über Läufe hält.
 
 Der Worker fährt zudem `PROMPTFOO_PROFILE=determ` (Analysis T-C): er hält **keine**
 Keys, also läuft dort nur das key-lose deterministische Profil (Contract +

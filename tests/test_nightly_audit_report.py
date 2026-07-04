@@ -181,6 +181,35 @@ class ClassifierTest(unittest.TestCase):
         report = (self.dir / "report.md").read_text(encoding="utf-8")
         self.assertNotIn("deterministic profile only", report)
 
+    def test_invalid_target_metadata_is_hard_fail(self) -> None:
+        # Analysis S-D: a tampered target (spaces / newlines / shell) fails
+        # validation -> 'invalid' + hard-fail, never rendered raw.
+        ev = self._write("ev.json", {
+            "target": "o/r; rm -rf /\n## All green", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertEqual(s["target"], "invalid")
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertNotIn("rm -rf", report)
+
+    def test_control_chars_stripped_from_report(self) -> None:
+        # Analysis S-D: an untrusted promptfoo example with newlines / escapes must
+        # not inject Markdown structure or terminal escapes into the report sink.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 1},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 1}, "results": [
+            {"error": "boom\n## FAKE ALL GREEN\n\x1b[31mred"},
+        ]}})
+        s = self._classify(ev, pf)
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertNotIn("\n## FAKE ALL GREEN", report)  # no injected heading line
+        self.assertNotIn("\x1b", report)                 # no terminal escape
+
     def test_partial_evidence_missing_gate_defaults_to_hard_fail(self) -> None:
         # A gate omitted from the evidence must read as could-not-run (127),
         # never as an implicit pass.
