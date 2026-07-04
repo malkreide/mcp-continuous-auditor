@@ -155,6 +155,32 @@ class ClassifierTest(unittest.TestCase):
         self.assertFalse(s["schema_drift"])  # the key property: not mislabelled
         self.assertFalse(s["redteam"])
 
+    def test_determ_profile_flags_graded_layer_not_run(self) -> None:
+        # Analysis T-C: a green determ-only run must be stamped so it is never read
+        # as "red-team clear" — graded_layer_ran False + a loud report caveat.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234", "promptfoo_profile": "determ",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "green")
+        self.assertEqual(s["promptfoo_profile"], "determ")
+        self.assertFalse(s["graded_layer_ran"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("deterministic profile only", report)
+
+    def test_graded_profile_marks_layer_ran(self) -> None:
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234", "promptfoo_profile": "graded",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertTrue(s["graded_layer_ran"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertNotIn("deterministic profile only", report)
+
     def test_partial_evidence_missing_gate_defaults_to_hard_fail(self) -> None:
         # A gate omitted from the evidence must read as could-not-run (127),
         # never as an implicit pass.

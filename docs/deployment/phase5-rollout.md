@@ -160,6 +160,13 @@ der Cost-Cap greift über die Episode-Tokens. Der Breaker-State (`budget_guard`)
 lebt auf der **Broker-Seite** — der Worker läuft mit `BUDGET_GUARD=0`, weil seine
 VM throwaway ist und keine Historie über Läufe hält.
 
+Der Worker fährt zudem `PROMPTFOO_PROFILE=determ` (Analysis T-C): er hält **keine**
+Keys, also läuft dort nur das key-lose deterministische Profil (Contract +
+Injection). Die modell-gegradete Ebene (`llm-rubric` + Red-Team) läuft in
+CI-mit-Secrets bzw. einem keyed Lauf — nie in der Wegwerf-VM, wo ein fehlender Key
+sonst jede Nacht hard-failen würde. Das Verdikt trägt das Profil, damit ein
+determ-Grün nie als „Red-Team bestanden" gelesen wird.
+
 **Fertig wenn:** ein nächtlicher Lauf produziert ungefragt einen Report auf
 Telegram, dessen deterministisches Ergebnis in einer Wegwerf-VM ohne Credentials
 entstand, und dessen Kosten im ClickHouse-Audit-Trail stehen.

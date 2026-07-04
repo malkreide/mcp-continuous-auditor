@@ -37,8 +37,14 @@ write_files:
       echo "[worker] running nightly-audit (read-only) against ${TARGET_REPO}"
       # The Worker disables the budget guard's state writes here (BUDGET_GUARD=0):
       # the breaker lives on the Broker side where the run history persists across
-      # throwaway VMs. The deterministic gates + report still run in full.
+      # throwaway VMs.
+      # PROMPTFOO_PROFILE=determ (Analysis T-C): this VM holds NO API keys, so it
+      # runs ONLY the key-less deterministic profile. The model-graded layer
+      # (llm-rubric + red-team) runs in CI-with-secrets / a keyed run — never here,
+      # where a missing key would hard-fail every night. The verdict is stamped
+      # with the profile so a determ-green is never read as "red-team clear".
       ( cd /opt/auditor && TARGET_REPO="${TARGET_REPO}" BUDGET_GUARD=0 \
+          PROMPTFOO_PROFILE=determ \
           bash scripts/nightly-audit.sh ) ; rc=$?
       echo "[worker] nightly-audit exit=${rc}"
 

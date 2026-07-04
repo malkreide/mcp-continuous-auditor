@@ -18,6 +18,10 @@ Covers:
 - `test_egress_interlock.py` — the **real** egress interlock
   (`deploy/microvm/_egress-interlock.sh`): fail-closed without the nft allowlist
   (Analysis S3). Needs `bash` + `nft`.
+- `test_promptfoo_profiles.py` — the split promptfoo profiles are structurally
+  correct: determ is key-less, graded carries the model layer + committed
+  red-team, the generative spec is isolated (Analysis T-C / T-A). Needs `PyYAML`;
+  self-skips without it.
 
 `test_smoke_target.py` self-**skips** here — it needs `fastmcp`.
 
