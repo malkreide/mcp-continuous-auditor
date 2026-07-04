@@ -47,7 +47,8 @@ Vollstaendige Anleitung: [docs/deployment/raspberry-pi.md](../deployment/raspber
 **Ziel:** Repo so absichern, dass selbst ein fehlgeleiteter Agent keinen Schaden anrichtet.
 
 **Schritte:** Branch Protection auf `main` (PRs + required CI), fine-grained PAT
-(nur Ziel-Repo, contents+pull-requests, KEINE Secrets), CI gruen.
+(nur Ziel-Repo, contents+pull-requests+issues, KEINE Secrets — `issues:write` für
+die Findings-Tickets ab Phase 4), CI gruen.
 
 ```text
 PROMPT 0 — an Claude Code im Repo zurich-opendata-mcp:
@@ -56,7 +57,7 @@ Richte die Sicherheits-Baseline ein, ohne Anwendungscode zu aendern:
 2. Erstelle/aktualisiere .github/workflows/ci.yml so, dass auf jeden PR laufen:
    `uv run ruff check`, `uv run mypy`, `uv run pytest`. Kein Deploy, kein Push.
 3. Schreibe docs/SECURITY-BASELINE.md: Branch-Protection-Regeln auf main,
-   empfohlene fine-grained-PAT-Scopes (single repo, contents+pull-requests,
+   empfohlene fine-grained-PAT-Scopes (single repo, contents+pull-requests+issues,
    NICHT secrets), Verbot von Force-Push.
 Mach KEINE Aenderungen an src/. Zeig mir am Ende den Diff.
 ```

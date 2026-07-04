@@ -124,6 +124,7 @@ def classify_promptfoo(pf: dict[str, Any] | None, promptfoo_rc: int) -> dict[str
             "errors": 0 if promptfoo_rc == 0 else 1,
             "redteam_hits": 0,
             "contract_failures": 0,
+            "other_failures": 0,
             "failures": 0,
             "examples": [] if promptfoo_rc == 0 else ["promptfoo produced no output and exited non-zero"],
         }
@@ -136,6 +137,7 @@ def classify_promptfoo(pf: dict[str, Any] | None, promptfoo_rc: int) -> dict[str
     result_errors = 0
     redteam_hits = 0
     contract_failures = 0
+    other_failures = 0
     failures = 0
     examples: list[str] = []
 
@@ -156,8 +158,12 @@ def classify_promptfoo(pf: dict[str, Any] | None, promptfoo_rc: int) -> dict[str
             contract_failures += 1
             label = "contract/schema"
         else:
-            contract_failures += 1  # default an unclassified failure to contract
-            label = "contract"
+            # A failure we can attribute to neither the schema/contract nor the
+            # red-team. Do NOT fold it into contract_failures — that would falsely
+            # report "schema drift". It is still a finding (exit 2), just its own
+            # class (Analysis T-F).
+            other_failures += 1
+            label = "other"
         if len(examples) < 12:
             examples.append(f"{label}: {str(desc)[:160]}")
 
@@ -168,6 +174,7 @@ def classify_promptfoo(pf: dict[str, Any] | None, promptfoo_rc: int) -> dict[str
         "errors": max(stats_errors, result_errors),
         "redteam_hits": redteam_hits,
         "contract_failures": contract_failures,
+        "other_failures": other_failures,
         "failures": failures,
         "examples": examples,
     }
@@ -185,6 +192,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # is-json/contract assertion failed.
     schema_drift = args.schema_drift != 0 or pfc["contract_failures"] > 0
     redteam = pfc["redteam_hits"] > 0
+    other_findings = pfc.get("other_failures", 0) > 0
     toolchain_fail = args.ruff != 0 or args.mypy != 0 or args.pytest != 0
 
     # Hard failure (never silently downgraded to "passed"):
@@ -198,8 +206,20 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             f"promptfoo reported {pfc['errors']} provider/model error(s) — "
             "an unresolvable or unauthorised model is a HARD failure, not a pass"
         )
-    if not pfc["ran"] and args.promptfoo_rc not in (0,):
-        hard_fail_reasons.append("promptfoo did not run (config/binary error)")
+    if not pfc["ran"]:
+        # promptfoo produced no parseable output. This is ALWAYS a hard failure —
+        # the deterministic red-team/contract layer is the auditor's job, so a
+        # missing eval is infrastructure failure, never a silent "surface looks
+        # safe". Crucially this now also catches promptfoo_rc == 0 with no output
+        # (a forged/garbled green from an untrusted Worker) — evidence we cannot
+        # verify is never treated as a pass (Analysis S-A).
+        if args.promptfoo_rc == 0:
+            hard_fail_reasons.append(
+                "promptfoo reported success (rc 0) but produced no parseable output — "
+                "evidence incomplete; a green verdict cannot be derived"
+            )
+        else:
+            hard_fail_reasons.append("promptfoo did not run (config/binary error)")
     for name, rc in (("ruff", args.ruff), ("mypy", args.mypy), ("pytest", args.pytest)):
         if rc in infra_codes:
             hard_fail_reasons.append(f"{name} could not run (exit {rc})")
@@ -207,7 +227,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         hard_fail_reasons.append(f"schema-drift gate could not run (exit {args.schema_drift})")
 
     hard_fail = bool(hard_fail_reasons)
-    green = not (schema_drift or redteam or toolchain_fail or hard_fail)
+    green = not (schema_drift or redteam or other_findings or toolchain_fail or hard_fail)
 
     if hard_fail:
         outcome, exit_code = "hard-fail", EXIT_HARD_FAIL
@@ -227,6 +247,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         "hard_fail_reasons": hard_fail_reasons,
         "schema_drift": schema_drift,
         "redteam": redteam,
+        "other_findings": other_findings,
         "toolchain_fail": toolchain_fail,
         "gates": {
             "ruff": args.ruff,
@@ -279,6 +300,11 @@ def render_report(s: dict[str, Any]) -> str:
         findings.append("**Schema drift** — committed schema / tool-output contract diverged.")
     if s["redteam"]:
         findings.append(f"**Red-team hit** — {pf['redteam_hits']} adversarial case(s) succeeded against the surface.")
+    if s.get("other_findings"):
+        findings.append(
+            f"**Other promptfoo failure(s)** — {pf.get('other_failures', 0)} case(s) failed but "
+            "matched neither the schema/contract nor the red-team class (see detail)."
+        )
     if s["toolchain_fail"]:
         findings.append("**Toolchain failure** — ruff/mypy/pytest is red (see gates above).")
     if findings:

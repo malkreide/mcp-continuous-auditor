@@ -28,7 +28,7 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 - Python 3.11+ and [uv](https://github.com/astral-sh/uv)
 - Docker (agent sandbox)
 - A Telegram bot token (via [@BotFather](https://t.me/BotFather)) and your numeric Telegram user ID
-- A fine-grained GitHub PAT scoped to the target repo (contents + pull-requests, **no** secrets)
+- A fine-grained GitHub PAT scoped to the target repo (contents + pull-requests + **issues**, **no** secrets) — `issues: write` is required for the nightly findings flow (it files the schema-drift / red-team tickets)
 - An Anthropic API key (writer / tool-provider family) **and** an independent grader of a *different* family — an OpenAI key (default `openai:gpt-4o-mini`) or a local Ollama model (`GRADER_PROVIDER=ollama:chat:llama3.1`, no cloud key)
 
 ## Installation
@@ -63,7 +63,7 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 | `ANTHROPIC_API_KEY` | Writer / tool-provider family |
 | `OPENAI_API_KEY` | Independent grader (default `openai:gpt-4o-mini`; a different family than the writer) |
 | `GRADER_PROVIDER` | Optional grader override, e.g. `ollama:chat:llama3.1` (local, no cloud key) |
-| `GITHUB_TOKEN` | Fine-grained PAT, target repo, PR-only |
+| `GITHUB_TOKEN` | Fine-grained PAT, target repo: contents + pull-requests + issues, **no** secrets |
 | `TARGET_REPO` | e.g. `malkreide/zurich-opendata-mcp` |
 
 ## Deployment

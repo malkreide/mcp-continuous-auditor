@@ -83,10 +83,19 @@ Zwei Grenzen, beide verstossbar → Breaker kippt:
   Fenster rollt automatisch weiter, sobald es abgelaufen ist.
 
 Die Tokens kommen aus der promptfoo-`--output`-JSON (`stats.tokenUsage.total`).
+
+> **Wichtig (Reichweite ohne TensorZero):** Diese Zählung erfasst **nur die
+> Tokens des promptfoo-Evals** (Grader + tool-gestützte Asserts) — **nicht** den
+> eigenen Denk-/Tool-Loop des OpenClaw-Auditor-Agenten, der typischerweise der
+> teurere Teil ist. Ohne Gateway ist das Pro-Lauf-Ceiling also eine **Eval-Token-
+> Schranke**, kein vollständiger Kosten-Cap. Der Circuit Breaker (hard-fail-Streak)
+> greift unabhängig davon.
+
 Wo ein vollständiger Cost-Trail über **alle** Modellaufrufe (Agent + Grader)
 gewünscht ist, liefert ihn TensorZero — siehe
-[../observability/tensorzero.md](../observability/tensorzero.md); dessen
-gemessene Tokens lassen sich identisch per `--tokens` an `record` übergeben.
+[../observability/tensorzero.md](../observability/tensorzero.md). `nightly-audit.sh`
+summiert dann den **echten** Pro-Lauf-Verbrauch (Writer + Grader) aus ClickHouse
+und übergibt ihn per `--tokens` an `record`; damit wird das Ceiling end-to-end real.
 
 ## Max-Iterationen
 

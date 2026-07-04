@@ -28,7 +28,7 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 - Python 3.11+ und [uv](https://github.com/astral-sh/uv)
 - Docker (Agenten-Sandbox)
 - Telegram-Bot-Token (via [@BotFather](https://t.me/BotFather)) und deine numerische Telegram-User-ID
-- Fine-grained GitHub-PAT, auf das Ziel-Repo beschränkt (contents + pull-requests, **keine** Secrets)
+- Fine-grained GitHub-PAT, auf das Ziel-Repo beschränkt (contents + pull-requests + **issues**, **keine** Secrets) — `issues: write` braucht der nächtliche Findings-Flow (er legt die Schema-Drift-/Red-Team-Tickets an)
 - Anthropic-API-Key (Schreiber / Tool-Provider-Familie) **und** ein unabhängiger Grader *anderer* Familie — ein OpenAI-Key (Default `openai:gpt-4o-mini`) oder ein lokales Ollama-Modell (`GRADER_PROVIDER=ollama:chat:llama3.1`, ohne Cloud-Key)
 
 ## Installation
@@ -63,7 +63,7 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 | `ANTHROPIC_API_KEY` | Schreiber / Tool-Provider-Familie |
 | `OPENAI_API_KEY` | Unabhängiger Grader (Default `openai:gpt-4o-mini`; andere Familie als der Schreiber) |
 | `GRADER_PROVIDER` | Optionaler Grader-Override, z.B. `ollama:chat:llama3.1` (lokal, kein Cloud-Key) |
-| `GITHUB_TOKEN` | Fine-grained PAT, Ziel-Repo, nur PR |
+| `GITHUB_TOKEN` | Fine-grained PAT, Ziel-Repo: contents + pull-requests + issues, **keine** Secrets |
 | `TARGET_REPO` | z.B. `malkreide/zurich-opendata-mcp` |
 
 ## Deployment

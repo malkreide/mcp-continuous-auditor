@@ -56,6 +56,8 @@ jobs:
       #  cloud key at all — see promptfoo/promptfooconfig.yaml.)
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GRADER_PROVIDER: ${{ vars.GRADER_PROVIDER }}
+      # Escape hatch for the writer!=grader guard below (leave unset in normal use).
+      ALLOW_SAME_FAMILY_GRADER: ${{ vars.ALLOW_SAME_FAMILY_GRADER }}
       # Pin the truth-engine — never eval at @latest (a moving deterministic gate).
       PROMPTFOO_VERSION: "0.121.17"
       # Import path of the FastMCP server instance in the target repo.
@@ -69,6 +71,19 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Sync Python deps (FastMCP in-memory client)
         run: uv sync --all-extras --dev
+      - name: Enforce writer != grader family (independent check)
+        # The writer/tool path is Anthropic; a same-family llm-rubric grader shares
+        # its blind spots and is not independent. Refuse an Anthropic GRADER_PROVIDER
+        # unless deliberately overridden. Unset -> the config's cross-family default.
+        run: |
+          case "${GRADER_PROVIDER:-}" in
+            anthropic:*|anthropic/*|anthropic)
+              if [ "${ALLOW_SAME_FAMILY_GRADER:-0}" != "1" ]; then
+                echo "::error::GRADER_PROVIDER='${GRADER_PROVIDER}' is same-family as the Anthropic writer — writer != checker. Use a different family or set ALLOW_SAME_FAMILY_GRADER=1."
+                exit 1
+              fi
+              echo "::warning::same-family grader allowed via ALLOW_SAME_FAMILY_GRADER=1 — not an independent check." ;;
+          esac
       - name: Schema-drift gate — regenerate from type hints, fail on any diff
         # Deterministic: if a tool's return type (or upstream shape) changed and
         # the committed schemas/ were not regenerated, this exits non-zero.
