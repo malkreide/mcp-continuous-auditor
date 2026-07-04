@@ -42,43 +42,11 @@ handler="${HERE}/_receive-one.sh"
 [ -f "${REPORT_PY}" ] || { echo "FATAL: classifier not found at ${REPORT_PY}" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "FATAL: python3 required for Broker classification" >&2; exit 1; }
 
-# The per-connection handler. Written next to this script so socat can exec it.
-cat > "${handler}" <<'EOF'
-#!/usr/bin/env bash
-set -uo pipefail
-dropbox="${DROPBOX:?}"
-report_py="${REPORT_PY:?}"
-ts="$(date -u +%Y%m%dT%H%M%SZ)"
-run_dir="${dropbox}/${ts}-$$"
-mkdir -p "${run_dir}"
-# First line = header; the rest of the stream = the tar bundle.
-IFS= read -r header
-echo "${header}" > "${run_dir}/header.txt"
-# Extract ONLY the two evidence files by their EXACT names, into the isolated
-# run_dir. The explicit member list IS the path-traversal guard: names have no `/`
-# or `..`, and any other archive member (incl. absolute/`../` paths) simply does
-# not match and is never extracted — portable across tar builds, no reliance on a
-# non-portable --no-absolute-names flag.
-tar -C "${run_dir}" -xf - nightly-evidence.json promptfoo.json 2>/dev/null || true
-# TRUSTED classification: re-derive the verdict from the raw evidence with the
-# Broker's own classifier. Missing/garbled evidence -> hard-fail, never green.
-python3 "${report_py}" \
-  --from-evidence "${run_dir}/nightly-evidence.json" \
-  --promptfoo-json "${run_dir}/promptfoo.json" \
-  --out-report "${run_dir}/nightly-report.md" \
-  --out-summary "${run_dir}/nightly-summary.json" >/dev/null 2>&1
-# Belt-and-suspenders: if the classifier itself could not run at all, synthesize a
-# hard-fail summary so the cron agent never sees an absent/green verdict by default.
-if [ ! -s "${run_dir}/nightly-summary.json" ]; then
-  printf '{"outcome":"hard-fail","exit_code":1,"green":false,"hard_fail":true,"hard_fail_reasons":["broker classifier could not run"],"target":"unknown","target_sha":"unknown"}\n' \
-    > "${run_dir}/nightly-summary.json"
-  printf '# ⛔ Nightly audit — broker classification failed\n\nThe evidence bundle could not be classified. Do NOT treat as passed.\n' \
-    > "${run_dir}/nightly-report.md"
-fi
-outcome="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("outcome","?"))' "${run_dir}/nightly-summary.json" 2>/dev/null || echo '?')"
-echo "[$(date -u +%H:%M:%S)] received -> ${run_dir} (${header}; broker-classified: ${outcome})" >&2
-EOF
-chmod +x "${handler}"
+# The per-connection handler is a committed script (deploy/microvm/channel/
+# _receive-one.sh) rather than a heredoc generated here at startup, so the exact
+# code socat exec's is the same code tests/test_broker_pipeline.py exercises.
+[ -f "${handler}" ] || { echo "FATAL: handler not found at ${handler}" >&2; exit 1; }
+chmod +x "${handler}" 2>/dev/null || true
 
 echo "== Broker vsock listener =="
 echo "  port    : ${port}  (guests connect to host CID 2, port ${port})"
