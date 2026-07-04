@@ -18,6 +18,10 @@ Covers:
 - `test_egress_interlock.py` — the **real** egress interlock
   (`deploy/microvm/_egress-interlock.sh`): fail-closed without the nft allowlist
   (Analysis S3). Needs `bash` + `nft`.
+- `test_audit_cycle.py` — the **real** Broker orchestrator
+  (`deploy/microvm/run-audit-cycle.sh`) with a fake worker: the budget breaker is
+  fed the worker's outcome, and a missing result is recorded as hard-fail
+  (Analysis T-B). Needs `bash`.
 - `test_promptfoo_profiles.py` — the split promptfoo profiles are structurally
   correct: determ is key-less, graded carries the model layer + committed
   red-team, the generative spec is isolated (Analysis T-C / T-A). Needs `PyYAML`;

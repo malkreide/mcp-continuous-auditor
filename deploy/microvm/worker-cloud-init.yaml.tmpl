@@ -2,19 +2,34 @@
 # Worker microVM bootstrap (Phase-5 rollout) — TEMPLATE.
 #
 # This is the untrusted-reader VM: it clones the auditor + reads the target
-# READ-ONLY, runs the deterministic gates, and ships ONLY the result
-# (summary.json + report.md) back to the Broker over vsock. It holds NO
-# credentials — no GitHub PAT, no Anthropic key, no Telegram token.
+# READ-ONLY, runs the deterministic gates, and ships ONLY the raw evidence back to
+# the Broker over vsock. It holds NO credentials — no GitHub PAT, no Anthropic key,
+# no Telegram token.
+#
+# BOOTSTRAP HARDENING (Analysis S-B): the Worker is the machine that runs untrusted
+# target code, so its own bootstrap must be the hardest link, not the weakest:
+#   * NO `curl … | sh` — the toolchain comes from SIGNED apt (packages: below) and
+#     uv from a PINNED pip install; nothing is piped from the network into a shell.
+#   * the auditor is cloned at a PINNED ref and its HEAD is VERIFIED against
+#     ${AUDITOR_EXPECTED_SHA} — what runs at night is what was reviewed.
+#   * NO `|| true` on bootstrap steps: any failure powers the VM off WITHOUT
+#     shipping evidence, so the Broker records a missing-result hard-fail rather
+#     than a silent, half-provisioned run (run-audit-cycle.sh, Analysis T-B).
 #
 # Placeholders (filled by build-worker-image.sh via envsubst):
-#   ${AUDITOR_REPO}  e.g. https://github.com/malkreide/mcp-continuous-auditor.git
-#   ${AUDITOR_REF}   e.g. main
-#   ${TARGET_REPO}   e.g. malkreide/zurich-opendata-mcp
-#   ${BROKER_CID}    host CID for the vsock channel (the host is always CID 2)
-#   ${BROKER_PORT}   vsock port the Broker listener is bound to (e.g. 9000)
+#   ${AUDITOR_REPO}          e.g. https://github.com/malkreide/mcp-continuous-auditor.git
+#   ${AUDITOR_REF}           e.g. main (or a tag/SHA)
+#   ${AUDITOR_EXPECTED_SHA}  the commit SHA build-worker-image.sh resolved AUDITOR_REF to
+#                            (or SKIP to opt out of verification — not recommended)
+#   ${UV_VERSION}            pinned uv version installed via pip
+#   ${TARGET_REPO}           e.g. malkreide/zurich-opendata-mcp
+#   ${BROKER_CID}            host CID for the vsock channel (the host is always CID 2)
+#   ${BROKER_PORT}           vsock port the Broker listener is bound to (e.g. 9000)
 
 package_update: true
-packages: [git, curl, ca-certificates, python3, socat, build-essential]
+# Signed apt only (no curl|sh). Debian's nodejs (>=18) is enough for promptfoo;
+# uv is installed from a pinned pip release below.
+packages: [git, ca-certificates, python3, python3-pip, nodejs, npm, socat, build-essential]
 
 write_files:
   # The in-guest audit runner. Invoked once at first boot (runcmd below).
@@ -24,25 +39,39 @@ write_files:
       #!/usr/bin/env bash
       set -uo pipefail
       export HOME=/root
-      echo "[worker] installing toolchain (uv, node)"
-      curl -fsSL https://astral.sh/uv/install.sh | sh || true
-      export PATH="/root/.local/bin:/root/.cargo/bin:${PATH}"
-      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs || true
+      export PATH="/root/.local/bin:/usr/local/bin:${PATH}"
 
-      echo "[worker] cloning auditor"
+      # Any bootstrap failure powers off WITHOUT shipping evidence — the Broker
+      # then records a missing-result hard-fail (never a silent half-run).
+      fail() { echo "[worker] FATAL: $*" >&2; poweroff; exit 1; }
+
+      echo "[worker] installing uv==${UV_VERSION} (pinned pip, signed — no curl|sh)"
+      if ! command -v uv >/dev/null 2>&1; then
+        pip3 install --break-system-packages "uv==${UV_VERSION}" || fail "uv install failed"
+      fi
+      command -v uv   >/dev/null 2>&1 || fail "uv not on PATH after install"
+      command -v git  >/dev/null 2>&1 || fail "git missing (apt)"
+      command -v npx  >/dev/null 2>&1 || fail "npx missing (apt nodejs/npm)"
+
+      echo "[worker] cloning auditor @ ${AUDITOR_REF}"
       rm -rf /opt/auditor
-      git clone --depth 1 --branch "${AUDITOR_REF}" "${AUDITOR_REPO}" /opt/auditor \
-        || { echo "[worker] clone failed"; }
+      git clone "${AUDITOR_REPO}" /opt/auditor || fail "auditor clone failed"
+      git -C /opt/auditor checkout --quiet "${AUDITOR_REF}" || fail "checkout ${AUDITOR_REF} failed"
+      got="$(git -C /opt/auditor rev-parse HEAD)"
+      if [ -n "${AUDITOR_EXPECTED_SHA}" ] && [ "${AUDITOR_EXPECTED_SHA}" != "SKIP" ]; then
+        [ "${got}" = "${AUDITOR_EXPECTED_SHA}" ] \
+          || fail "auditor SHA mismatch: got ${got}, expected ${AUDITOR_EXPECTED_SHA} (supply-chain check)"
+        echo "[worker] auditor SHA verified: ${got}"
+      else
+        echo "[worker] WARNING: no AUDITOR_EXPECTED_SHA pin — running ${got} unverified"
+      fi
 
       echo "[worker] running nightly-audit (read-only) against ${TARGET_REPO}"
-      # The Worker disables the budget guard's state writes here (BUDGET_GUARD=0):
-      # the breaker lives on the Broker side where the run history persists across
-      # throwaway VMs.
-      # PROMPTFOO_PROFILE=determ (Analysis T-C): this VM holds NO API keys, so it
-      # runs ONLY the key-less deterministic profile. The model-graded layer
-      # (llm-rubric + red-team) runs in CI-with-secrets / a keyed run — never here,
-      # where a missing key would hard-fail every night. The verdict is stamped
-      # with the profile so a determ-green is never read as "red-team clear".
+      # BUDGET_GUARD=0: the breaker lives on the Broker side (throwaway VM keeps no
+      # history). PROMPTFOO_PROFILE=determ (Analysis T-C): this VM holds NO API
+      # keys, so it runs ONLY the key-less deterministic profile; the model-graded
+      # layer runs in CI-with-secrets / a keyed run. The verdict is stamped with
+      # the profile so a determ-green is never read as "red-team clear".
       ( cd /opt/auditor && TARGET_REPO="${TARGET_REPO}" BUDGET_GUARD=0 \
           PROMPTFOO_PROFILE=determ \
           bash scripts/nightly-audit.sh ) ; rc=$?

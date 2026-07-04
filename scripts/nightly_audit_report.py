@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,34 @@ EXIT_HARD_FAIL = 1
 # promptfoo assertion types that encode a tool-output contract / schema. A
 # failure on one of these is schema drift, not a red-team hit.
 _CONTRACT_ASSERTIONS = {"is-json", "is-valid-json", "javascript"}
+
+# --- untrusted-string hygiene at the sink (Analysis S-D) --------------------
+# The evidence file, its target/target_sha, the header and the promptfoo examples
+# are all Worker-controlled and flow into a Markdown report that reaches Telegram,
+# GitHub issues, and the credential-holding cron agent's context — an IPI channel.
+# We validate the structured fields and strip control chars from everything before
+# it is rendered, so a Worker cannot inject terminal escapes or fake Markdown
+# structure ("## All green…") into the report.
+_TARGET_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+_SHA_RE = re.compile(r"^[0-9a-f]{4,40}$")
+_META_SENTINELS = {"unknown", "skipped", "invalid"}
+
+
+def _clean_inline(s: Any, max_len: int = 200) -> str:
+    """Strip control chars/newlines from an untrusted string and truncate, so it
+    cannot inject terminal escapes or structural Markdown into the report."""
+    return re.sub(r"[\x00-\x1f\x7f]", " ", str(s))[:max_len]
+
+
+def _validate_meta(value: Any, pattern: re.Pattern[str], kind: str) -> tuple[str, str | None]:
+    """Return (safe_value, error_or_None). A value that is neither a known sentinel
+    nor pattern-matching is untrusted/tampered -> 'invalid' + an error string."""
+    v = str(value or "").strip()
+    if v in _META_SENTINELS or pattern.match(v):
+        return v, None
+    # Do NOT echo the rejected value: it is attacker-controlled and would put its
+    # (sanitised) text back into the report that reaches the cron agent's context.
+    return "invalid", f"{kind} failed validation (possible evidence tampering)"
 
 
 def _load_promptfoo(path: Path) -> dict[str, Any] | None:
@@ -188,6 +217,12 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     pf = _load_promptfoo(Path(args.promptfoo_json)) if args.promptfoo_json else None
     pfc = classify_promptfoo(pf, args.promptfoo_rc)
 
+    # Validate the Worker-controlled metadata (S-D): a target/sha that is neither a
+    # known sentinel nor pattern-matching is treated as tampering -> 'invalid' +
+    # hard-fail, and never rendered raw into the report.
+    target, target_err = _validate_meta(args.target, _TARGET_RE, "target")
+    sha, sha_err = _validate_meta(args.sha, _SHA_RE, "target_sha")
+
     # Schema drift = the deterministic schema gate diverged OR a promptfoo
     # is-json/contract assertion failed.
     schema_drift = args.schema_drift != 0 or pfc["contract_failures"] > 0
@@ -198,9 +233,14 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # Hard failure (never silently downgraded to "passed"):
     #   * an audited gate could not run (missing bin / sync failure, rc 127/126);
     #   * promptfoo could not run at all; or
-    #   * a model/provider was unresolvable (promptfoo errors > 0).
+    #   * a model/provider was unresolvable (promptfoo errors > 0);
+    #   * the evidence metadata failed validation (possible tampering, S-D).
     infra_codes = {126, 127}
     hard_fail_reasons: list[str] = []
+    if target_err:
+        hard_fail_reasons.append(target_err)
+    if sha_err:
+        hard_fail_reasons.append(sha_err)
     if pfc["errors"] > 0:
         hard_fail_reasons.append(
             f"promptfoo reported {pfc['errors']} provider/model error(s) — "
@@ -244,8 +284,8 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
 
     return {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "target": args.target,
-        "target_sha": args.sha,
+        "target": target,
+        "target_sha": sha,
         "promptfoo_profile": profile,
         "graded_layer_ran": graded_layer_ran,
         "outcome": outcome,
@@ -334,7 +374,9 @@ def render_report(s: dict[str, Any]) -> str:
 
     if pf.get("examples"):
         lines += ["", "## promptfoo detail"]
-        lines += [f"- {e}" for e in pf["examples"]]
+        # Examples embed upstream API payloads (untrusted) — strip control chars /
+        # newlines so they cannot inject structure into the report sink (S-D).
+        lines += [f"- {_clean_inline(e)}" for e in pf["examples"]]
 
     if s["outcome"] == "findings":
         lines += [
