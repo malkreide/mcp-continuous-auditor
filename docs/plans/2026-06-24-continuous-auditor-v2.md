@@ -128,6 +128,13 @@ Endpunkte einmal abfragt, gegen die Fixtures difft und bei Abweichung ein Issue 
 
 **Ziel:** Worker darf patchen — nur via PR, CI aus Phase 2 ist das Tor.
 
+> **Status: agent-assistiert & manuell angestossen, keine Automatik.** Der Pfad
+> *Finding → Fix → PR* ist end-to-end in [`examples/worker-tdd-demo/`](../../examples/worker-tdd-demo/)
+> demonstriert (RED → Fix → GREEN → PR) und durch die TDD-Invarianten in
+> `openclaw/workspace/AGENTS.md` geregelt — aber ein Worker schneidet einen
+> `fix/<slug>`-PR erst nach explizitem Telegram-OK, pro Finding. Es gibt **keine**
+> committete Automatisierung, die aus einem Finding selbsttätig einen PR macht.
+
 ```text
 PROMPT 3 — Worker mit TDD-Invariante:
 Erweitere AGENTS.md: Worker darf src/ aendern, aber (a) nur auf Branch fix/<slug> + PR,

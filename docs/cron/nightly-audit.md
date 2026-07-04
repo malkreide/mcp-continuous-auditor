@@ -28,7 +28,8 @@ never an opinion (`openclaw/workspace/SOUL.md`).
   └─ agent reads the summary and routes:
        exit 1 → announce the hard-failure report, STOP (no issue, no PR)
        exit 0 → announce "all green"
-       exit 2 → open/update issue(s): schema-drift and/or redteam
+       exit 2 → run scripts/sync_findings_issues.py (deterministic: opens/updates
+                one tracking issue per finding class, deduped by a marker)
                 announce the report, which asks: "reply OK to authorise a draft PR"
   └─ --announce delivers .audit/nightly-report.md to Telegram
 ```
@@ -53,14 +54,19 @@ right label.
 
 ## The two human gates
 
-1. **Issues are automatic, PRs are not.** On findings the agent opens or updates
-   a tracking issue (labels `schema-drift` / `redteam`, mirroring the weekly
-   `live-probe` job). It does **not** open a PR. The announced report ends with
+1. **Issues are automatic, PRs are not.** On findings a committed script
+   (`scripts/sync_findings_issues.py`) opens or updates one tracking issue per
+   finding class (labels `schema-drift` / `redteam` / `audit-finding`),
+   **deterministically** deduped by a hidden marker — the agent only runs it, it
+   does not eyeball open-vs-reuse (Analysis U-C, mirroring the weekly `live-probe`
+   job's `github-script`). It does **not** open a PR. The announced report ends with
    *"reply `OK` to authorise a draft PR"*. The draft PR is created only in a
    **later** turn, after your explicit Telegram OK, on a branch `fix/<slug>`,
    never on `main` (`openclaw/workspace/AGENTS.md`). A cron turn is a single
    fresh turn — it cannot block waiting hours for approval, so the approval is a
-   separate, human-initiated message.
+   separate, human-initiated message. This write path is **agent-assisted and
+   manual, not an automated finding→PR pipeline** (demonstrated in
+   `examples/worker-tdd-demo/`; Analysis U-D).
 
 2. **Merge is always yours.** The PR is a draft; CI is the pass/fail oracle; you
    merge.
