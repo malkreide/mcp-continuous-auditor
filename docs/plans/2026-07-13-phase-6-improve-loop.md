@@ -102,6 +102,13 @@ Beispiel-Morgenmeldung: *«7 Kandidaten, 3 behalten, 4 verworfen (2× flaky,
 
 Manuell angestossen, ohne Cron, ohne Writer-Automatik: die Regel zuerst, der Agent danach.
 
+> **Status: implementiert.** `scripts/improve_acceptance.py` (stdlib-only;
+> Subcommands `baseline` + `judge`, Exit-Contract 0 keep / 2 discard / 1 hard-fail,
+> Runner injizierbar via `--runner`/`IMPROVE_RUNNER`) +
+> `tests/test_improve_acceptance.py`. Zusätzlich zu D1/D2 werden bereits die
+> Kandidaten-Discards `invalid` und `out-of-scope` (Pfad-Check „nur `promptfoo/`“)
+> im Harness erzwungen; Baseline wird pro Target-SHA gecacht.
+
 ```text
 PROMPT 6a — an Claude Code in mcp-continuous-auditor:
 Baue scripts/improve_acceptance.py (stdlib-only): nimmt einen Kandidaten-Diff gegen
