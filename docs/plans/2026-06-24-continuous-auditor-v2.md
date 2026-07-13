@@ -181,6 +181,10 @@ Telegram pusht. Bei nicht aufloesbarem Modell: hart fehlschlagen, nicht still au
 sind als Ops-Guides + Config-Templates vorbereitet (Infrastruktur auf dem Host) —
 einzuschalten „erst wenn stabil".
 
+**Weiterführend:** Phase 6 (selbstverbessernde Audit-Suite per Keep/Discard-Loop,
+autoresearch-Muster) ist als eigener Plan skizziert:
+[2026-07-13-phase-6-improve-loop.md](2026-07-13-phase-6-improve-loop.md).
+
 ---
 
 ## Goldene Regeln
