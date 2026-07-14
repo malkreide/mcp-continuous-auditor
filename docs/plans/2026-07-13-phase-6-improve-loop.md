@@ -168,6 +168,23 @@ schreiben — erzwungen im Harness (Pfad-Check vor jedem Commit), nicht nur per 
 vollständigem Journal vorliegt, kein Commit ausserhalb `promptfoo/` existiert und
 der Nightly-Audit der Nacht davor unbeeinflusst gelaufen ist.
 
+> **Status: implementiert** (der Beobachtungs-Teil des Fertig-wenn-Kriteriums —
+> der erste echte Montagmorgen-PR — steht naturgemäss noch aus). Bausteine:
+> `scripts/improve-loop.sh` (Orchestrator nach dem Muster von `nightly-audit.sh`:
+> `hard_fail`-Helper, eigener `BUDGET_STATE`, per-Iteration-Records mit
+> Writer-Token-Spend, Pfad-Check „nur `promptfoo/`“ vor jedem Commit, Keeps-
+> Obergrenze `IMPROVE_MAX_KEEPS` gegen Suiten-Aufblähung), `scripts/improve_writer.py`
+> (Anthropic-Writer, stdlib/urllib, Contract 0 Vorschlag / 10 NO-PROPOSAL / 1
+> Hard-Fail, Journal-Tail im Prompt gegen Wiedervorschläge, Token-Datei fürs
+> Budget), `scripts/improve_loop_support.py` (Report + idempotenter Draft-PR via
+> GitHub-API, Token nur als Header), `scripts/run-determ-eval.sh` (gepinnter
+> promptfoo-Runner), `openclaw/workspace/IMPROVE.md` (Policy) und
+> `openclaw/cron/improve-loop.json` (wöchentlich **So 04:30** statt der im Plan
+> illustrativ genannten 03:00 — bewusst hinter den täglichen Nightly-Audit
+> gestaffelt, damit dessen Unbeeinflusstheit beobachtbar bleibt; Installation via
+> `JOB=improve-loop openclaw/cron/install.sh`). Publish ist Opt-in
+> (`IMPROVE_PUBLISH=1`); ohne Keeps wird kein PR eröffnet.
+
 ## Kostenrahmen
 
 Pro Iteration: 1 Writer-Call + 2–3 determ-Evals. Das determ-Profil ist key-los —

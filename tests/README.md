@@ -28,6 +28,19 @@ Covers:
   correct: determ is key-less, graded carries the model layer + committed
   red-team, the generative spec is isolated (Analysis T-C / T-A). Needs `PyYAML`;
   self-skips without it.
+- `test_improve_loop.py` — the **real** Phase-6c orchestrator
+  (`scripts/improve-loop.sh`) end-to-end with a fake writer queue, the fake
+  suite runner and a local git target: keeps are committed (only under
+  `promptfoo/`), discards journaled, per-iteration budget records land in the
+  improve-own state, writer crash / flaky baseline hard-fail the run, and the
+  keeps ceiling stops early. Needs `bash` + `git`.
+- `test_improve_writer.py` — the Phase-6c writer (`scripts/improve_writer.py`)
+  with an injected API transport: exit contract 0/10/1, fence unwrapping,
+  refusal → graceful stop, token accounting, journal tail in the prompt. No
+  network, no real key.
+- `test_improve_loop_support.py` — report aggregation (keep/discard tallies,
+  skip-lines run isolation, hard-fail outcome) and idempotent draft-PR
+  publishing with an injected GitHub opener.
 - `test_improve_acceptance.py` — the Phase-6 acceptance harness
   (`scripts/improve_acceptance.py`): a valid candidate is kept, a flaky one
   (D1) and a red-on-HEAD one (D2) are discarded, out-of-scope/invalid patches

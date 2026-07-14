@@ -20,6 +20,9 @@
 #     openclaw/cron/install.sh
 #
 # Env:
+#   JOB                    which committed spec to install: nightly-audit
+#                          (default) or improve-loop (Plan Phase 6c — the
+#                          weekly Sunday-04:30 improve run).
 #   OPENCLAW_AUDIT_MODEL   (required) explicit, resolvable model ref for the
 #                          auditor agent. Keep it a DIFFERENT family than the
 #                          promptfoo grader (writer != checker — see README).
@@ -33,8 +36,12 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SPEC="${HERE}/nightly-audit.json"
-JOB_NAME="nightly-audit"
+JOB_NAME="${JOB:-nightly-audit}"
+case "${JOB_NAME}" in
+  nightly-audit|improve-loop) ;;
+  *) echo "FATAL: unknown JOB='${JOB_NAME}' — use nightly-audit or improve-loop" >&2; exit 1 ;;
+esac
+SPEC="${HERE}/${JOB_NAME}.json"
 
 : "${OPENCLAW_AUDIT_MODEL:?set OPENCLAW_AUDIT_MODEL to an explicit, resolvable model ref — there is no default, so the auditor never runs on a silent/implicit model}"
 : "${TELEGRAM_ANNOUNCE_TO:?set TELEGRAM_ANNOUNCE_TO to the Telegram chat/user id for the --announce report}"
