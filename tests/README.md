@@ -28,12 +28,16 @@ Covers:
   correct: determ is key-less, graded carries the model layer + committed
   red-team, the generative spec is isolated (Analysis T-C / T-A). Needs `PyYAML`;
   self-skips without it.
-- `test_improve_acceptance.py` — the Phase-6a acceptance harness
+- `test_improve_acceptance.py` — the Phase-6 acceptance harness
   (`scripts/improve_acceptance.py`): a valid candidate is kept, a flaky one
   (D1) and a red-on-HEAD one (D2) are discarded, out-of-scope/invalid patches
   are discards, a flaky baseline or crashing runner is a HARD failure, the
-  candidate is always reverted, and the journal is append-only. Needs `git`;
-  the suite runner is a local fake — no promptfoo, no network.
+  candidate is always reverted, and the journal is append-only. Phase 6b adds
+  D3: in `schema-path` (lite) mode a duplicate/no-new-schema-ref candidate is
+  discarded as `redundant`; in `mutation` mode a candidate is kept only if it
+  kills a mutant surviving the existing suite (kill map cached per target SHA;
+  empty or fully-killed pools HARD-fail). Needs `git`; the suite runner is a
+  local fake and mutants are plain diffs — no promptfoo, no mutmut, no network.
 
 `test_smoke_target.py` self-**skips** here — it needs `fastmcp`.
 
