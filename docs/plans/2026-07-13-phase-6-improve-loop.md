@@ -138,6 +138,18 @@ ein Duplikat eines bestehenden Asserts wird als "redundant" verworfen.
 **Fertig, wenn:** ein redundantes Assert (semantisches Duplikat) verworfen wird und
 der Journalgrund `redundant` lautet.
 
+> **Status: implementiert.** `improve_acceptance.py` hat jetzt
+> `--coverage-mode mutation|schema-path|off` (Default: `schema-path`, via
+> `IMPROVE_COVERAGE_MODE` übersteuerbar). Der Mutation-Modus ist Tool-agnostisch:
+> `--mutants-dir` nimmt einen Pool von Mutanten-*Diffs* (von mutmut, cosmic-ray
+> oder jedem Generator erzeugt — der Harness wendet nur Patches an), Kill-Status
+> der bestehenden Suite wird pro Target-SHA gecacht, behalten wird nur ein
+> Kandidat, der ≥1 überlebende Mutante tötet. Leerer oder vollständig getöteter
+> Pool → Hard-Fail (fail-closed statt Alles-redundant/Alles-keep). D3-lite
+> vergleicht `schemas/*.json`-Referenzen der Kandidaten-Diffzeilen gegen alle
+> bestehenden Dateien unter `promptfoo/`. Reihenfolge bleibt D1 → D2 → D3
+> (ein flakiges Duplikat journaliert `flaky`, nicht `redundant`).
+
 ### 6c — Writer-Loop + Cron + PR
 
 ```text
