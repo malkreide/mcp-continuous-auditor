@@ -313,6 +313,25 @@ if [ "${BUDGET_GUARD}" != "0" ] && [ "${BUDGET_GUARD}" != "off" ]; then
     --exit-code "${outcome_rc}" "${budget_tokens[@]}" || true
 fi
 
+# --- 7) optional gateway-independent Telegram announce ------------------------
+# OpenClaw is the interactive control plane and its cron delivers the report via
+# --announce. This step is the opt-in, ONE-WAY complement for deployments that
+# run this script WITHOUT an OpenClaw runtime (Tier-0 / a keyed operator run / a
+# CI job holding the secret): it pushes the same concise report to Telegram over
+# the Bot API. It is:
+#   * OFF by default — only runs when TELEGRAM_NOTIFY=1 (or on);
+#   * a no-op on the credential-free Worker — telegram_notify.py needs the bot
+#     token, which the untrusted Worker never holds, so nothing is sent there;
+#   * best-effort — telegram_notify.py always exits 0, and we `|| true` on top,
+#     so a failed/absent notification NEVER changes outcome_rc (the cron/Broker
+#     contract). It runs only after outcome_rc is already captured.
+case "${TELEGRAM_NOTIFY:-0}" in
+  1|on|true|yes)
+    echo "==> Telegram announce (gateway-independent, best-effort)"
+    python3 "${HERE}/telegram_notify.py" --report "${report_path}" || true
+    ;;
+esac
+
 echo
 echo "===== NIGHTLY AUDIT  ${TARGET_REPO}@${sha} ====="
 echo "  report : ${report_path}"
