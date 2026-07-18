@@ -29,6 +29,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chat-id-resolution invariants. Docs: `docs/telegram/standalone-notify.md`;
   `.env.example` / README updated with `TELEGRAM_ANNOUNCE_TO` + `TELEGRAM_NOTIFY`.
 
+### Added — gateway-independent Telegram intake (inbound)
+- **`scripts/telegram_intake.py`** — the inbound complement to the announce: a
+  stdlib-only intake that lets an allow-listed user drive a small set of **safe,
+  deterministic** commands from Telegram **without** an OpenClaw runtime, running
+  in GitHub Actions. Mirrors the intake of the sibling `future-skills-evidence-graph`
+  repo in two modes — scheduled `getUpdates` poll (default) and an optional
+  Cloudflare webhook relay (`relay/telegram-webhook-relay.js`) for real-time push.
+  - Commands: `/audit [ref]` files an `audit-request` **issue** for `TARGET_REPO`
+    (read-only request artifact — the audit and any PR are still produced with a
+    human in the loop); `/status` replies with the latest committed audit record
+    (`docs/audits/`); `/help`.
+  - **Deliberately outbound-of-writes:** it never authorizes a PR — cutting a
+    `fix/<slug>` PR stays inside the OpenClaw sandbox, so no second, less-guarded
+    write path is introduced (mirrors the "candidates only, nothing live" model).
+  - Security: **sender allowlist** (`TELEGRAM_ALLOW_FROM` vs `message.from.id`;
+    unknown senders ignored **silently**), the untrusted git ref is
+    **charset-validated** (branch/tag/sha only) before it reaches the issue, and
+    the poll **acknowledges the offset before processing** so a crash can't re-file
+    duplicates. No-op without `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALLOW_FROM`.
+- **`.github/workflows/telegram-intake.yml`** — poll (`*/10`) + `workflow_dispatch`
+  (relay push); `permissions: issues: write` only; no-op-cheap when unconfigured.
+- New `tests/test_telegram_intake.py` (14 stdlib `unittest` tests) pinning the
+  allowlist silent-drop, ref-charset guard, `/audit`→issue, `/status`, and
+  acknowledge-first invariants. Docs: `docs/telegram/standalone-intake.md`;
+  `.env.example` / README updated with `TELEGRAM_GITHUB_TOKEN`.
+
 ### Security / Changed — hardening from the solution review (S1–S3, T2)
 - **Broker-side classification (S2)** — the untrusted Worker microVM no longer
   ships a self-declared verdict. `scripts/nightly-audit.sh` now emits a raw

@@ -69,6 +69,7 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 | `TELEGRAM_ALLOW_FROM` | Your numeric Telegram user ID (gating) |
 | `TELEGRAM_ANNOUNCE_TO` | Optional — destination for the gateway-independent announce (`scripts/telegram_notify.py`); falls back to the first `TELEGRAM_ALLOW_FROM` id |
 | `TELEGRAM_NOTIFY` | Optional — set `1` to have `scripts/nightly-audit.sh` push the report to Telegram without OpenClaw (default off; see [docs](docs/telegram/standalone-notify.md)) |
+| `TELEGRAM_GITHUB_TOKEN` | Optional — PAT (issues: read/write) for the gateway-free inbound intake (`scripts/telegram_intake.py`); falls back to the workflow token (see [docs](docs/telegram/standalone-intake.md)) |
 | `ANTHROPIC_API_KEY` | Writer / tool-provider family |
 | `OPENAI_API_KEY` | Independent grader (default `openai:gpt-4o-mini`; a different family than the writer) |
 | `GRADER_PROVIDER` | Optional grader override, e.g. `ollama:chat:llama3.1` (local, no cloud key) |
@@ -107,7 +108,9 @@ schemas/          generated tool-output JSON-Schemas = the drift detector
 promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures
 scripts/          audit harness, live-probe, nightly-audit core, budget guard,
                   deterministic findings→issue routing, pinned-promptfoo installer,
-                  gateway-independent Telegram announce (telegram_notify.py)
+                  gateway-independent Telegram announce + intake (telegram_notify.py,
+                  telegram_intake.py)
+relay/            optional Cloudflare Worker for real-time Telegram push intake
 tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
 tests/            stdlib unit tests (budget guard)
 .github/          CI = the source of truth (template for the target repo)

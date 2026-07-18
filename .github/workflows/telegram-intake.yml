@@ -1,0 +1,86 @@
+name: Telegram intake
+
+# Inbound half of the OPTIONAL gateway-free Telegram path
+# (docs/telegram/standalone-intake.md). OpenClaw stays the interactive control
+# plane; this is for deployments that run no gateway. Two modes, one script:
+#
+# - PULL (default): the schedule polls the Bot API (getUpdates) and processes
+#   whatever queued up — no webhook endpoint, fully serverless.
+# - PUSH (optional real-time): the Cloudflare relay (relay/telegram-webhook-relay.js)
+#   receives Telegram's webhook and dispatches THIS workflow with the single
+#   update as input; replies then arrive in seconds. While a webhook is set,
+#   Telegram rejects getUpdates (409) and the scheduled poll no-ops cleanly.
+#
+# Without the TELEGRAM_BOT_TOKEN secret every run is a seconds-cheap no-op;
+# repos without a bot can also just disable this workflow in the Actions UI.
+# An authorized user can /audit (file a read-only audit-request issue), /status
+# and /help — the PR write path stays inside the OpenClaw sandbox.
+on:
+  schedule:
+    # Poll-mode latency (and the safety net under push mode): a chat message is
+    # picked up within ~10 minutes. Run manually for an instant fetch.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      update:
+        description: "Internal (webhook relay): one Telegram update as JSON. Leave empty to poll."
+        required: false
+        type: string
+      update_id:
+        description: "Internal (webhook relay): the update_id, used for concurrency grouping."
+        required: false
+        type: string
+
+# No top-level grant: the job declares only what it needs.
+permissions: {}
+
+# Two overlapping POLLS would double-process the same updates (the offset is
+# only advanced once per run), so polls share one queued group. PUSH runs each
+# carry exactly one distinct update: they group by update_id so GitHub's
+# "one pending run per group" rule cannot silently drop a queued message.
+concurrency:
+  group: telegram-intake-${{ github.event.inputs.update_id || 'poll' }}
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      # Secrets are not readable in job-level `if:` conditions, so a first step
+      # decides and everything else keys off its output — an unconfigured repo
+      # pays a few seconds per scheduled run, nothing more.
+      - name: Check whether Telegram is configured
+        id: config
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -n "${TELEGRAM_BOT_TOKEN}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "TELEGRAM_BOT_TOKEN is not set — intake skipped."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.enabled == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          python-version: "3.12"
+      - name: Process Telegram messages
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          # Push mode: set by the webhook relay's dispatch; empty means poll.
+          TELEGRAM_UPDATE: ${{ github.event.inputs.update }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          # Numeric Telegram user id(s) allowed to drive the intake (comma-sep).
+          TELEGRAM_ALLOW_FROM: ${{ secrets.TELEGRAM_ALLOW_FROM }}
+          # Optional fine-grained PAT (issues: read/write). Falls back to the
+          # workflow token, which already has issues: write here.
+          TELEGRAM_GITHUB_TOKEN: ${{ secrets.TELEGRAM_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # Target audited on /audit (issue body); empty uses the script default.
+          TARGET_REPO: ${{ vars.TARGET_REPO }}
+        # stdlib only — no pip install needed.
+        run: python3 scripts/telegram_intake.py
