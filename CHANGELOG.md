@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — gateway-independent Telegram announce
+- **`scripts/telegram_notify.py`** — a stdlib-only, one-way notifier that pushes
+  an audit report to Telegram over the Bot API **without** an OpenClaw runtime,
+  mirroring the self-contained notifier of the sibling `future-skills-evidence-graph`
+  repo. OpenClaw stays the interactive control plane (commands, per-finding `OK`,
+  cron `--announce`); this is the complement for hosts that produce a report but
+  run no gateway (Tier-0 / a keyed operator run / a CI job / the trusted Broker).
+  It is **no-op without `TELEGRAM_BOT_TOKEN` + a chat id** (`TELEGRAM_ANNOUNCE_TO`,
+  else the first `TELEGRAM_ALLOW_FROM` id) and **best-effort** — every send error
+  is a token-redacted warning and the exit code stays 0, so it can never turn a
+  green/findings/hard-fail verdict into a crash. Deliberately **outbound only**:
+  inbound commands remain OpenClaw's sandboxed job, so no second, less-guarded
+  command path is added.
+- **`scripts/nightly-audit.sh`** gained an **opt-in** final announce step
+  (`TELEGRAM_NOTIFY=1`, default off) that runs *after* `outcome_rc` is captured
+  and `|| true`, so the exit-code contract with the cron agent / Broker is
+  untouched. No-op on the credential-free Worker, which never holds the token.
+- New `tests/test_telegram_notify.py` (17 stdlib `unittest` tests) pinning the
+  no-op-without-config, best-effort-exit-0, token-redaction, truncation and
+  chat-id-resolution invariants. Docs: `docs/telegram/standalone-notify.md`;
+  `.env.example` / README updated with `TELEGRAM_ANNOUNCE_TO` + `TELEGRAM_NOTIFY`.
+
 ### Security / Changed — hardening from the solution review (S1–S3, T2)
 - **Broker-side classification (S2)** — the untrusted Worker microVM no longer
   ships a self-declared verdict. `scripts/nightly-audit.sh` now emits a raw
