@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the auditor runs its own tests
+
+The test suite existed and nothing ran it. `ci.yml` ships as a `.yml.template` for
+the target repo; `telegram-intake.yml` runs no tests. A regression in
+`live_probe.py`, the budget guard or the Broker pipeline would have reached
+`main` unchallenged. A tool that holds other repositories to test discipline and
+keeps none itself is the more embarrassing of the two failures.
+
+- **`.github/workflows/tests.yml`** — the stdlib `unittest` suite on Python 3.11
+  and 3.13, on push to `main` and on every pull request. Least privilege
+  (`contents: read`), concurrency-cancelled per ref.
+- **No dependency-driven skips.** `pyyaml`, `fastmcp` and `httpx` are installed
+  not to make the suite run — it is stdlib-only — but to stop three test classes
+  from skipping. A test skipped for a missing dependency is a check that did not
+  run while looking exactly like one that passed, which is the failure mode
+  `live-probe.yml.template` already guards against for the recall canary. The
+  job fails on any skip whose reason contains «not installed»; environment
+  skips (no `bash`, no `git`) stay permitted since they cannot occur on the
+  runner. Verified in both directions: without `fastmcp` the gate exits 1 and
+  names the three tests, with it the suite is green and zero skipped.
+- **`compileall` over `scripts/`, `tests/`, `schemas/`, `promptfoo/providers/`** —
+  most scripts have no test that imports them, so a syntax error would have sat
+  in `main` until the nightly cron tripped over it at 03:00.
+- **The `.yml.template` files are parsed as YAML.** Nothing else touches them, so
+  a broken template would fail first in whichever target repo copied it. Parsing
+  is not validation, but it catches the class that hurts.
+
 ### Added — the release gap
 
 The identity probe asks whether the version a server reports is *correct*. This

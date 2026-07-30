@@ -115,8 +115,8 @@ scripts/          audit harness, live-probe, nightly-audit core, budget guard,
                   telegram_intake.py)
 relay/            optional Cloudflare Worker for real-time Telegram push intake
 tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
-tests/            stdlib unit tests (budget guard)
-.github/          CI = the source of truth (template for the target repo)
+tests/            stdlib unit tests (164) — run by .github/workflows/tests.yml
+.github/          tests.yml = the auditor's own suite; *.yml.template = CI for the target repo
 docs/plans/       the v2 build plan
 docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)
 docs/deployment/  Raspberry Pi (recommended host) + Phase 5 forkd/microVM isolation

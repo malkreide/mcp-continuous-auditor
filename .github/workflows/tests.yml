@@ -1,0 +1,106 @@
+# The auditor's own test suite.
+#
+# This repository ships CI as `.yml.template` files — but those are for the
+# TARGET server repo. Until now nothing ran the auditor's own test suite, so a
+# regression in live_probe.py, the budget guard or the Broker pipeline would
+# have reached main unchallenged. A tool that holds others to test discipline
+# and has none itself is the more embarrassing of the two failures.
+#
+# stdlib `unittest` only. The optional dependencies installed below do not make
+# the suite run — they make three test classes stop skipping. See the gate.
+
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unittest:
+    name: unittest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # The suite is stdlib-only by design; these three gate test classes that
+      # would otherwise skip. Installing them here is the point of this job:
+      # a skipped test is indistinguishable from a passing one in a summary.
+      #   pyyaml  → tests/test_promptfoo_profiles.py
+      #   fastmcp → tests/test_smoke_target.py (drives its own smoke_server fixture)
+      #   httpx   → tests/fixtures/smoke_server.py
+      - name: Install the optional test dependencies
+        run: python -m pip install --quiet pyyaml fastmcp httpx
+
+      - name: Unit tests, with no dependency-driven skips tolerated
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python - <<'PY'
+          import sys, unittest
+
+          suite = unittest.defaultTestLoader.discover("tests")
+          result = unittest.TextTestRunner(verbosity=2, stream=sys.stdout).run(suite)
+
+          for test, reason in result.skipped:
+              print(f"SKIPPED: {test.id()} — {reason}")
+
+          # A test skipped because a dependency is missing is a check that did
+          # not run while looking exactly like one that passed. That is the same
+          # failure mode live-probe.yml.template guards against for the canary,
+          # and it is CI's job to prevent it here: install the dependency rather
+          # than let the check quietly disappear. Environment-driven skips (no
+          # bash, no git) stay allowed — they cannot occur on this runner.
+          dep_skips = [t.id() for t, r in result.skipped if "not installed" in r]
+          if dep_skips:
+              print("::error title=Silent skip::"
+                    f"{len(dep_skips)} test(s) skipped for a missing dependency: "
+                    f"{', '.join(dep_skips)}. Install it in this workflow.")
+              sys.exit(1)
+
+          sys.exit(0 if result.wasSuccessful() else 1)
+          PY
+
+      # Most scripts/ modules have no test that imports them, so a syntax error
+      # would sit in main until the nightly cron tripped over it at 03:00.
+      - name: Every script parses
+        run: python -m compileall -q scripts/ tests/ schemas/ promptfoo/providers/
+
+      # The .yml.template files are never executed here, so nothing else would
+      # catch a broken one — it would fail first in whichever target repo copied
+      # it. Parsing is not validation, but it catches the class that hurts.
+      - name: Workflow templates are well-formed YAML
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          import yaml
+
+          bad = []
+          templates = sorted(pathlib.Path(".github/workflows").glob("*.yml.template"))
+          if not templates:
+              sys.exit("no .yml.template files found — did they move?")
+          for path in templates:
+              try:
+                  yaml.safe_load(path.read_text(encoding="utf-8"))
+                  print(f"ok  {path}")
+              except yaml.YAMLError as exc:
+                  bad.append(f"{path}: {exc}")
+          if bad:
+              sys.exit("\n".join(bad))
+          PY
