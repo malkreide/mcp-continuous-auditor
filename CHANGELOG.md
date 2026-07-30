@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the identity probe
+
+Ruff, mypy and pytest all pass on a server that introduces itself to every
+upstream as a release it stopped being months ago. The live probe does not see
+it either: the responses are fine, it is the *request* that lies. A portfolio
+sweep on 2026-07-29 across all 30 servers found the drift is the rule, not the
+exception — 12 sent a wrong version (4 a wrong **major**), 20 carried a stale
+`__version__`, 17 a stale README badge, 4 a stale `server.json`. The last one
+is structurally invisible: `publish.yml` rewrites that field from the tag at
+release time, so the committed value never reaches the artifact and nothing
+ever contradicts it.
+
+- `scripts/identity_probe.py` — deterministic, `--format text|json`, exit
+  `0`/`1`/`2`. Checks `server.json`, README badges and `src/` against
+  `pyproject.toml`; `--installed` additionally resolves the version from the
+  installed distribution. That flag is the one that counts: metadata is written
+  at install time, so an editable install keeps reporting the pre-bump version
+  and a repository can be clean while the shipped artifact is wrong.
+- `skills/identity-probe/SKILL.md` — in the shape of `python-auditor`, with the
+  reasons not to replace the probe with a grep.
+
+Three design decisions, each of them a bug this check made first:
+
+1. **Whole files are scanned for the value pattern, not lines for the
+   keyword.** A constant split over two lines escapes a line-oriented search —
+   that is how `swiss-electricity-mcp` kept shipping `0.2.0` through three call
+   sites *after* a fix had been merged and reported as done.
+2. **Comments are stripped with `tokenize`, not `split("#")`.** The first
+   version flagged a comment documenting the very incident the check exists to
+   prevent. A rule that punishes documentation gets the documentation deleted —
+   and a `#` inside a string literal must not truncate the line.
+3. **Every category is reported before exiting.** An earlier version aborted on
+   the first finding, reported a stale badge and never reached the source scan.
+
+Fallbacks are recognised by their PEP 440 local segment, never by matching a
+fixed marker string — the marker-specific variant produced nine false
+positives. A bare `"0.0.0"` is reported, correctly: it is indistinguishable
+from a real release in a log or a User-Agent.
+
+Verified against real repositories (`swiss-environment-mcp`, `bakom-mcp`,
+`srgssr-mcp` — the latter two contain drift comments that must not fire) and
+against a fixture reproducing every historical failure case.
+
 ### Added — recall floors and the whole-chain canary
 
 The auditor watched upstream for *schema* drift and nothing for *recall*. Both
