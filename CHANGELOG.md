@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added — the auditor runs its own tests
 
-147 tests existed and nothing ran them. `ci.yml` ships as a `.yml.template` for
+The test suite existed and nothing ran it. `ci.yml` ships as a `.yml.template` for
 the target repo; `telegram-intake.yml` runs no tests. A regression in
 `live_probe.py`, the budget guard or the Broker pipeline would have reached
 `main` unchallenged. A tool that holds other repositories to test discipline and
@@ -26,13 +26,65 @@ keeps none itself is the more embarrassing of the two failures.
   job fails on any skip whose reason contains «not installed»; environment
   skips (no `bash`, no `git`) stay permitted since they cannot occur on the
   runner. Verified in both directions: without `fastmcp` the gate exits 1 and
-  names the three tests, with it the suite is 147 green and zero skipped.
+  names the three tests, with it the suite is green and zero skipped.
 - **`compileall` over `scripts/`, `tests/`, `schemas/`, `promptfoo/providers/`** —
   most scripts have no test that imports them, so a syntax error would have sat
   in `main` until the nightly cron tripped over it at 03:00.
 - **The `.yml.template` files are parsed as YAML.** Nothing else touches them, so
   a broken template would fail first in whichever target repo copied it. Parsing
   is not validation, but it catches the class that hurts.
+
+### Added — the release gap
+
+The identity probe asks whether the version a server reports is *correct*. This
+asks whether it is *current*, and it is a separate blind spot: CI tests the
+branch, never the artifact, so a repository can be green, audited and entirely
+fixed while every `pip install` still hands out the broken release.
+
+`meteoswiss-mcp`, 2026-07-30, is the case. The migration to the `mcp` 2.x SDK
+was merged to `main` on the 29th; PyPI kept serving `0.4.0`, which imports
+`mcp.server.fastmcp` — a module `mcp` 2.0.0 had removed the day before. Every
+fresh `uvx meteoswiss-mcp` died on import for three days, until an outside user
+filed the bug. It then recurred the same afternoon: `0.5.0` shipped, three
+further fixes landed, and until the next release PyPI served a server whose
+`meteo_current`, `meteo_forecast` and `meteo_school_check` all returned
+nothing.
+
+- `scripts/release_gap.py` — deterministic, `--format text|json`, exit
+  `0`/`1`/`2`. Compares the published PyPI version, the release tags and the
+  unreleased commits against the repository. Reports `PUBLISH_GAP` (a tag the
+  index does not have — someone cut a release and it never landed),
+  `UNRELEASED`, `UNTAGGED_VERSION` and `CHANGELOG_UNRELEASED`, in that order of
+  sharpness.
+- `skills/release-gap/SKILL.md` — in the shape of `identity-probe`, phase-1
+  report-only. Cutting a release stays a human decision; the probe stops at
+  naming the gap.
+- `tests/test_release_gap.py` — 17 stdlib tests. The git-backed cases build a
+  real repository in a temp dir rather than mocking `git log`, which would only
+  assert that the mock matches the assumption.
+
+Run against a reconstruction of the incident state — `main` at the merge
+commit, latest tag `v0.4.0`, PyPI at `0.4.0` — the probe reports
+`UNRELEASED [high] … 2 of them user-facing` and exits `1`.
+
+Three design decisions:
+
+1. **Age is the finding, not the gap.** Every repository is ahead of PyPI for
+   the minutes after a merge. Firing on that gets the check muted, and a muted
+   check catches nothing — the same reasoning that keeps recall floors at half
+   the observed count. `--max-age-days` defaults to 7.
+2. **An unreachable index is reported, never assumed away.** If PyPI cannot be
+   reached the comparison that matters did not happen, so the probe exits
+   non-zero with `UNKNOWN` instead of printing "in sync" from git alone.
+   Reporting green from half the evidence would reproduce, one level up, the
+   exact failure the script exists to catch.
+3. **A `--depth 1` clone has no tags, and that is not "never released".** An
+   empty tag set is reported as unknown; concluding the latter inverts the
+   finding.
+
+`fix:` and `docs:` are weighed differently rather than counted together: in the
+incident, every unreleased day was a user hitting a `ModuleNotFoundError`, and
+a portfolio sweep should not drown that in documentation churn.
 
 ### Added — the identity probe
 

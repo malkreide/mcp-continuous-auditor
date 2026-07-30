@@ -1,7 +1,7 @@
 # The auditor's own test suite.
 #
 # This repository ships CI as `.yml.template` files — but those are for the
-# TARGET server repo. Until now nothing ran the auditor's own 147 tests, so a
+# TARGET server repo. Until now nothing ran the auditor's own test suite, so a
 # regression in live_probe.py, the budget guard or the Broker pipeline would
 # have reached main unchallenged. A tool that holds others to test discipline
 # and has none itself is the more embarrassing of the two failures.

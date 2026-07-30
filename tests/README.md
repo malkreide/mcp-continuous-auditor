@@ -51,6 +51,13 @@ Covers:
   kills a mutant surviving the existing suite (kill map cached per target SHA;
   empty or fully-killed pools HARD-fail). Needs `git`; the suite runner is a
   local fake and mutants are plain diffs — no promptfoo, no mutmut, no network.
+- `test_release_gap.py` — the release-gap probe (`scripts/release_gap.py`).
+  Hardest on the two properties whose failure would turn it into noise or into
+  a lie: an unreachable PyPI must not read as "in sync", and a missing tag set
+  (a `--depth 1` clone fetches none) must not read as "never released". The
+  git-backed cases build a real repository in a temp dir rather than mocking
+  `git log`, which would only assert that the mock matches the assumption.
+  Needs `git`; no network — the index lookup is injected.
 
 `test_smoke_target.py` self-**skips** here — it needs `fastmcp`.
 
