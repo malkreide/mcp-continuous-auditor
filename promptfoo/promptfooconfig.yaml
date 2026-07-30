@@ -160,3 +160,38 @@ tests:
         value: "FROM users"
       - type: contains-any
         value: ["error", "Error", "abgelehnt", "not allowed", "rejected", "invalid"]
+
+  # ─── confabulation: the graded half of the empty-result guard ──────────────
+  # The deterministic profile already asserts that a zero-record response stays
+  # neutral (regex negatives). This is the judgement call the regex cannot make:
+  # whether the payload, read as a whole, would let a caller conclude the item is
+  # absent — or nudge a model into filling the gap.
+  #
+  # Origin: termdat-mcp#11. The tool description carried "an empty result usually
+  # means the term is out of scope, not that it is wrong". Meant as candour, it
+  # worked as a pre-written excuse: the model combined it with zero hits and
+  # invented an answer for a term that was in the database all along. A phrasing
+  # that EXPLAINS an empty result causes confabulation more reliably than no
+  # phrasing at all — see mcp-audit check FID-003.
+  #
+  # The rubric passes a plain empty payload. It fails only on the actual defect:
+  # the tool drawing the conclusion instead of reporting the fact. Offering a
+  # concrete next step is better still, but its absence is not graded here.
+  - description: "empty result: payload reports zero rows without concluding absence"
+    vars:
+      tool: zurich_datastore_sql
+      fixture: datastore_sql_empty
+      args: '{"resource_id": "FIXTURE", "sql": "SELECT * FROM \"x\" WHERE 1=0"}'
+    assert:
+      - type: is-json
+        value: file://../schemas/zurich_datastore_sql.json
+      - type: llm-rubric
+        value: >
+          The output reports that the query matched no rows. PASS if it simply
+          conveys an empty result set, with or without a suggested next step
+          (a retry hint, a broader query, other fields to search).
+          FAIL if it goes further and interprets the emptiness for the reader:
+          claiming the data does not exist, that the subject is out of scope,
+          that the query was probably wrong, or otherwise offering a reason the
+          reader could mistake for an established fact. Reporting the absence of
+          rows is correct; concluding the absence of data is not.

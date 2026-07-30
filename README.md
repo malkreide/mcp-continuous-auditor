@@ -17,6 +17,7 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 
 - **Read-only first** — the agent reports before it ever writes.
 - **Deterministic ground truth** — promptfoo YAML asserts + JSON-schema drift checks, run in CI.
+- **Recall floors, not just schema** — a collapsed result set keeps its JSON shape, so a structural diff cannot see it. Probes carry `min_count` floors, and a second weekly probe calls the server's *own tools* live: the raw-URL probe verifies the endpoint, the canary verifies the whole chain.
 - **Independent grader** — LLM-graded checks use a genuinely different model *family* than the writer (writer is Anthropic → grader defaults to `openai:gpt-4o-mini`, or a local Ollama model), so a correlated blind spot can't pass its own output.
 - **Continuous red-teaming** — OWASP LLM Top 10 (prompt injection, PII leakage) against the MCP surface.
 - **Human merge gate** — the agent opens PRs only; it never pushes to `main`.

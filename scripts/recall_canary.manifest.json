@@ -1,0 +1,29 @@
+{
+  "_comment": "Recall canaries for scripts/recall_canary.py. Each entry calls ONE tool of the target MCP server against the LIVE upstream and asserts a minimum record count. Unlike live_probe.manifest.json — which hits raw upstream URLs — this measures the whole chain, including how the server builds its request. That is where recall bugs live (see termdat-mcp#11). Copy into the target repo and replace the examples with that server's tools. Choose floors at roughly HALF the observed count: the canary must catch a collapse, not track corpus churn. Read-only tools only.",
+  "canaries": [
+    {
+      "name": "search_common_term",
+      "_why": "A term with many hits. Catches scope/limit defaults — the failure that keeps the response shape intact and is therefore invisible to live_probe.",
+      "tool": "search_terms",
+      "args": { "search_term": "Pensionskasse" },
+      "min_count": 10,
+      "count_path": "entries"
+    },
+    {
+      "name": "search_rare_term",
+      "_why": "A term with few but non-zero hits. Catches field-coverage narrowing, where a broad query still looks healthy.",
+      "tool": "search_terms",
+      "args": { "search_term": "Quellensteuer" },
+      "min_count": 1,
+      "count_path": "entries"
+    },
+    {
+      "name": "list_vocabulary",
+      "_why": "A bounded list endpoint with a known size. The cheapest canary: if this shrinks, something upstream changed wholesale.",
+      "tool": "list_classifications",
+      "args": {},
+      "min_count": 20,
+      "count_path": "values"
+    }
+  ]
+}
