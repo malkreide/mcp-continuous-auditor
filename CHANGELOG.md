@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — recall floors and the whole-chain canary
+
+The auditor watched upstream for *schema* drift and nothing for *recall*. Both
+gaps followed from the same premise, stated in `live_probe.py`: «We compare
+structural signatures, NOT values.» Correct for a timestamp, wrong for a hit
+count — an endpoint that starts returning one record instead of twenty has an
+identical signature, so the diff is empty and the probe stays green.
+
+Prompted by [`termdat-mcp#11`](https://github.com/malkreide/termdat-mcp/issues/11):
+a server that searched one of 23 classifications for months because an optional
+scope parameter it never sent defaults to a single subject area upstream. The API
+was healthy throughout, 33 offline tests were green, and a 68-check audit had
+passed.
+
+- **`min_count` floors in `scripts/live_probe.py`** — a probe may declare a
+  minimum record count, optionally with `count_path` (dot path; inferred from the
+  common CKAN / GeoJSON / `results` / `entries` shapes when omitted). Reported
+  separately from schema drift, because the remedy differs: drift means update
+  the fixture, a recall drop means find out what shrank. New `count_records()`
+  helper; an uncountable payload is an explicit error, never a silent pass.
+- **New outputs** `recall_drop` and `alert`. `drift` keeps its original
+  schema-only meaning so existing workflows do not change behaviour silently —
+  `alert` is the one to gate on now that a probe can fail two independent ways.
+- **`scripts/recall_canary.py` + manifest** — calls the target server's **own
+  tools** in-process via the FastMCP in-memory client with the network alive.
+  `live_probe.py` hits raw upstream URLs and so verifies the endpoint; the canary
+  verifies the whole chain (arguments → request construction → parsing). A recall
+  bug typically sits between the two, where a raw-URL probe is blind to it by
+  construction. Shares `count_records()` so a floor means the same in both jobs.
+- **`live-probe.yml.template`** runs both probes and gates the tracking issue on
+  `alert` from either. The canary's install step is `continue-on-error`, and a
+  missing canary report is called out in the merged report — a silently skipped
+  check reads exactly like a passing one, which is the failure mode this job
+  exists to prevent.
+- **Confabulation guards in promptfoo** — new `datastore_sql_empty` fixture
+  (zero records, otherwise structurally identical to the populated one). The
+  deterministic profile asserts that a zero-record response stays well-formed and
+  does not assert absence on the caller's behalf; the graded profile adds an
+  `llm-rubric` that passes a plain empty payload and fails only when the tool
+  interprets the emptiness for the reader. In the reported session that
+  interpretation — «an empty result usually means the term is out of scope» —
+  was exactly what the model took as licence to invent an answer. Corresponds to
+  `mcp-audit` check FID-003; the positive half (an empty result should carry a
+  concrete next step) is graded rather than asserted, so adopting it stays a
+  decision rather than a red pipeline.
+- **`tests/test_recall_floors.py`** — 21 stdlib tests covering counting, floor
+  reporting, output signalling and canary error isolation.
+
 ### Added — gateway-independent Telegram announce
 - **`scripts/telegram_notify.py`** — a stdlib-only, one-way notifier that pushes
   an audit report to Telegram over the Bot API **without** an OpenClaw runtime,

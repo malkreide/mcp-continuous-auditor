@@ -10,14 +10,32 @@ types), NOT values. Live sensor readings, dates and ids change constantly; only
 an added / removed / re-typed field is real schema drift. That keeps the weekly
 diff signal-rich and false-positive-free.
 
+RECALL FLOORS — the one place values do matter. Ignoring values is right for a
+timestamp and wrong for a hit count: an endpoint that silently starts returning
+one record instead of twenty has identical structure, so the signature diff is
+empty and the probe stays green. That is exactly how termdat-mcp#11 went
+unnoticed — an omitted filter parameter restricted the upstream search to one of
+23 classifications, and every response was still a well-formed list.
+
+A probe may therefore declare ``min_count`` (and optionally ``count_path``, a
+dot path to the countable collection; inferred when omitted). Falling below the
+floor is reported separately from schema drift, because the remedy differs:
+drift means update the fixture, a recall drop means find out what shrank.
+
+Set floors generously below the observed value — roughly half. The floor exists
+to catch a collapse, not to track normal corpus churn; a check that cries wolf
+gets muted, and a muted check catches nothing.
+
 Probes are declared in scripts/live_probe.manifest.json. Each probe names the
 fixture (under promptfoo/fixtures/) it must stay structurally compatible with.
 
-Exit code is always 0 (a flaky endpoint must not fail the cron); drift is
+Exit code is always 0 (a flaky endpoint must not fail the cron); findings are
 signalled out-of-band so the workflow decides whether to open an issue:
 
-  * writes a Markdown report to $DRIFT_REPORT       (default: live-probe-report.md)
-  * appends `drift=true|false` to $GITHUB_OUTPUT     (for the workflow step)
+  * writes a Markdown report to $DRIFT_REPORT        (default: live-probe-report.md)
+  * appends `drift=true|false` to $GITHUB_OUTPUT      (schema drift only)
+  * appends `recall_drop=true|false`                 (a floor was breached)
+  * appends `alert=true|false`                       (either of the two — use this)
 
 Stdlib only (urllib) — no third-party deps, so the probe runs anywhere.
 """
@@ -59,6 +77,50 @@ def structural_signature(obj: Any, path: str = "$") -> set[str]:
     return sig
 
 
+# Collection keys worth counting when a probe declares `min_count` without a
+# `count_path`. Ordered: the first one that resolves to a list wins.
+_COUNT_KEYS: tuple[tuple[str, ...], ...] = (
+    ("result", "records"),   # CKAN datastore_search / _sql
+    ("features",),           # GeoJSON FeatureCollection
+    ("results",),
+    ("records",),
+    ("entries",),
+    ("data",),
+    ("items",),
+)
+
+
+def _resolve_path(payload: Any, path: tuple[str, ...]) -> Any:
+    """Walk a dot path through nested dicts. Returns None if any segment is missing."""
+    node = payload
+    for segment in path:
+        if not isinstance(node, dict) or segment not in node:
+            return None
+        node = node[segment]
+    return node
+
+
+def count_records(payload: Any, count_path: str | None = None) -> int | None:
+    """Number of records in a response, or None when it cannot be determined.
+
+    With `count_path` the answer is explicit and a miss is an error the caller
+    should surface — a silently unresolvable path would read as "no floor set".
+    Without it we try the well-known collection keys, then fall back to a
+    top-level list.
+    """
+    if count_path:
+        node = _resolve_path(payload, tuple(count_path.split(".")))
+        return len(node) if isinstance(node, (list, dict)) else None
+
+    if isinstance(payload, list):
+        return len(payload)
+    for keys in _COUNT_KEYS:
+        node = _resolve_path(payload, keys)
+        if isinstance(node, list):
+            return len(node)
+    return None
+
+
 def _fetch(probe: dict) -> Any:
     url = probe["url"]
     method = probe.get("method", "GET").upper()
@@ -85,6 +147,7 @@ def main() -> int:
     probes = manifest["probes"] if isinstance(manifest, dict) else manifest
 
     drift_rows: list[str] = []
+    recall_rows: list[str] = []
     error_rows: list[str] = []
     ok_rows: list[str] = []
 
@@ -93,11 +156,34 @@ def main() -> int:
         fixture = probe["fixture"]
         try:
             expected = structural_signature(_load_fixture(fixture))
-            live = structural_signature(_fetch(probe))
+            payload = _fetch(probe)
+            live = structural_signature(payload)
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
             error_rows.append(f"- ⚠️ `{name}`: probe failed — `{type(exc).__name__}: {exc}`")
             print(f"::warning title=live-probe::{name} failed: {exc}", file=sys.stderr)
             continue
+
+        # Recall floor — independent of the structural diff. A collapsed result
+        # set keeps the same JSON shape, so the signature comparison cannot see it.
+        floor = probe.get("min_count")
+        if floor is not None:
+            count = count_records(payload, probe.get("count_path"))
+            if count is None:
+                where = probe.get("count_path") or "inferred collection key"
+                error_rows.append(
+                    f"- ⚠️ `{name}`: `min_count` set but no countable collection "
+                    f"found ({where}) — fix `count_path` in the manifest."
+                )
+                print(f"::warning title=live-probe::{name}: uncountable payload", file=sys.stderr)
+            elif count < floor:
+                recall_rows.append(
+                    f"- 📉 `{name}`: **{count}** record(s), floor is **{floor}**. "
+                    "The response shape is unchanged, so this is not schema drift — "
+                    "something narrowed the result set. Check whether an optional "
+                    "filter/scope parameter changed its upstream default."
+                )
+            else:
+                ok_rows.append(f"- ✅ `{name}` — recall {count} ≥ floor {floor}")
 
         added = sorted(live - expected)
         removed = sorted(expected - live)
@@ -114,6 +200,7 @@ def main() -> int:
             ok_rows.append(f"- ✅ `{name}` — structurally in sync ({len(live)} paths)")
 
     has_drift = bool(drift_rows)
+    has_recall_drop = bool(recall_rows)
     report = ["# Live-probe drift report\n", f"Probed {len(probes)} endpoint(s).\n"]
     if has_drift:
         report.append("## 🚨 Schema drift detected\n")
@@ -123,6 +210,18 @@ def main() -> int:
             "schema, then review the contract tests) or this is a real regression.\n"
         )
         report.extend(drift_rows)
+        report.append("")
+    if has_recall_drop:
+        report.append("## 📉 Recall below floor\n")
+        report.append(
+            "An endpoint returned fewer records than its declared floor while its "
+            "structure stayed identical — the failure mode a signature diff cannot "
+            "see. Before assuming the corpus shrank, re-run each optional filter "
+            "parameter omitted-vs-explicitly-maximal and compare the counts; a "
+            "changed upstream default restricts the result set without changing "
+            "the response shape.\n"
+        )
+        report.extend(recall_rows)
         report.append("")
     if error_rows:
         report.append("## ⚠️ Probe errors (transient or endpoint moved)\n")
@@ -141,10 +240,15 @@ def main() -> int:
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if gh_out:
         with open(gh_out, "a", encoding="utf-8") as fh:
+            # `drift` keeps its original meaning (schema only) so existing
+            # workflows do not silently change behaviour; `alert` is the one to
+            # gate on now that a probe can fail two independent ways.
             fh.write(f"drift={'true' if has_drift else 'false'}\n")
+            fh.write(f"recall_drop={'true' if has_recall_drop else 'false'}\n")
+            fh.write(f"alert={'true' if (has_drift or has_recall_drop) else 'false'}\n")
             fh.write(f"report_path={report_path}\n")
 
-    return 0  # never fail the cron on a flaky endpoint; drift is signalled via output
+    return 0  # never fail the cron on a flaky endpoint; findings go via the outputs
 
 
 if __name__ == "__main__":

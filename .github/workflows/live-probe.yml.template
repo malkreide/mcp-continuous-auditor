@@ -10,6 +10,18 @@
 # single tracking issue on drift. The deterministic offline gate stays in ci.yml
 # (promptfoo + schemas/generate_schemas.py --check) — this job only watches for
 # upstream change so a drift becomes a ticket, never a surprise red PR.
+#
+# TWO probes run here, and the difference between them is the point:
+#
+#   * live_probe.py     hits raw upstream URLs      → verifies the ENDPOINT
+#   * recall_canary.py  calls the server's own tools → verifies the WHOLE CHAIN
+#                       in-process, network alive      (args → request → parsing)
+#
+# A recall bug typically sits between the two, in how the server builds its
+# request, where a raw-URL probe is blind to it by construction. In termdat-mcp#11
+# the upstream stayed healthy the entire time while the server searched a 23rd of
+# the corpus. Both probes also support `min_count` floors, because a collapsed
+# result set keeps its JSON shape — a structural diff cannot see it.
 
 name: live-probe-drift
 
@@ -43,15 +55,53 @@ jobs:
           DRIFT_REPORT: live-probe-report.md
         run: python scripts/live_probe.py
 
+      # Second probe: the server's own tools, against the live upstream. Needs
+      # the package installed (fastmcp + the server module); live_probe above
+      # deliberately does not, so it still runs if this install fails.
+      - name: Install the server for the recall canary
+        id: install
+        continue-on-error: true
+        run: pip install -e .
+
+      - name: Recall canary — call the tools, assert the floors
+        id: canary
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          RECALL_REPORT: recall-canary-report.md
+          # "package.module:attr" — the FastMCP instance to drive.
+          MCP_SERVER_IMPORT: ${{ vars.MCP_SERVER_IMPORT || 'server:mcp' }}
+        run: python scripts/recall_canary.py
+
+      - name: Merge both reports
+        if: always()
+        run: |
+          : > live-probe-report-combined.md
+          for f in live-probe-report.md recall-canary-report.md; do
+            [ -f "$f" ] && cat "$f" >> live-probe-report-combined.md && echo >> live-probe-report-combined.md
+          done
+          # Make the canary's absence visible: a silently skipped check reads
+          # exactly like a passing one, which is the failure mode this whole job
+          # exists to prevent.
+          if [ ! -f recall-canary-report.md ]; then
+            echo "## ⚠️ Recall canary did not run" >> live-probe-report-combined.md
+            echo >> live-probe-report-combined.md
+            echo "\`pip install -e .\` failed or the canary errored, so only the raw-URL probe ran. Endpoint coverage this week; no whole-chain coverage." >> live-probe-report-combined.md
+          fi
+          cat live-probe-report-combined.md
+
+      # Fires on schema drift OR a breached recall floor. Gate on `alert`, not on
+      # `drift`: `drift` still means schema-only, so a recall collapse alone
+      # would never reach an issue.
       - name: Open or update the drift tracking issue
-        if: steps.probe.outputs.drift == 'true'
+        if: steps.probe.outputs.alert == 'true' || steps.canary.outputs.alert == 'true'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('live-probe-report.md', 'utf8');
+            const body = fs.readFileSync('live-probe-report-combined.md', 'utf8');
             const marker = '<!-- live-probe-drift -->';
-            const title = '[live-probe] Schema drift vs recorded fixtures';
+            const title = '[live-probe] Schema drift or recall drop vs recorded baseline';
             const { owner, repo } = context.repo;
             const issueBody = `${marker}\n\n${body}\n\n— run ${context.runId} (${context.sha.slice(0,7)})`;
 
@@ -73,7 +123,7 @@ jobs:
             if (hit) {
               await github.rest.issues.createComment({
                 owner, repo, issue_number: hit.number,
-                body: `Drift still present on the latest weekly probe:\n\n${body}`,
+                body: `Still present on the latest weekly probe:\n\n${body}`,
               });
               core.notice(`Updated existing drift issue #${hit.number}`);
             } else {
@@ -83,10 +133,13 @@ jobs:
               core.notice(`Opened drift issue #${created.data.number}`);
             }
 
-      - name: Upload drift report
+      - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: live-probe-report
-          path: live-probe-report.md
+          path: |
+            live-probe-report.md
+            recall-canary-report.md
+            live-probe-report-combined.md
           if-no-files-found: ignore

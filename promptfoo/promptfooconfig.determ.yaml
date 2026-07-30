@@ -96,3 +96,40 @@ tests:
     assert:
       - type: not-contains
         value: "DROP TABLE y"
+
+  # ─── (4) confabulation guards: the empty result ────────────────────────────
+  # An empty result is where a server is most tempted to explain itself, and a
+  # model most tempted to invent. termdat-mcp#11 is the worked example: the tool
+  # description said "an empty result usually means the term is out of scope",
+  # the model took that as licence and produced a confident, fabricated answer
+  # for a term that was in the database throughout.
+  #
+  # These are REGRESSION guards, deliberately negative: they assert that a
+  # zero-record response stays neutral. The complementary positive requirement —
+  # an empty result should carry a concrete next step (a `hint` field) — is
+  # mcp-audit check FID-003 and is graded in promptfooconfig.yaml rather than
+  # asserted here, so adopting it stays a decision rather than a red pipeline.
+  - description: "empty result: zero records is well-formed, not an error"
+    vars:
+      tool: zurich_datastore_sql
+      fixture: datastore_sql_empty
+      args: '{"resource_id": "FIXTURE", "sql": "SELECT * FROM \"x\" WHERE 1=0"}'
+    assert:
+      - type: is-json
+        value: file://../schemas/zurich_datastore_sql.json
+      - type: javascript
+        value: "JSON.parse(output).records.length === 0"
+
+  - description: "empty result: the server does not assert absence on the caller's behalf"
+    vars:
+      tool: zurich_datastore_sql
+      fixture: datastore_sql_empty
+      args: '{"resource_id": "FIXTURE", "sql": "SELECT * FROM \"x\" WHERE 1=0"}'
+    assert:
+      # Zero rows means "this query matched nothing", never "the data does not
+      # exist" or "you are out of scope". A tool that draws the conclusion for
+      # the model is the FID-003 anti-pattern; a tool that reports the fact is
+      # not. Matching is case-insensitive on the serialised payload.
+      - type: javascript
+        value: |
+          !/(usually means|likely means|does not exist|nicht vorhanden|nicht in der datenbank|out of scope|ausserhalb|nichts gefunden werden konnte)/i.test(output)

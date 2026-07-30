@@ -1,0 +1,27 @@
+{
+  "_comment": "Zero-record variant of datastore_sql.json — same UPSTREAM shape, empty records list. Exists for the confabulation guards: an empty result is the case where a server is most tempted to explain itself, and where a model is most tempted to invent. Structure is kept byte-identical to the populated fixture so the tests isolate emptiness, nothing else. See termdat-mcp#11 and mcp-audit check FID-003.",
+  "help": "https://data.stadt-zuerich.ch/api/3/action/help_show?name=datastore_search_sql",
+  "success": true,
+  "result": {
+    "sql": "SELECT * FROM \"x\" LIMIT 5",
+    "records": [],
+    "fields": [
+      {
+        "id": "_id",
+        "type": "int"
+      },
+      {
+        "id": "station",
+        "type": "text"
+      },
+      {
+        "id": "datum",
+        "type": "text"
+      },
+      {
+        "id": "wert",
+        "type": "numeric"
+      }
+    ]
+  }
+}
