@@ -96,6 +96,14 @@
 #                       0/off only for a target that genuinely cannot be started in
 #                       this environment — and know that you are disabling the only
 #                       check that would catch it.
+#                       Three outcomes, like the rebinding gate:
+#                         0  every configured transport came up and answered
+#                         2  FINDING: something did not come up or answered wrongly
+#                         3  NOT MEASURED: the entrypoint exited cleanly without
+#                            listening and no transport flag reached it, so the gate
+#                            never got to ASK for that transport. Neither a pass nor
+#                            a finding — fix it with a [tool.mcp_auditor.boot.commands]
+#                            entry in the TARGET's pyproject.toml.
 #                       Tunables (see scripts/transport_boot_probe.py):
 #                         BOOT_TRANSPORTS  explicit list instead of derivation
 #                         BOOT_TIMEOUT     hard per-attempt deadline (default 30s)

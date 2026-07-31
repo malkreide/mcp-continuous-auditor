@@ -82,9 +82,29 @@ EXIT CODE — the gate contract (see nightly-audit.sh / nightly_audit_report.py)
        could not be located at all (mirrors the schema gate: absence is a finding,
        not a pass). Switch the gate off with BOOT_GATE=off if a target genuinely
        cannot be booted here.
+  3    NOT MEASURED: the entrypoint exited cleanly without listening and no
+       transport flag got it to serve, so this gate never managed to ASK for that
+       transport. Neither a pass nor a finding — the same shape as the rebinding
+       gate's "control not configured". Fix it in the target with a
+       [tool.mcp_auditor.boot.commands] entry. A real failure outranks this: if
+       anything genuinely did not come up, the exit code is 2.
   127  the HARNESS could not run (an internal error in this script). Only this is
        a HARD failure — a target that will not start is a finding about the
        target, never about the infrastructure. Do not blur those two.
+
+HOW A TRANSPORT IS REQUESTED, and why 3 exists
+----------------------------------------------
+The gate asks for a transport through env vars (MCP_TRANSPORT, FASTMCP_TRANSPORT,
+PORT, ...) and, for non-declared launches, then tries the common CLI spellings
+(``--http --port N``, ``--transport http --port N``, ...). Only the FIRST attempt
+— the target's own argv plus the env — decides the verdict; the flag attempts are
+chances to succeed and never chances to fail, because an argparse error from a
+guess says something about the guess, not the target.
+
+Measured against zurich-opendata-mcp: it selects HTTP with ``--http`` and reads
+none of those env vars, so the entrypoint ran stdio, found stdin closed, and
+exited rc 0. The gate used to call that "the server never came up" — a finding
+against a target whose HTTP transport is in fact healthy.
 
 Stdlib only (subprocess/socket/http.client) — it runs inside the TARGET's
 environment, where we must not add dependencies.
@@ -130,7 +150,28 @@ from typing import Any
 # Gate contract — deliberately the same numbers as the auditor's own classifier.
 EXIT_GREEN = 0
 EXIT_FINDINGS = 2
+# The transport could not be SELECTED — see NOT_SELECTED. Its own code, mirroring
+# the rebinding gate's "control not configured": neither a pass nor a finding.
+EXIT_NOT_MEASURED = 3
 EXIT_CANNOT_RUN = 127
+
+# Per-transport outcomes.
+OK = "ok"
+FAIL = "fail"
+# "We never managed to ask this entrypoint to serve that transport" — which is a
+# different statement from "the server does not come up", and the gate used to
+# conflate them. Measured against zurich-opendata-mcp: its entrypoint selects
+# HTTP with a `--http` FLAG, not the env vars this probe sets, so it ran stdio,
+# found stdin closed, and exited rc 0. The gate reported "the server never came
+# up" — a claim about the target that nothing had established. Its HTTP transport
+# is in fact healthy.
+#
+# The discriminator is the exit code of a process that never listened:
+#   rc != 0  it tried and died          -> FAIL (case 1, a real finding)
+#   rc == 0  it ran something else and finished cleanly -> NOT_SELECTED
+# A crash leaves a non-zero status and a traceback; a clean exit after being asked
+# for the wrong transport does not.
+NOT_SELECTED = "not-selected"
 
 STDIO = "stdio"
 STREAMABLE_HTTP = "streamable-http"
@@ -453,6 +494,49 @@ def substitute(argv: list[str], host: str, port: int) -> list[str]:
     return [a.replace("{host}", host).replace("{port}", str(port)) for a in argv]
 
 
+# CLI spellings a target may use to pick a network transport. The env vars in
+# `launch_env` cover targets that read the environment; these cover the ones that
+# take a flag — zurich-opendata-mcp takes `--http --port N` and ignores the
+# environment entirely, which is how the gate came to report a healthy server as
+# dead.
+#
+# This is NOT the same kind of guessing the module docstring refuses. Deriving
+# WHICH transports a target serves must never be guessed, because a wrong guess
+# there invents a requirement. Guessing how to INVOKE one is self-verifying: an
+# attempt only counts if the port then opens and the server answers real MCP. A
+# wrong flag just fails and we move on; a right one is proof.
+_TRANSPORT_FLAGS: dict[str, tuple[tuple[str, ...], ...]] = {
+    STREAMABLE_HTTP: (
+        ("--http", "--port", "{port}"),
+        ("--transport", "http", "--port", "{port}"),
+        ("--transport", "streamable-http", "--port", "{port}"),
+    ),
+    SSE: (
+        ("--sse", "--port", "{port}"),
+        ("--transport", "sse", "--port", "{port}"),
+    ),
+}
+
+
+def argv_variants(plan: LaunchPlan, host: str, port: int) -> list[list[str]]:
+    """Every way worth trying to start `plan` on a network transport, in order.
+
+    The bare argv comes first: a target that reads the environment is already
+    served by `launch_env`, and trying flags on it first would risk an argparse
+    error on a server that would have worked. A DECLARED argv is never extended —
+    the target told us exactly how it wants to be started, and adding flags to
+    that would be overriding an explicit instruction with a guess.
+    """
+    base = substitute(plan.argv, host, port)
+    if plan.mode == "declared" or plan.transport == STDIO:
+        return [base]
+    out = [base]
+    for flags in _TRANSPORT_FLAGS.get(plan.transport, ()):
+        out.append(base + [f.replace("{port}", str(port)).replace("{host}", host)
+                           for f in flags])
+    return out
+
+
 # --------------------------------------------------------------------------
 # results
 # --------------------------------------------------------------------------
@@ -466,10 +550,19 @@ class ProbeResult:
     tools: int | None = None
     elapsed_s: float = 0.0
     evidence: dict[str, Any] = field(default_factory=dict)
+    # ok | fail | not-selected. The third one is the whole point of this field:
+    # see NOT_SELECTED below. `ok` stays the boolean the rest of the code reads,
+    # and a not-selected result is NOT ok — it is simply not a finding either.
+    status: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.status:
+            self.status = OK if self.ok else FAIL
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "transport": self.transport, "mode": self.mode, "ok": self.ok,
+            "status": self.status,
             "detail": self.detail, "tools": self.tools,
             "elapsed_s": round(self.elapsed_s, 3), "evidence": self.evidence,
         }
@@ -722,6 +815,66 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+@dataclass
+class Launch:
+    """The outcome of trying to get a network transport listening."""
+    proc: subprocess.Popen | None = None
+    logs: str = ""
+    argv: list[str] = field(default_factory=list)
+    attempt: int = 0            # 0 = the target's own invocation, >0 = a flag guess
+    reason: str = ""            # "" once something is listening
+    clean_exit: bool = False    # the TARGET'S OWN invocation exited rc 0 unlistening
+    drain: Any = None
+
+
+def start_listening(variants: list[list[str]], run_env: dict[str, str], cwd: Path,
+                    port: int, deadline: float) -> Launch:
+    """Try each invocation until one listens on `port`.
+
+    Only attempt 0 — the target's own argv plus the transport env vars — decides
+    the VERDICT. The flag variants after it are chances to succeed and never
+    chances to fail: an argparse error from a guessed `--http` says something
+    about our guess, not about the target, and letting it set the verdict would
+    swap one false finding for another.
+    """
+    out = Launch()
+    first_rc: int | None = None
+    for i, argv in enumerate(variants):
+        try:
+            proc = subprocess.Popen(
+                argv, cwd=str(cwd), env=run_env,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
+        except (OSError, ValueError) as exc:
+            if i == 0:
+                out.reason = f"could not spawn the target: {type(exc).__name__}: {exc}"
+            continue
+        q: "Queue[str | None]" = Queue()
+        _reader_thread(proc.stdout, q)
+        cap: list[str] = []
+        # A guessed variant gets a short leash; the target's own invocation gets
+        # the full budget, and returns early anyway when the process exits.
+        sub = deadline if i == 0 else min(deadline, time.monotonic() + 20.0)
+        reason = wait_for_port(port, sub, proc)
+        if not reason:
+            out.proc, out.argv, out.attempt = proc, argv, i
+            out.drain = lambda q=q, cap=cap: _drain(q, cap)
+            return out
+        rc = proc.poll()
+        text = _tail(_drain(q, cap))
+        if i == 0:
+            first_rc = rc
+            out.reason = f"{reason}; output: {text}"
+            out.argv = argv
+        _terminate(proc)
+        _close_streams(proc)
+        if time.monotonic() >= deadline:
+            break
+    out.clean_exit = first_rc == 0
+    out.drain = lambda: ""
+    return out
+
+
 def wait_for_port(port: int, deadline: float, proc: subprocess.Popen | None = None) -> str:
     """Block until the port accepts, the process dies, or the deadline passes.
     Returns "" on success or a reason string."""
@@ -890,6 +1043,37 @@ def _resolve_path(port: int, candidates: list[str], host_header: str,
     return (candidates[0] if candidates else "/"), last
 
 
+def _unlistening_result(plan: LaunchPlan, launch: Launch, bind_host: str,
+                        port: int, elapsed: float) -> ProbeResult:
+    """Nothing listened. Decide WHICH of the two statements that supports.
+
+    A clean exit (rc 0) from the target's own invocation means it ran something
+    else — almost always stdio, because the transport was requested through env
+    vars this entrypoint does not read — and finished. That is not "the server
+    does not come up"; it is "we never got to ask". Saying the former is a claim
+    about the target that nothing established, and it is the bug this branch
+    exists to fix.
+    """
+    ev = {"bind_host": bind_host, "port": port, "reason": launch.reason}
+    if launch.clean_exit:
+        return ProbeResult(
+            plan.transport, plan.mode, False,
+            "the entrypoint exited cleanly (rc 0) without ever listening, and none "
+            "of the usual transport flags got it to serve either. It almost "
+            f"certainly does not select {plan.transport} the way this gate asks — "
+            "the env vars (MCP_TRANSPORT/FASTMCP_TRANSPORT/PORT) went unread. This "
+            "says NOTHING about whether the transport works. Declare the exact "
+            "argv in the target's pyproject.toml under "
+            f'[tool.mcp_auditor.boot.commands] "{plan.transport}" = [...] and the '
+            "gate will start it the way the target expects",
+            elapsed_s=elapsed, status=NOT_SELECTED,
+            evidence={**ev, "case": "transport-not-selected"})
+    return ProbeResult(
+        plan.transport, plan.mode, False,
+        f"the server never came up: {launch.reason}",
+        elapsed_s=elapsed, status=FAIL, evidence=ev)
+
+
 def probe_streamable_http(
     plan: LaunchPlan,
     timeout: float,
@@ -910,38 +1094,20 @@ def probe_streamable_http(
     started = time.monotonic()
     port = free_port() if port is None else port
     paths = paths or ["/mcp/", "/mcp", "/"]
-    argv = substitute(plan.argv, bind_host, port)
     run_env = launch_env(plan, bind_host, port, env)
+    deadline = started + timeout
 
-    try:
-        proc = subprocess.Popen(
-            argv, cwd=str(cwd), env=run_env,
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, start_new_session=True,
-        )
-    except (OSError, ValueError) as exc:
-        return ProbeResult(plan.transport, plan.mode, False,
-                           f"could not spawn the target: {type(exc).__name__}: {exc}")
-
-    out_q: "Queue[str | None]" = Queue()
-    _reader_thread(proc.stdout, out_q)
-    captured: list[str] = []
+    launch = start_listening(argv_variants(plan, bind_host, port), run_env, cwd,
+                             port, deadline)
+    proc = launch.proc
+    if proc is None:
+        return _unlistening_result(plan, launch, bind_host, port,
+                                   time.monotonic() - started)
 
     def logs() -> str:
-        return _drain(out_q, captured)
+        return launch.drain()
 
-    deadline = started + timeout
     try:
-        reason = wait_for_port(port, deadline, proc)
-        if reason:
-            # Case 1 lands here: the process raised at start and never listened.
-            return ProbeResult(
-                plan.transport, plan.mode, False,
-                f"the server never came up: {reason}; output: {_tail(logs())}",
-                elapsed_s=time.monotonic() - started,
-                evidence={"bind_host": bind_host, "port": port},
-            )
-
         remaining = max(deadline - time.monotonic(), 1.0)
         loop_host = f"127.0.0.1:{port}"
         path, reply = _resolve_path(port, paths, loop_host, min(remaining, 10.0))
@@ -1051,36 +1217,20 @@ def probe_sse(
     started = time.monotonic()
     port = free_port() if port is None else port
     paths = paths or ["/sse/", "/sse"]
-    argv = substitute(plan.argv, bind_host, port)
     run_env = launch_env(plan, bind_host, port, env)
+    deadline = started + timeout
 
-    try:
-        proc = subprocess.Popen(
-            argv, cwd=str(cwd), env=run_env,
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, start_new_session=True,
-        )
-    except (OSError, ValueError) as exc:
-        return ProbeResult(plan.transport, plan.mode, False,
-                           f"could not spawn the target: {type(exc).__name__}: {exc}")
-
-    out_q: "Queue[str | None]" = Queue()
-    _reader_thread(proc.stdout, out_q)
-    captured: list[str] = []
+    launch = start_listening(argv_variants(plan, bind_host, port), run_env, cwd,
+                             port, deadline)
+    proc = launch.proc
+    if proc is None:
+        return _unlistening_result(plan, launch, bind_host, port,
+                                   time.monotonic() - started)
 
     def logs() -> str:
-        return _drain(out_q, captured)
+        return launch.drain()
 
-    deadline = started + timeout
     try:
-        reason = wait_for_port(port, deadline, proc)
-        if reason:
-            return ProbeResult(
-                plan.transport, plan.mode, False,
-                f"the server never came up: {reason}; output: {_tail(logs())}",
-                elapsed_s=time.monotonic() - started,
-            )
-
         loop_host = f"127.0.0.1:{port}"
         stream: HttpReply | None = None
         used = paths[0]
@@ -1207,9 +1357,31 @@ def render(results: list[ProbeResult], derivation: Derivation) -> str:
     if derivation.floor_added:
         lines.append(f"Added by the floor (always probed): {', '.join(derivation.floor_added)}")
     lines.append("")
+    icons = {OK: "✅", FAIL: "❌", NOT_SELECTED: "🟡"}
     for r in results:
-        icon = "✅" if r.ok else "❌"
-        lines.append(f"{icon} {r.transport} [{r.mode}] — {r.detail}")
+        lines.append(f"{icons.get(r.status, '?')} {r.transport} [{r.mode}] — {r.detail}")
+
+    unselected = [r for r in results if r.status == NOT_SELECTED]
+    if unselected:
+        lines += [
+            "",
+            "## 🟡 Transport not selected — NOT a statement about the target",
+            "",
+            "For " + ", ".join(r.transport for r in unselected) + " the entrypoint "
+            "exited cleanly without listening, and no transport flag got it to "
+            "serve. The gate asks for a transport through env vars "
+            "(`MCP_TRANSPORT`/`FASTMCP_TRANSPORT`/`PORT`); a target that selects it "
+            "with a CLI flag it does not recognise simply runs its default and "
+            "finishes. **Nothing here says the transport is broken** — it says the "
+            "gate never managed to start it. Fix it once, in the target:",
+            "",
+            "```toml",
+            "[tool.mcp_auditor.boot.commands]",
+        ]
+        for r in unselected:
+            lines.append(f'"{r.transport}" = ["<entrypoint>", "--<flag>", '
+                         f'"--port", "{{port}}"]')
+        lines.append("```")
     weak = [r for r in results if r.ok and r.mode == "generic" and r.transport != STDIO]
     if weak:
         lines += [
@@ -1260,9 +1432,16 @@ def main(argv: list[str] | None = None) -> int:
     report = render(results, derivation)
     print(report)
 
-    failed = [r for r in results if not r.ok]
-    outcome = "findings" if failed else "green"
-    exit_code = EXIT_FINDINGS if failed else EXIT_GREEN
+    # A real failure outranks a not-selected: if stdio genuinely did not come up,
+    # that is the finding, whatever we could not ask of the HTTP transport.
+    failed = [r for r in results if r.status == FAIL]
+    unselected = [r for r in results if r.status == NOT_SELECTED]
+    if failed:
+        outcome, exit_code = "findings", EXIT_FINDINGS
+    elif unselected:
+        outcome, exit_code = "not-measured", EXIT_NOT_MEASURED
+    else:
+        outcome, exit_code = "green", EXIT_GREEN
 
     report_path = env.get("BOOT_REPORT")
     if report_path:

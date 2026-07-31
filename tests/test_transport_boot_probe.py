@@ -273,6 +273,115 @@ class HttpProbeTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# "the gate never got to ASK" is not "the server does not come up"
+# ---------------------------------------------------------------------------
+
+class TransportSelectionTest(unittest.TestCase):
+    """The false finding this branch removes.
+
+    `zurich-opendata-mcp` selects HTTP with `--http`, not with the env vars the
+    gate sets. Measured against the real target: the env-var invocation exits
+    rc 0 without listening, while `--http --port N` serves happily. The gate
+    reported "the server never came up" — a claim about a target whose HTTP
+    transport is healthy. `boot_flag_transport_server.py` is that shape in
+    miniature.
+    """
+
+    FLAG_SERVER = FIXTURES / "boot_flag_transport_server.py"
+
+    def _probe(self, mode: str = "flag", timeout: float = 20.0) -> tbp.ProbeResult:
+        plan = tbp.LaunchPlan(tbp.STREAMABLE_HTTP, "entrypoint",
+                              [sys.executable, str(self.FLAG_SERVER)])
+        return tbp.probe_streamable_http(
+            plan, timeout=timeout, cwd=FIXTURES, bind_host="127.0.0.1",
+            probe_host="mcp-boot-probe.audit.invalid", paths=["/mcp"],
+            env=_fixture_env(BOOT_FLAG_FIXTURE_MODE=mode))
+
+    def test_a_flag_selected_transport_is_found_and_reported_healthy(self) -> None:
+        # The gate now tries `--http --port N` after the env vars come to nothing,
+        # and the attempt is self-verifying: it only counts because the port then
+        # opened and the server answered real MCP.
+        res = self._probe("flag")
+        self.assertTrue(res.ok, msg=res.detail)
+        self.assertEqual(res.status, tbp.OK)
+        self.assertEqual(res.tools, 2)
+
+    def test_a_clean_exit_without_listening_is_not_a_finding(self) -> None:
+        # The same fixture asked for SSE, which it does not serve under any
+        # spelling: the bare call exits rc 0 (it ran "stdio" and finished) and
+        # the `--sse` guesses are rejected by its argparse. The bare call is what
+        # decides, so this is "we never got to ask", not "it does not come up".
+        plan = tbp.LaunchPlan(tbp.SSE, "entrypoint",
+                              [sys.executable, str(self.FLAG_SERVER)])
+        res = tbp.probe_sse(
+            plan, timeout=12, cwd=FIXTURES, bind_host="127.0.0.1",
+            probe_host="x.invalid", paths=["/sse"],
+            env=_fixture_env(BOOT_FLAG_FIXTURE_MODE="flag"))
+        self.assertEqual(res.status, tbp.NOT_SELECTED)
+        self.assertFalse(res.ok)          # not a pass either
+        self.assertEqual(res.evidence.get("case"), "transport-not-selected")
+        self.assertIn("says NOTHING about whether the transport works", res.detail)
+        self.assertIn("tool.mcp_auditor.boot.commands", res.detail)
+
+    def test_a_rejected_guess_does_not_become_a_finding(self) -> None:
+        # The guessed `--sse` flags make the fixture's argparse exit NON-zero.
+        # If a variant's failure could set the verdict, the case above would come
+        # back as "the server does not come up" — swapping one false finding for
+        # another. This pins that the guess cannot vote.
+        plan = tbp.LaunchPlan(tbp.SSE, "entrypoint",
+                              [sys.executable, str(self.FLAG_SERVER)])
+        variants = tbp.argv_variants(plan, "127.0.0.1", 9000)
+        self.assertGreater(len(variants), 1, "the SSE guesses should be tried")
+        rc = subprocess.run(variants[1], cwd=str(FIXTURES), capture_output=True,
+                            stdin=subprocess.DEVNULL, timeout=20).returncode
+        self.assertNotEqual(rc, 0, "the guessed flag really is rejected here")
+
+    def test_a_crash_at_start_is_still_a_finding(self) -> None:
+        # The discriminator must not swallow case 1. A server that TRIED and died
+        # leaves a non-zero status, and that stays a finding about the target.
+        res = self._probe("crash", timeout=12)
+        self.assertEqual(res.status, tbp.FAIL)
+        self.assertIn("never came up", res.detail)
+
+    def test_a_declared_argv_is_never_extended_with_guesses(self) -> None:
+        # The target told us exactly how it wants to be started. Appending flags
+        # to that would override an explicit instruction with a guess.
+        plan = tbp.LaunchPlan(tbp.STREAMABLE_HTTP, "declared", ["serve", "--port", "{port}"])
+        self.assertEqual(tbp.argv_variants(plan, "0.0.0.0", 9000),
+                         [["serve", "--port", "9000"]])
+
+    def test_stdio_gets_no_transport_flags(self) -> None:
+        plan = tbp.LaunchPlan(tbp.STDIO, "entrypoint", ["srv"])
+        self.assertEqual(tbp.argv_variants(plan, "0.0.0.0", 9000), [["srv"]])
+
+    def test_the_bare_invocation_comes_first(self) -> None:
+        # A target that DOES read the environment must not be handed a flag it
+        # might reject before it ever gets its chance.
+        variants = tbp.argv_variants(
+            tbp.LaunchPlan(tbp.STREAMABLE_HTTP, "entrypoint", ["srv"]), "0.0.0.0", 9000)
+        self.assertEqual(variants[0], ["srv"])
+        self.assertIn(["srv", "--http", "--port", "9000"], variants)
+
+    def test_only_the_first_attempt_decides_the_verdict(self) -> None:
+        # A guessed flag that makes an unrelated binary exit non-zero (argparse:
+        # "unrecognized arguments") must not turn into a boot failure. `true`
+        # exits 0 and never listens -> not-selected, despite later variants
+        # failing differently.
+        plan = tbp.LaunchPlan(tbp.STREAMABLE_HTTP, "entrypoint", ["/bin/true"])
+        res = tbp.probe_streamable_http(
+            plan, timeout=10, cwd=FIXTURES, bind_host="127.0.0.1",
+            probe_host="x.invalid", paths=["/mcp"], env=_fixture_env())
+        self.assertEqual(res.status, tbp.NOT_SELECTED)
+
+    def test_a_first_attempt_that_dies_is_a_failure(self) -> None:
+        plan = tbp.LaunchPlan(tbp.STREAMABLE_HTTP, "entrypoint", ["/bin/false"])
+        res = tbp.probe_streamable_http(
+            plan, timeout=10, cwd=FIXTURES, bind_host="127.0.0.1",
+            probe_host="x.invalid", paths=["/mcp"], env=_fixture_env())
+        self.assertEqual(res.status, tbp.FAIL)
+
+
+# ---------------------------------------------------------------------------
 # the gate's own exit-code contract
 # ---------------------------------------------------------------------------
 
@@ -320,6 +429,42 @@ class ExitContractTest(unittest.TestCase):
                              BOOT_TRANSPORTS="stdio")
         self.assertEqual(rc, tbp.EXIT_FINDINGS)
         self.assertEqual(data["transports"][0]["mode"], "generic")
+
+    def test_an_unselected_transport_exits_three_not_two(self) -> None:
+        # The gate's own contract for the new state, end to end through main().
+        root = self.root
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "t"\nversion = "0"\n\n'
+            '[tool.mcp_auditor.boot.commands]\n'
+            f'"streamable-http" = ["{sys.executable}", '
+            f'"{FIXTURES / "boot_flag_transport_server.py"}"]\n', encoding="utf-8")
+        rc, data = self._run(BOOT_TRANSPORTS="streamable-http", BOOT_TIMEOUT="12")
+        # A declared argv is never extended with guesses, so `--http` is not sent
+        # and the fixture exits cleanly without listening.
+        self.assertEqual(rc, tbp.EXIT_NOT_MEASURED)
+        self.assertEqual(data["outcome"], "not-measured")
+        self.assertEqual(data["transports"][0]["status"], tbp.NOT_SELECTED)
+
+    def test_a_real_failure_outranks_an_unselected_transport(self) -> None:
+        # If anything genuinely did not come up, that is the finding — whatever
+        # we could not manage to ask of another transport.
+        results = [tbp.ProbeResult(tbp.STDIO, "entrypoint", False, "crashed",
+                                   status=tbp.FAIL),
+                   tbp.ProbeResult(tbp.STREAMABLE_HTTP, "entrypoint", False, "n/a",
+                                   status=tbp.NOT_SELECTED)]
+        failed = [r for r in results if r.status == tbp.FAIL]
+        unselected = [r for r in results if r.status == tbp.NOT_SELECTED]
+        self.assertTrue(failed and unselected)
+        self.assertEqual(tbp.EXIT_FINDINGS if failed else tbp.EXIT_NOT_MEASURED,
+                         tbp.EXIT_FINDINGS)
+
+    def test_render_names_the_fix_for_an_unselected_transport(self) -> None:
+        text = tbp.render(
+            [tbp.ProbeResult(tbp.STREAMABLE_HTTP, "entrypoint", False, "n/a",
+                             status=tbp.NOT_SELECTED)],
+            tbp.Derivation(transports=[tbp.STREAMABLE_HTTP]))
+        self.assertIn("NOT a statement about the target", text)
+        self.assertIn("[tool.mcp_auditor.boot.commands]", text)
 
     def test_render_flags_generic_http_as_weaker_evidence(self) -> None:
         results = [tbp.ProbeResult(tbp.STREAMABLE_HTTP, "generic", True, "ok")]

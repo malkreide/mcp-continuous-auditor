@@ -135,6 +135,13 @@ _GATE_NAMES = ("ruff", "mypy", "pytest", "schema_drift", "promptfoo_rc", "transp
 # summary and its own block in the report, and it does NOT turn the run red.
 REBIND_NOT_CONFIGURED = 3
 
+# The transport boot gate has the same third state, for the same reason: 3 means
+# "the gate never managed to ASK the entrypoint for that transport" (it exited
+# cleanly without listening and no transport flag reached it). That is not a
+# defect in the target and not a pass either — measured against a target whose
+# HTTP transport is healthy but selected with a CLI flag the gate did not send.
+BOOT_NOT_MEASURED = 3
+
 
 def _load_evidence(path: Path) -> dict[str, Any]:
     """Parse a Worker-produced evidence file. UNTRUSTED and best-effort: an absent
@@ -318,6 +325,14 @@ def _pytest_line(s: dict[str, Any]) -> str:
     return f"{_status(rc)} — {n} test(s)"
 
 
+def _boot_status(rc: int) -> str:
+    """The boot gate's three-way rendering. "Not measured" must not wear a tick:
+    the transport was never started, so nothing about it was established."""
+    if rc == BOOT_NOT_MEASURED:
+        return "🟡 transport not selected — not measured (exit 3)"
+    return _status(rc)
+
+
 def _rebind_status(rc: int) -> str:
     """The rebinding gate's own three-way rendering. A control that is not
     configured must not read as "✅ pass" — the whole reason it is reported is
@@ -364,7 +379,9 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # least one configured transport. A server that will not start is a FINDING
     # about the target — only the harness failing to run (126/127, below) is a
     # hard failure. Keeping those two apart is the whole point of the gate.
-    transport_boot_fail = args.transport_boot != 0 and not _hung(args.transport_boot)
+    transport_boot_unmeasured = args.transport_boot == BOOT_NOT_MEASURED
+    transport_boot_fail = (args.transport_boot not in (0, BOOT_NOT_MEASURED)
+                           and not _hung(args.transport_boot))
     # The rebinding gate, three ways. Exit 3 is NOT a failure: a target with no
     # allow-list configured is in the documented fail-open state. It is surfaced
     # as its own flag so the report can say so out loud instead of leaving a
@@ -475,7 +492,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         schema_drift or redteam or other_findings or toolchain_fail
         or transport_boot_fail or host_allowlist_fail or shipped_artifact_fail
         or hard_fail
-    )
+    )   # transport_boot_unmeasured deliberately absent: not a defect, see below
 
     if hard_fail:
         outcome, exit_code = "hard-fail", EXIT_HARD_FAIL
@@ -506,6 +523,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         "other_findings": other_findings,
         "toolchain_fail": toolchain_fail,
         "transport_boot_fail": transport_boot_fail,
+        "transport_boot_unmeasured": transport_boot_unmeasured,
         "host_allowlist_fail": host_allowlist_fail,
         "host_allowlist_unconfigured": host_allowlist_unconfigured,
         "shipped_artifact_fail": shipped_artifact_fail,
@@ -565,7 +583,7 @@ def render_report(s: dict[str, Any]) -> str:
         f"- pytest: {_pytest_line(s)}",
         f"- schema-drift gate: {_status(s['gates']['schema_drift_gate'])}",
         f"- transport boot gate (initialize + tools/list): "
-        f"{_status(s['gates']['transport_boot_gate'])}",
+        f"{_boot_status(s['gates']['transport_boot_gate'])}",
         f"- DNS-rebinding gate (inbound Host/Origin allow-list): "
         f"{_rebind_status(s['gates']['host_allowlist_gate'])}",
         f"- shipped-artifact gate (install from PyPI + run it): "
@@ -693,6 +711,22 @@ def render_report(s: dict[str, Any]) -> str:
         lines += ["", "## 🚨 Findings"]
         lines += [f"- {f}" for f in findings]
 
+    if s.get("transport_boot_unmeasured"):
+        lines += [
+            "",
+            "## 🟡 Transport not selected — the gate never got to ask",
+            "",
+            "The target's entrypoint exited cleanly without listening, and no "
+            "transport flag got it to serve. The gate requests a transport through "
+            "env vars (`MCP_TRANSPORT`/`FASTMCP_TRANSPORT`/`PORT`); an entrypoint "
+            "that selects it with its own CLI flag simply runs its default and "
+            "finishes. **This says nothing about whether that transport works** — "
+            "it says the gate could not start it. Declare the exact argv in the "
+            "target's `pyproject.toml` under `[tool.mcp_auditor.boot.commands]` "
+            "and the check becomes real again. See the Worker's "
+            "`transport-boot.json` for which transport.",
+        ]
+
     # Its own block, deliberately outside "Findings" and outside the gate list's
     # tick marks: not a defect, not a pass, and never invisible.
     if s.get("host_allowlist_unconfigured"):
@@ -740,8 +774,9 @@ def main() -> int:
     p.add_argument("--pytest", type=int)
     p.add_argument("--schema-drift", type=int, dest="schema_drift")
     p.add_argument("--transport-boot", type=int, dest="transport_boot",
-                   help="transport boot gate exit code (0 green / 2 target does not boot / "
-                        "127 the harness could not run)")
+                   help="transport boot gate exit code (0 green / 2 target does not "
+                        "boot / 3 the transport could not be selected, so nothing was "
+                        "measured / 127 the harness could not run)")
     p.add_argument("--host-allowlist", type=int, dest="host_allowlist",
                    help="DNS-rebinding gate exit code (0 the control is enforced / "
                         "2 finding / 3 the control is NOT CONFIGURED — neither a pass "

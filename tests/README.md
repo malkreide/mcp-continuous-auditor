@@ -136,6 +136,15 @@ Covers:
   *control not configured*, exit 3 — is asserted to be neither a pass nor a
   finding, and `FastMCPRebindTest` proves a vanilla FastMCP server lands there
   rather than producing a false alarm.
+  `TransportSelectionTest` covers the third outcome: the gate asks for a
+  transport through env vars, and a target that selects it with a CLI flag
+  (`boot_flag_transport_server.py`, `zurich-opendata-mcp` in miniature) runs its
+  default and exits **cleanly**. That is "we never got to ask", not "it does not
+  come up" — the gate used to conflate them and report a healthy server as dead.
+  The discriminator is the exit code of the target's *own* invocation: non-zero
+  means it tried and died and stays a finding. One test pins that a guessed flag
+  which makes argparse exit non-zero cannot vote on the verdict — otherwise the
+  fix would swap one false finding for another.
 - `test_release_gap.py` — the release-gap probe (`scripts/release_gap.py`).
   Hardest on the two properties whose failure would turn it into noise or into
   a lie: an unreachable PyPI must not read as "in sync", and a missing tag set
