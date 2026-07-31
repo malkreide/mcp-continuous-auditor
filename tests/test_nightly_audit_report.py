@@ -62,7 +62,8 @@ class ClassifierTest(unittest.TestCase):
     def test_green_evidence_classifies_green(self) -> None:
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -94,7 +95,8 @@ class ClassifierTest(unittest.TestCase):
         # classifies from the promptfoo evidence too -> findings, NOT green.
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "deadbee",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": [
             {"success": False, "testCase": {"description": "schema"},
@@ -114,7 +116,8 @@ class ClassifierTest(unittest.TestCase):
         # An unresolvable/unauthorised grader model must HARD-fail, never pass.
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "c0ffee",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 1},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 1},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 1}, "results": [
             {"error": "model provider unauthorised"},
@@ -128,7 +131,8 @@ class ClassifierTest(unittest.TestCase):
         # promptfoo JSON. The eval cannot be verified -> hard-fail, never green.
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
         })
         s = self._classify(ev, "")  # no --promptfoo-json
         self.assertEqual(s["outcome"], "hard-fail")
@@ -141,7 +145,8 @@ class ClassifierTest(unittest.TestCase):
         # schema_drift (which would falsely report a drift).
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": [
             {"success": False, "testCase": {"description": "injection negative-test"},
@@ -160,7 +165,8 @@ class ClassifierTest(unittest.TestCase):
         # as "red-team clear" — graded_layer_ran False + a loud report caveat.
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "promptfoo_profile": "determ",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -173,7 +179,8 @@ class ClassifierTest(unittest.TestCase):
     def test_graded_profile_marks_layer_ran(self) -> None:
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "promptfoo_profile": "graded",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -186,7 +193,8 @@ class ClassifierTest(unittest.TestCase):
         # validation -> 'invalid' + hard-fail, never rendered raw.
         ev = self._write("ev.json", {
             "target": "o/r; rm -rf /\n## All green", "target_sha": "abc1234",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -200,7 +208,8 @@ class ClassifierTest(unittest.TestCase):
         # not inject Markdown structure or terminal escapes into the report sink.
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
-            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 1},
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 1},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 1}, "results": [
             {"error": "boom\n## FAKE ALL GREEN\n\x1b[31mred"},
@@ -209,6 +218,70 @@ class ClassifierTest(unittest.TestCase):
         report = (self.dir / "report.md").read_text(encoding="utf-8")
         self.assertNotIn("\n## FAKE ALL GREEN", report)  # no injected heading line
         self.assertNotIn("\x1b", report)                 # no terminal escape
+
+    # --- transport boot gate --------------------------------------------------
+
+    def test_transport_boot_failure_is_a_finding_not_a_hard_fail(self) -> None:
+        # The gate's whole point: a target that will not start is a statement about
+        # the TARGET (exit 2), not about the infrastructure. Every other gate is
+        # green here — that is exactly the situation the gate was added for.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 2, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "findings")
+        self.assertEqual(s["_exit"], nar.EXIT_FINDINGS)
+        self.assertTrue(s["transport_boot_fail"])
+        self.assertFalse(s["hard_fail"])
+        self.assertFalse(s["green"])
+        # …and it must not be mislabelled as one of the neighbouring classes.
+        self.assertFalse(s["schema_drift"])
+        self.assertFalse(s["toolchain_fail"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("Transport boot failure", report)
+
+    def test_transport_boot_harness_failure_is_hard_fail(self) -> None:
+        # 127 means the HARNESS could not run. That says nothing about whether the
+        # target boots, so it must never be reported as a finding about the target.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 127, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertEqual(s["_exit"], nar.EXIT_HARD_FAIL)
+        self.assertTrue(any("transport boot gate could not run" in r
+                            for r in s["hard_fail_reasons"]))
+
+    def test_evidence_without_the_boot_gate_is_hard_fail_never_green(self) -> None:
+        # A Worker image still running the previous nightly-audit.sh ships evidence
+        # with no transport_boot key. It genuinely did not run the gate, so the run
+        # must NOT classify green — the Worker and Broker roll out together.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertFalse(s["green"])
+        self.assertEqual(s["gates"]["transport_boot_gate"], 127)
+
+    def test_boot_gate_appears_in_the_rendered_gate_list(self) -> None:
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        self._classify(ev, pf)
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("transport boot gate", report)
 
     def test_partial_evidence_missing_gate_defaults_to_hard_fail(self) -> None:
         # A gate omitted from the evidence must read as could-not-run (127),

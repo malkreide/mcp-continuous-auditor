@@ -6,8 +6,8 @@ Phase 4). ``scripts/nightly-audit.sh`` runs the deterministic gates against a
 read-only checkout of the target MCP server and hands their exit codes + the
 promptfoo JSON output to this module. Here we:
 
-  * classify the outcome into **schema drift**, **red-team hit**, plain
-    toolchain failure, or all-green;
+  * classify the outcome into **schema drift**, **red-team hit**, **transport
+    boot failure**, plain toolchain failure, or all-green;
   * separate a genuine finding (a red eval) from an *infrastructure* failure —
     most importantly an **unresolvable model / provider error** in promptfoo,
     which must HARD-FAIL the run rather than be silently reported as "passed"
@@ -86,7 +86,13 @@ def _load_promptfoo(path: Path) -> dict[str, Any] | None:
 # Gate exit codes carried in a Worker evidence file (see nightly-audit.sh). The
 # Worker ships raw evidence; the trusted Broker re-classifies from it, so a
 # compromised Worker cannot forge a green verdict (Analysis S2).
-_GATE_NAMES = ("ruff", "mypy", "pytest", "schema_drift", "promptfoo_rc")
+#
+# ADDING A GATE HERE IS A ROLLOUT STEP, NOT A COSMETIC ONE: an evidence file that
+# does not carry a name listed here defaults to 127 (could-not-run) and the run
+# HARD-FAILS. That is the intended fail-closed behaviour — a Worker image still
+# running the previous nightly-audit.sh genuinely did not run the new gate, and
+# must not be classified as green. Roll the Worker image and the Broker together.
+_GATE_NAMES = ("ruff", "mypy", "pytest", "schema_drift", "promptfoo_rc", "transport_boot")
 
 
 def _load_evidence(path: Path) -> dict[str, Any]:
@@ -229,6 +235,11 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     redteam = pfc["redteam_hits"] > 0
     other_findings = pfc.get("other_failures", 0) > 0
     toolchain_fail = args.ruff != 0 or args.mypy != 0 or args.pytest != 0
+    # Transport boot: the target did not come up, or came up unusable, under at
+    # least one configured transport. A server that will not start is a FINDING
+    # about the target — only the harness failing to run (126/127, below) is a
+    # hard failure. Keeping those two apart is the whole point of the gate.
+    transport_boot_fail = args.transport_boot != 0
 
     # Hard failure (never silently downgraded to "passed"):
     #   * an audited gate could not run (missing bin / sync failure, rc 127/126);
@@ -265,9 +276,17 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             hard_fail_reasons.append(f"{name} could not run (exit {rc})")
     if args.schema_drift in infra_codes:
         hard_fail_reasons.append(f"schema-drift gate could not run (exit {args.schema_drift})")
+    if args.transport_boot in infra_codes:
+        hard_fail_reasons.append(
+            f"transport boot gate could not run (exit {args.transport_boot}) — the harness "
+            "itself failed; this says nothing about whether the target boots"
+        )
 
     hard_fail = bool(hard_fail_reasons)
-    green = not (schema_drift or redteam or other_findings or toolchain_fail or hard_fail)
+    green = not (
+        schema_drift or redteam or other_findings or toolchain_fail
+        or transport_boot_fail or hard_fail
+    )
 
     if hard_fail:
         outcome, exit_code = "hard-fail", EXIT_HARD_FAIL
@@ -297,12 +316,14 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         "redteam": redteam,
         "other_findings": other_findings,
         "toolchain_fail": toolchain_fail,
+        "transport_boot_fail": transport_boot_fail,
         "gates": {
             "ruff": args.ruff,
             "mypy": args.mypy,
             "pytest": args.pytest,
             "schema_drift_gate": args.schema_drift,
             "promptfoo_rc": args.promptfoo_rc,
+            "transport_boot_gate": args.transport_boot,
         },
         "promptfoo": pfc,
     }
@@ -330,6 +351,8 @@ def render_report(s: dict[str, Any]) -> str:
         f"- mypy: {_status(s['gates']['mypy'])}",
         f"- pytest: {_status(s['gates']['pytest'])}",
         f"- schema-drift gate: {_status(s['gates']['schema_drift_gate'])}",
+        f"- transport boot gate (initialize + tools/list): "
+        f"{_status(s['gates']['transport_boot_gate'])}",
         f"- promptfoo (contract + red-team): {_status(s['gates']['promptfoo_rc'])}",
         f"- promptfoo profile: **{s.get('promptfoo_profile', 'unknown')}**",
     ]
@@ -366,6 +389,16 @@ def render_report(s: dict[str, Any]) -> str:
             f"**Other promptfoo failure(s)** — {pf.get('other_failures', 0)} case(s) failed but "
             "matched neither the schema/contract nor the red-team class (see detail)."
         )
+    if s.get("transport_boot_fail"):
+        findings.append(
+            "**Transport boot failure** — the target did not come up, or came up unusable, "
+            "under at least one configured transport (no `initialize` / `tools/list` answer). "
+            "Unit tests, ruff and the schema gate are all blind to this: the two known shapes "
+            "are a crash at start (a read-only settings object) and an HTTP 421 for every "
+            "request under a real hostname (the host was not passed to the app builder). "
+            "See the Worker's `transport-boot.log` / `transport-boot.json` for which transport "
+            "and which of the two."
+        )
     if s["toolchain_fail"]:
         findings.append("**Toolchain failure** — ruff/mypy/pytest is red (see gates above).")
     if findings:
@@ -398,6 +431,9 @@ def main() -> int:
     p.add_argument("--mypy", type=int)
     p.add_argument("--pytest", type=int)
     p.add_argument("--schema-drift", type=int, dest="schema_drift")
+    p.add_argument("--transport-boot", type=int, dest="transport_boot",
+                   help="transport boot gate exit code (0 green / 2 target does not boot / "
+                        "127 the harness could not run)")
     p.add_argument("--promptfoo-rc", type=int, dest="promptfoo_rc")
     p.add_argument("--from-evidence", default="", dest="from_evidence",
                    help="read gate exit codes (+ target/sha) from a Worker evidence JSON")
