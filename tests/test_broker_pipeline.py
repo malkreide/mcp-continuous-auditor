@@ -28,7 +28,7 @@ HANDLER = REPO / "deploy" / "microvm" / "channel" / "_receive-one.sh"
 REPORT_PY = REPO / "scripts" / "nightly_audit_report.py"
 
 _GREEN_GATES = {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                "transport_boot": 0, "promptfoo_rc": 0}
+                "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0}
 
 
 def _tar_bytes(members: dict[str, bytes]) -> bytes:

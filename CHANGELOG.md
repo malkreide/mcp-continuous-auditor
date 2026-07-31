@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the DNS-rebinding gate: the control CORS and a token cannot provide
+
+A page in the operator's network resolves its own hostname to the MCP server's
+address and then talks to it straight out of the browser. Two things that look
+like they should stop that do not: **CORS** cannot, because after the rebind the
+browser considers the request same-origin and there is no preflight to fail; and
+an **auth token** cannot, because the attacking page runs in a context that
+already holds one. The only control that answers the question is the transport's
+own check of the `Host` (and `Origin`) header — the inbound counterpart to the
+egress allow-list these servers already have. It was retrofitted in
+`malkreide/bag-health-mcp#51` and `malkreide/swiss-transport-mcp#25`; this gate is
+what keeps it honest.
+
+- **`scripts/rebind_probe.py`** — boots the target through the boot gate's own
+  launch plan (`transport_boot_probe`: declared argv > entrypoint > imported
+  server object), configures an inbound allow-list, and then tries to walk past
+  it. Four probes, all to `127.0.0.1` on the bound port because there is no DNS
+  for an invented name — only the headers differ:
+
+  | probe | request | expected |
+  |---|---|---|
+  | 1 | foreign `Host` | rejected |
+  | 2 | allowed hostname, **wrong port** | rejected |
+  | 3 | allowed `Host`, foreign `Origin` | rejected |
+  | 4 | allowed `Host` and port | **accepted** |
+
+  **Probe 2 is load-bearing, and probe 4 is why.** A probe against
+  `evil.example.com` alone proves nothing: a server that falls back to a loopback
+  default policy rejects it just as convincingly, and so does one broken in some
+  unrelated way. What no fallback can imitate is the *pair* — two requests
+  differing in exactly one thing, the port, one rejected and one accepted. A
+  loopback fallback rejects both; a list compared on hostname only accepts both.
+  Without probe 4, probes 1–3 measure "something said no", not "the configured
+  allow-list said no". A test pins this from both sides: against the
+  `loopback_only` fixture the foreign-host probe passes and the gate still refuses
+  to call the control verified, and against `hostname_only` probes 1, 3 and 4
+  answer *identically* to the healthy server so the wrong-port probe is the only
+  thing left carrying the check.
+
+  **The whole matrix runs twice — once anonymous, once with a VALID token.** A
+  server that lets a foreign `Host` through the moment an `Authorization` header
+  appears has not implemented this control; it has implemented authentication,
+  which the attack defeats by construction. That case is named in the report
+  rather than folded into a generic failure. The token pass carries its own
+  control too: one request with a deliberately *wrong* token. If that is served,
+  the target never enforced auth here, and the pass is recorded as weaker evidence
+  instead of being claimed as proof of independence.
+
+- **Three outcomes, not two.** A target with no allow-list configured rejects
+  nothing on a non-loopback bind. That is the *documented* fail-open state — both
+  servers above ship the check off by default, because guessing a list on
+  `0.0.0.0` would reject the very deployment it is meant to protect. So it is
+  reported as its own visible category, **`control not configured`** (exit 3):
+  never as a pass, because the control is absent and the attack is unopposed;
+  never as a finding, because nothing is broken.
+
+  Two things separate it from a real defect, in that order. First what the probes
+  themselves show: a target that refuses *some* hostile probes and serves others
+  took the allow-list and applied it wrongly — nothing that is merely switched off
+  can produce that mix — so it is a finding regardless of what its docs say, as is
+  a check that holds until a valid token appears. Only when all three hostile
+  probes are served alike is there nothing observable to go on, and only then does
+  the target's own tree decide: a source file, README, `.env.example` or compose
+  file naming an allow-list variable means the knob is there and not honouring it
+  is a defect (exit 2). A `FastMCPRebindTest` boots a real FastMCP server to prove
+  a vanilla one lands in `not configured` rather than producing a false alarm.
+
+- **Classifier + report.** `host_allowlist` joins the evidence `gates` object and
+  the Broker-side classifier with its own three-way rendering: exit 3 shows as
+  `🟡 control not configured`, gets its own report block, and — since it does not
+  turn the run red — rewrites the green headline so "All gates green" is never the
+  last word on a server whose rebinding control is absent. As with the boot gate,
+  a gate name missing from evidence still defaults to 127 and hard-fails, so a
+  Worker image predating this gate cannot classify green. Roll the Worker image
+  and the Broker together. `REBIND_GATE=off` opts out.
+
+- **Two smaller fixes found on the way.** `sync_findings_issues.py` had no
+  routing class for `transport_boot_fail`, so a run whose only red gate was the
+  boot probe classified as `findings` and then opened no issue at all; both
+  process gates now route (the rebinding one under its own `dns-rebinding`
+  label). And `detect_knob` matches variable names on identifier boundaries —
+  `ALLOWED_HOSTS` is a substring of `MCP_ALLOWED_HOSTS`, and the report's job is
+  to tell the operator which variable to set, not to list every name that fits.
+
+Note the two gates have opposite polarities and do not contradict each other. In
+the boot gate a rejection is the *bug* (nobody configured a list, so refusing a
+real hostname can only mean `host` never reached the app builder); here a
+rejection is the *control working*, because this gate configures a list first.
+They never disagree about the same server: the boot gate sets no allow-list
+variable, so a target that honours one is untouched by it. A target with a
+**hardcoded** non-loopback list is the one shape that trips the boot gate while
+this gate calls it healthy — read both reports together, and see
+`REBIND_ALLOWED_HOST` for pointing this gate at a name such a target really
+allows.
+
 ### Added — the transport boot gate: the first gate that watches the process run
 
 Every gate before this one reads the target. `ruff` reads it, `mypy` reads it,

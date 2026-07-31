@@ -57,6 +57,15 @@ no DNS for an invented name), varying only the ``Host:`` header:
 Running both is what keeps the finding diagnostic instead of alarming: a target
 that legitimately pins its allowed hosts fails both, and is reported differently.
 
+NOTE — the OTHER polarity lives in scripts/rebind_probe.py. Here a rejection is
+the BUG (nobody configured an allow-list, so rejecting a real hostname can only
+mean the host never reached the app builder). There a rejection is the CONTROL
+WORKING, because that gate configures an allow-list first and then tries to walk
+past it. The two never disagree about the same server: this gate boots without
+any allow-list variable set, so a target that honours one is untouched by it. A
+target with a HARDCODED non-loopback allow-list is the one shape that trips this
+gate while the rebinding gate calls it healthy — read both reports together.
+
 THE STDIO TRAP
 --------------
 stdin is held OPEN until every response has been read. Closing it right after
@@ -778,13 +787,18 @@ def _redirect_target(location: str, current: str) -> str:
 
 
 def http_post(port: int, path: str, host_header: str, payload: dict[str, Any],
-              timeout: float, session_id: str = "") -> HttpReply:
+              timeout: float, session_id: str = "",
+              extra_headers: dict[str, str] | None = None) -> HttpReply:
     """One JSON-RPC POST. The connection always goes to 127.0.0.1 — only the Host
     header varies, which is exactly the knob case 2 turns on.
 
     Redirects are followed (with the method and body preserved, as 307/308
     require): FastMCP answers ``/mcp/`` with a 307 to ``/mcp``, and treating that
     as "the transport is broken" would make the gate fire on every healthy target.
+
+    ``extra_headers`` is what the rebinding gate (scripts/rebind_probe.py) varies:
+    ``Origin`` and ``Authorization``. It is applied last, so a caller can also
+    override ``Host`` — the header this whole function exists to control.
     """
     headers = {
         "Host": host_header,
@@ -794,6 +808,7 @@ def http_post(port: int, path: str, host_header: str, payload: dict[str, Any],
     }
     if session_id:
         headers["Mcp-Session-Id"] = session_id
+    headers.update(extra_headers or {})
 
     body = json.dumps(payload)
     current = path
@@ -815,11 +830,18 @@ def http_post(port: int, path: str, host_header: str, payload: dict[str, Any],
     return HttpReply(resp.status, got, raw, _decode_body(got, raw), current)
 
 
-def http_get_sse(port: int, path: str, host_header: str, timeout: float) -> HttpReply:
+def http_get_sse(port: int, path: str, host_header: str, timeout: float,
+                 extra_headers: dict[str, str] | None = None) -> HttpReply:
     """The legacy SSE handshake's opening GET — we only need the first frames, so
     the read is bounded rather than following the stream to its end. Redirects are
-    followed for the same reason as in http_post."""
+    followed for the same reason as in http_post.
+
+    The bounded read is what makes this safe for the rebinding gate too: a server
+    with NO host allow-list answers a foreign-Host GET with an endless event
+    stream, and an unbounded reader would hang on the very case it is measuring.
+    """
     headers = {"Host": host_header, "Accept": "text/event-stream"}
+    headers.update(extra_headers or {})
     current = path
     for _ in range(_MAX_REDIRECTS + 1):
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)

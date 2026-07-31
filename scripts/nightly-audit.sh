@@ -12,6 +12,9 @@
 #   3b. runs the transport boot gate (transport_boot_probe.py): starts the target
 #      under every transport it configures and speaks a real JSON-RPC initialize +
 #      tools/list to it;
+#   3c. runs the DNS-rebinding gate (rebind_probe.py): boots the target with an
+#      inbound host allow-list configured and tries to walk past it — with and
+#      without a valid auth token;
 #   4. runs the promptfoo eval (tool-output contract + OWASP red-team), writing
 #      machine-readable JSON output;
 #   5. hands every exit code + the promptfoo JSON to
@@ -76,6 +79,21 @@
 #                         BOOT_TIMEOUT     hard per-attempt deadline (default 30s)
 #                         BOOT_HTTP_HOST   non-loopback Host used for the 421 probe
 #                         BOOT_BIND_HOST   what the target is told to bind (0.0.0.0)
+#   REBIND_GATE         DNS-rebinding gate policy (default on). Boots the target
+#                       with an inbound Host/Origin allow-list configured and tries
+#                       to walk past it — foreign Host, right host on the wrong
+#                       port, foreign Origin — each with and without a valid auth
+#                       token. Unlike every other gate this one has THREE outcomes:
+#                         0  the control is enforced
+#                         2  finding (a probe walked through on a target that ships
+#                            the knob, a valid token bypassed the check, or the
+#                            result could not be attributed)
+#                         3  the control is NOT CONFIGURED — the documented
+#                            fail-open state, reported as its own visible category
+#                            rather than as a pass or a failure.
+#                       Tunables (see scripts/rebind_probe.py): REBIND_ALLOWED_HOST,
+#                       REBIND_FOREIGN_HOST, REBIND_AUTH_TOKEN, REBIND_TIMEOUT,
+#                       REBIND_BIND_HOST, REBIND_HTTP_PATHS, REBIND_SSE_PATHS.
 #   BUDGET_GUARD        Phase-5 budget guardrails (default: on; set 0/off to skip)
 #                       — circuit breaker + token ceiling, see budget_guard.py /
 #                       docs/budget/guardrails.md. Tunable via BUDGET_* env vars.
@@ -103,6 +121,9 @@ SCHEMA_GATE="${SCHEMA_GATE:-on}"
 # Transport boot gate policy: on by default, same fail-closed reasoning as the
 # schema gate — a target that will not start is a FINDING, not a pass.
 BOOT_GATE="${BOOT_GATE:-on}"
+# DNS-rebinding gate policy: on by default. It owns a 0/2/3/127 contract — 3 is
+# "the control is not configured", which is neither a pass nor a finding.
+REBIND_GATE="${REBIND_GATE:-on}"
 
 repo_name="${TARGET_REPO##*/}"
 src_dir="${AUDIT_DIR}/${repo_name}"
@@ -118,7 +139,7 @@ hard_fail() {
   echo "FATAL: ${reason}" >&2
   python3 "${HERE}/nightly_audit_report.py" \
     --ruff 127 --mypy 127 --pytest 127 --schema-drift 127 --transport-boot 127 \
-    --promptfoo-rc 127 \
+    --host-allowlist 127 --promptfoo-rc 127 \
     --promptfoo-profile "${PROMPTFOO_PROFILE}" \
     --target "${TARGET_REPO}" --sha "unknown" \
     --out-report "${report_path}" --out-summary "${summary_path}" >/dev/null 2>&1 || true
@@ -284,6 +305,43 @@ else
   fi
 fi
 
+# --- 3c) DNS-rebinding gate ---------------------------------------------------
+# Boot the target with an inbound Host/Origin allow-list configured, then try to
+# walk past it. This is the one control that answers a DNS-rebinding attack: CORS
+# does not (the browser sees same-origin after the rebind) and a token does not
+# (the attacking page runs where one is held), which is why the whole matrix is
+# probed twice — once anonymous, once with a VALID token.
+#
+# The gate owns a 0 / 2 / 3 / 127 contract. The 3 is the point: a target with no
+# allow-list configured does not reject anything on a non-loopback bind, and that
+# is documented behaviour rather than a bug — so it is neither swallowed as a pass
+# nor announced as a failure. It gets its own visible line in the report.
+echo "==> DNS-rebinding gate (inbound Host/Origin allow-list, with and without a token)"
+rebind_report="${log_dir}/rebind.json"
+rm -f "${rebind_report}"
+if [ "${REBIND_GATE}" = "0" ] || [ "${REBIND_GATE}" = "off" ]; then
+  echo "    DNS-rebinding gate explicitly disabled (REBIND_GATE=off)" \
+    | tee "${log_dir}/rebind.log"
+  rc_rebind=0
+else
+  ( cd "${src_dir}" && \
+      MCP_SERVER_IMPORT="${MCP_SERVER_IMPORT}" \
+      BOOT_TARGET_ROOT="${src_dir}" \
+      REBIND_REPORT="${rebind_report}" \
+      uv run python "${HERE}/rebind_probe.py" ) \
+    >"${log_dir}/rebind.log" 2>&1
+  rc_rebind=$?
+  # Same reasoning as the boot gate above: the probe always writes its report
+  # before returning 0/2/3, so no report plus a non-zero code means the probe
+  # never ran. That is infrastructure (127), not a statement about the target's
+  # allow-list — and least of all a claim that the control is missing.
+  if [ ! -s "${rebind_report}" ] && [ "${rc_rebind}" -ne 0 ]; then
+    echo "    no ${rebind_report} written — the probe itself did not run; recording 127 (hard-fail)" \
+      | tee -a "${log_dir}/rebind.log"
+    rc_rebind=127
+  fi
+fi
+
 # --- 4) promptfoo eval (contract + OWASP red-team) ----------------------------
 echo "==> promptfoo eval (${PROMPTFOO_CONFIG})"
 pf_json="${log_dir}/promptfoo.json"
@@ -338,6 +396,7 @@ cat > "${evidence_path}" <<EOF
     "pytest": ${rc_pytest},
     "schema_drift": ${rc_schema},
     "transport_boot": ${rc_boot},
+    "host_allowlist": ${rc_rebind},
     "promptfoo_rc": ${rc_pf}
   }
 }
@@ -348,6 +407,7 @@ echo "==> aggregating into ${report_path}"
 python3 "${HERE}/nightly_audit_report.py" \
   --ruff "${rc_ruff}" --mypy "${rc_mypy}" --pytest "${rc_pytest}" \
   --schema-drift "${rc_schema}" --transport-boot "${rc_boot}" \
+  --host-allowlist "${rc_rebind}" \
   --promptfoo-rc "${rc_pf}" --promptfoo-json "${pf_json}" \
   --promptfoo-profile "${PROMPTFOO_PROFILE}" \
   --target "${TARGET_REPO}" --sha "${sha}" \

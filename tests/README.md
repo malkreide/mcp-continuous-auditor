@@ -63,6 +63,22 @@ Covers:
   test failure rather than as false findings against slow targets. The fixtures
   speak enough JSON-RPC on their own, so all of this is stdlib-only and offline;
   `FastMCPBootTest` is the one class needing `fastmcp` and self-skips without it.
+- `test_rebind_probe.py` — the DNS-rebinding gate (`scripts/rebind_probe.py`),
+  which boots the target with an inbound `Host`/`Origin` allow-list configured
+  and then tries to walk past it. The fixture
+  (`tests/fixtures/rebind_http_server.py`) ships six servers that are hard to
+  tell apart from outside, and the tests exist to keep the gate from collapsing
+  any two of them into one answer. Two carry the design: `loopback_only` refuses
+  the attacker's hostname exactly as convincingly as a correct server does, so a
+  probe against `evil.example.com` alone would have called it protected — and
+  against `hostname_only` probes 1, 3 and 4 answer *identically* to the healthy
+  server, so the wrong-port probe is the only thing separating a loose allow-list
+  from a strict one. A third pins the token case: `auth_first` holds the host
+  check for anonymous requests and folds the moment a valid token appears, which
+  is authentication wearing the control's name. The gate's third outcome —
+  *control not configured*, exit 3 — is asserted to be neither a pass nor a
+  finding, and `FastMCPRebindTest` proves a vanilla FastMCP server lands there
+  rather than producing a false alarm.
 - `test_release_gap.py` — the release-gap probe (`scripts/release_gap.py`).
   Hardest on the two properties whose failure would turn it into noise or into
   a lie: an unreachable PyPI must not read as "in sync", and a missing tag set
@@ -71,8 +87,9 @@ Covers:
   `git log`, which would only assert that the mock matches the assumption.
   Needs `git`; no network — the index lookup is injected.
 
-`test_smoke_target.py` and `test_transport_boot_probe.FastMCPBootTest`
-self-**skip** here — both need `fastmcp`.
+`test_smoke_target.py`, `test_transport_boot_probe.FastMCPBootTest` and
+`test_rebind_probe.FastMCPRebindTest` self-**skip** here — all three need
+`fastmcp`.
 
 ## With fastmcp (the smoke target, finding U-B)
 
@@ -87,6 +104,12 @@ uv run --with fastmcp python -m unittest tests.test_smoke_target
 
 No network is used: the provider's httpx call is mocked against
 `tests/smoke_fixtures/`.
+
+`test_rebind_probe.FastMCPRebindTest` joins them: a vanilla FastMCP server on a
+non-loopback bind is the fail-open case, and the gate must report it as *control
+not configured* rather than as a finding. If that ever flips, the SDK changed its
+default transport-security posture — and we want to hear it here, not from a real
+target at 03:00.
 
 `test_transport_boot_probe.FastMCPBootTest` joins it there: it boots the same
 `smoke_server.py` for real, over stdio and over streamable-http, and speaks

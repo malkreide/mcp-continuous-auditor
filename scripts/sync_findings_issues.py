@@ -39,12 +39,18 @@ _CLASSES: list[tuple[str, str, str]] = [
     ("redteam", "redteam", "[nightly] Red-team hit"),
     ("other_findings", "audit-finding", "[nightly] Audit finding (uncategorised)"),
     ("toolchain_fail", "audit-finding", "[nightly] Toolchain failure"),
+    # The two process-level gates. Without an entry here a run whose ONLY finding
+    # is one of these classifies as `findings` and then routes to no issue at all
+    # — the finding exists in the summary and nothing is ever opened for it.
+    ("transport_boot_fail", "audit-finding", "[nightly] Transport boot failure"),
+    ("host_allowlist_fail", "dns-rebinding", "[nightly] DNS-rebinding control failed"),
 ]
 
 _LABEL_COLORS = {
     "schema-drift": "b60205",
     "redteam": "d93f0b",
     "audit-finding": "fbca04",
+    "dns-rebinding": "5319e7",
 }
 
 
