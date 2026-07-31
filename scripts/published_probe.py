@@ -61,11 +61,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import shutil
 import subprocess
 import tempfile
+import tokenize
 import venv
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,6 +174,35 @@ LITERAL = re.compile(r'["\']([A-Za-z][A-Za-z0-9_.+-]*/\d[^"\']*)["\']')
 MENTIONS_UA = re.compile(r"user.?agent", re.I)
 
 
+def code_only(text: str) -> str:
+    """The source with comments blanked out.
+
+    `bakom-mcp` 2.0.4 sends the correct `bakom-mcp/2.0.4` and was reported as
+    DRIFT anyway, because `__init__.py` carries a comment recording the old
+    incident:
+
+        # in server.py carried "bakom-mcp/1.0" to the BAKOM endpoints ...
+
+    A probe that goes red on a comment documenting the very bug it exists to
+    catch teaches people to delete the documentation. `identity_probe.py`
+    learned this and strips comments; this probe was written without that
+    lesson and had to relearn it against a real package.
+
+    `tokenize`, not `split("#")` — a `#` inside a string literal must not
+    truncate the line. Unparseable source is returned whole rather than
+    skipped: checking it noisily beats not checking it.
+    """
+    lines = text.splitlines()
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                row, col = tok.start
+                lines[row - 1] = lines[row - 1][:col]
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return text
+    return "\n".join(lines)
+
+
 @dataclass
 class Finding:
     value: str
@@ -276,9 +307,11 @@ def probe(dist: str, constraint: str | None = None, keep: bool = False) -> Resul
             if not str(rel).startswith(top):
                 continue
             try:
-                text = path.read_text(encoding="utf-8")
+                raw = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue
+            # Comments are documentation, not evidence — see code_only().
+            text = code_only(raw)
             if MENTIONS_UA.search(text):
                 result.mentions_ua = True
 
