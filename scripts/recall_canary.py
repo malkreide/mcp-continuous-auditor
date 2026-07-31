@@ -91,10 +91,44 @@ def _tool_payload(result: Any) -> Any:
     return content
 
 
-async def _call(mcp: Any, tool: str, args: dict) -> Any:
-    from fastmcp import Client
+# TWO DIFFERENT THINGS ARE CALLED FASTMCP and they cannot share an environment:
+# (a) the official `mcp` SDK, whose 2.x server class is
+# `mcp.server.mcpserver.MCPServer` (renamed from `mcp.server.fastmcp.FastMCP`)
+# and whose client is `mcp.client.client.Client`; and (b) the separate PyPI
+# project `fastmcp`, whose `fastmcp.Client` is still correct and was NOT renamed.
+# `fastmcp` still needs `mcp` 1.x, so a hard import of either makes this canary
+# unrunnable against half the portfolio. Dispatch on the server object's module —
+# see schemas/generate_schemas.py for the long version.
 
-    async with Client(mcp) as client:
+def _sdk_client(server: Any) -> Any:
+    from mcp.client.client import Client  # (a) — mcp >= 2
+
+    return Client(server)
+
+
+def _fastmcp_client(server: Any) -> Any:
+    from fastmcp import Client  # (b) — the standalone package
+
+    return Client(server)
+
+
+def in_memory_client(server: Any) -> Any:
+    origin = (type(server).__module__ or "").split(".")[0]
+    order = ((_fastmcp_client, _sdk_client) if origin == "fastmcp"
+             else (_sdk_client, _fastmcp_client))
+    problems: list[str] = []
+    for make in order:
+        try:
+            return make(server)
+        except ImportError as exc:
+            problems.append(f"{make.__name__}: {exc}")
+    raise RuntimeError(
+        "no in-memory client available for "
+        f"{type(server).__module__}.{type(server).__name__}: " + "; ".join(problems))
+
+
+async def _call(mcp: Any, tool: str, args: dict) -> Any:
+    async with in_memory_client(mcp) as client:
         result = await asyncio.wait_for(client.call_tool(tool, args), timeout=_TIMEOUT)
     return _tool_payload(result)
 

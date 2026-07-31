@@ -1,10 +1,14 @@
-"""promptfoo Python provider: call a FastMCP tool/resource in-process.
+"""promptfoo Python provider: call an MCP tool/resource in-process.
 
 Deterministic by construction — there is **no live network**. Outbound httpx is
 patched with an ``AsyncMock`` that replays a recorded fixture from
-``promptfoo/fixtures/``; the FastMCP in-memory client then drives the real tool
+``promptfoo/fixtures/``; the server's in-memory client then drives the real tool
 against that fixture. The provider returns the tool's **raw JSON** so promptfoo
 can ``is-json``-validate it against the generated schema (schema drift = red CI).
+
+Which in-memory client that is depends on the target — see ``in_memory_client``
+below. Two different projects are called FastMCP and they cannot share an
+environment, so this file asks the server object rather than pinning either.
 
 promptfoo calls ``call_api(prompt, options, context)``; it reads these vars:
 
@@ -124,11 +128,59 @@ def _resource_to_json(result: Any) -> str:
     return _coerce_json(blocks)
 
 
+# --------------------------------------------------------------------------
+# TWO DIFFERENT THINGS ARE CALLED FASTMCP, and they cannot share an environment.
+#
+#   (a) `mcp` — the OFFICIAL SDK. Server class `mcp.server.mcpserver.MCPServer`
+#       (renamed from `mcp.server.fastmcp.FastMCP` in the 2.0 break, which
+#       removed the old module with no shim). Client: `mcp.client.client.Client`.
+#   (b) `fastmcp` — a SEPARATE PyPI project on its own major line (3.x while the
+#       SDK is at 2.x). `fastmcp.FastMCP` driven by `fastmcp.Client`. Still
+#       current, still correct, NOT the thing that was renamed.
+#
+# `fastmcp` still requires `mcp` 1.x, so alongside `mcp` 2.x even `import
+# fastmcp` raises. This provider runs INSIDE the target's environment, so a hard
+# import of either one makes it unrunnable against half the portfolio — which is
+# what the previous `from fastmcp import Client` did to every migrated target.
+# --------------------------------------------------------------------------
+
+def _sdk_client(server: Any) -> Any:
+    from mcp.client.client import Client  # (a) — mcp >= 2
+
+    return Client(server)
+
+
+def _fastmcp_client(server: Any) -> Any:
+    from fastmcp import Client  # (b) — the standalone package
+
+    return Client(server)
+
+
+def in_memory_client(server: Any) -> Any:
+    """An in-memory client for `server`, from whichever SDK owns it.
+
+    Dispatch is on the server object's own module, not on what happens to be
+    importable — that is the one signal that cannot be wrong.
+    """
+    origin = (type(server).__module__ or "").split(".")[0]
+    order = ((_fastmcp_client, _sdk_client) if origin == "fastmcp"
+             else (_sdk_client, _fastmcp_client))
+    problems: list[str] = []
+    for make in order:
+        try:
+            return make(server)
+        except ImportError as exc:
+            problems.append(f"{make.__name__}: {exc}")
+    raise RuntimeError(
+        "no in-memory client available for a server of type "
+        f"{type(server).__module__}.{type(server).__name__}. Tried the official "
+        "SDK (`mcp>=2`) and the standalone `fastmcp` package — different "
+        "projects, cannot be installed together. Details: " + "; ".join(problems))
+
+
 async def _invoke(
     tool: str | None, resource: str | None, args: dict, fixture: str | None
 ) -> str:
-    from fastmcp import Client
-
     mcp = _load_server()
     payload = _fixture_payload(fixture)
 
@@ -137,7 +189,7 @@ async def _invoke(
         return _FakeResponse(payload)
 
     with patch("httpx.AsyncClient.request", new=_fake_request):
-        async with Client(mcp) as client:
+        async with in_memory_client(mcp) as client:
             if resource:
                 return _resource_to_json(await client.read_resource(resource))
             return _result_to_json(await client.call_tool(tool, args))

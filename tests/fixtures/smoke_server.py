@@ -15,11 +15,30 @@ repo at all. This tiny server closes that gap without any network:
   * ``smoke://info`` exercises the resource read path.
 
 Import path follows the ``MCP_SERVER_IMPORT`` convention: ``smoke_server:mcp``.
+
+WHICH "FASTMCP" THIS IS — deliberately (b), and deliberately left that way
+----------------------------------------------------------------------------
+Two different projects carry the name, and they cannot share an environment:
+
+  (a) ``mcp`` — the official SDK. Its server class is
+      ``mcp.server.mcpserver.MCPServer``, RENAMED from ``mcp.server.fastmcp.FastMCP``
+      in the 2.0 break (the old module was removed with no shim).
+  (b) ``fastmcp`` — a SEPARATE PyPI project on its own major line. That is what
+      the import below is. ``from fastmcp import FastMCP`` is still correct here
+      and must NOT be rewritten to ``MCPServer``.
+
+``fastmcp`` still requires ``mcp`` 1.x, so it cannot be installed next to
+``mcp`` 2.x. This fixture therefore exercises the (b) branch of the tooling's
+in-memory client dispatch — which is a real branch: the portfolio contains
+servers on both. It does NOT stand in for a 2.x target, and a green run here is
+not evidence that the (a) path works. See ``schemas/generate_schemas.py``'s
+``in_memory_client`` for the dispatch, and the target repos' own ``pyproject.toml``
+for which side any given server is on.
 """
 from __future__ import annotations
 
 import httpx
-from fastmcp import FastMCP
+from fastmcp import FastMCP  # (b) — the standalone package, NOT the renamed SDK class
 
 mcp = FastMCP("smoke")
 

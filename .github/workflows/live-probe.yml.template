@@ -56,7 +56,7 @@ jobs:
         run: python scripts/live_probe.py
 
       # Second probe: the server's own tools, against the live upstream. Needs
-      # the package installed (fastmcp + the server module); live_probe above
+      # the package installed (the target's own SDK + the server module); live_probe above
       # deliberately does not, so it still runs if this install fails.
       - name: Install the server for the recall canary
         id: install
@@ -69,7 +69,10 @@ jobs:
         continue-on-error: true
         env:
           RECALL_REPORT: recall-canary-report.md
-          # "package.module:attr" — the FastMCP instance to drive.
+          # "package.module:attr" — the server instance to drive. Names a module
+          # and an attribute, never a class: the instance may be an
+          # `mcp.server.mcpserver.MCPServer` (official SDK 2.x) or a
+          # `fastmcp.FastMCP` (the separate PyPI project). Unaffected by the rename.
           MCP_SERVER_IMPORT: ${{ vars.MCP_SERVER_IMPORT || 'server:mcp' }}
         run: python scripts/recall_canary.py
 

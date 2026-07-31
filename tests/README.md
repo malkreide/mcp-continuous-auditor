@@ -19,6 +19,17 @@ Covers:
   `CountTestsTest` pins the parser both classes rest on against the literal
   shapes pytest and unittest emit, above all that unreadable output reads as
   *unknown* and never as zero.
+- `test_sdk_dispatch.py` — which "FastMCP" a given server belongs to. Two
+  different projects carry the name and cannot share an environment (`fastmcp`
+  still requires `mcp` 1.x), so the three scripts that run inside a target's
+  environment — the schema gate, the promptfoo provider, the recall canary —
+  cannot pin either and dispatch on the server object's own module instead.
+  These tests pin the *choosing*, with fake objects and no SDK installed at all,
+  including that an old-named `mcp.server.fastmcp.FastMCP` is sent down the SDK
+  branch and not the standalone one. A structural test asserts each call site
+  imports a client exactly once and inside its own branch helper, so a hard
+  `from fastmcp import Client` sneaking back in turns CI red — that pin is what
+  made all three unrunnable against a migrated target.
 - `test_shipped_probe.py` — the shipped-artifact gate
   (`scripts/shipped_probe.py`), which installs the target's package from PyPI and
   makes *that* prove it runs. The network half is not deterministically testable,
