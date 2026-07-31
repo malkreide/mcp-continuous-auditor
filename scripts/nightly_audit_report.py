@@ -7,7 +7,10 @@ read-only checkout of the target MCP server and hands their exit codes + the
 promptfoo JSON output to this module. Here we:
 
   * classify the outcome into **schema drift**, **red-team hit**, **transport
-    boot failure**, plain toolchain failure, or all-green;
+    boot failure**, **DNS-rebinding control failure**, plain toolchain failure,
+    or all-green — plus one state that is deliberately none of those: an inbound
+    host allow-list that is simply **not configured**, which is reported as its
+    own visible category rather than folded into a pass or a failure;
   * separate a genuine finding (a red eval) from an *infrastructure* failure —
     most importantly an **unresolvable model / provider error** in promptfoo,
     which must HARD-FAIL the run rather than be silently reported as "passed"
@@ -92,7 +95,15 @@ def _load_promptfoo(path: Path) -> dict[str, Any] | None:
 # HARD-FAILS. That is the intended fail-closed behaviour — a Worker image still
 # running the previous nightly-audit.sh genuinely did not run the new gate, and
 # must not be classified as green. Roll the Worker image and the Broker together.
-_GATE_NAMES = ("ruff", "mypy", "pytest", "schema_drift", "promptfoo_rc", "transport_boot")
+_GATE_NAMES = ("ruff", "mypy", "pytest", "schema_drift", "promptfoo_rc", "transport_boot",
+               "host_allowlist")
+
+# The DNS-rebinding gate is the one gate whose exit code is not binary. 3 means
+# "the target has no inbound host allow-list configured" — the documented
+# fail-open state of a non-loopback bind, which is neither a defect (nothing is
+# broken) nor a pass (the control is absent). It gets its own field in the
+# summary and its own block in the report, and it does NOT turn the run red.
+REBIND_NOT_CONFIGURED = 3
 
 
 def _load_evidence(path: Path) -> dict[str, Any]:
@@ -219,6 +230,15 @@ def _status(rc: int) -> str:
     return "✅ pass" if rc == 0 else f"❌ fail (exit {rc})"
 
 
+def _rebind_status(rc: int) -> str:
+    """The rebinding gate's own three-way rendering. A control that is not
+    configured must not read as "✅ pass" — the whole reason it is reported is
+    that the attack is unopposed."""
+    if rc == REBIND_NOT_CONFIGURED:
+        return "🟡 control not configured (exit 3)"
+    return _status(rc)
+
+
 def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     pf = _load_promptfoo(Path(args.promptfoo_json)) if args.promptfoo_json else None
     pfc = classify_promptfoo(pf, args.promptfoo_rc)
@@ -240,6 +260,15 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # about the target — only the harness failing to run (126/127, below) is a
     # hard failure. Keeping those two apart is the whole point of the gate.
     transport_boot_fail = args.transport_boot != 0
+    # The rebinding gate, three ways. Exit 3 is NOT a failure: a target with no
+    # allow-list configured is in the documented fail-open state. It is surfaced
+    # as its own flag so the report can say so out loud instead of leaving a
+    # missing control to look like a passing one.
+    # 126/127 are excluded here on purpose: those mean the harness never ran, and
+    # "the control did not hold" is a claim we would then not have earned. They
+    # land in hard_fail_reasons below instead.
+    host_allowlist_unconfigured = args.host_allowlist == REBIND_NOT_CONFIGURED
+    host_allowlist_fail = args.host_allowlist not in (0, REBIND_NOT_CONFIGURED, 126, 127)
 
     # Hard failure (never silently downgraded to "passed"):
     #   * an audited gate could not run (missing bin / sync failure, rc 127/126);
@@ -281,11 +310,19 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             f"transport boot gate could not run (exit {args.transport_boot}) — the harness "
             "itself failed; this says nothing about whether the target boots"
         )
+    if args.host_allowlist in infra_codes:
+        hard_fail_reasons.append(
+            f"DNS-rebinding gate could not run (exit {args.host_allowlist}) — the harness "
+            "itself failed; this says nothing about the target's host allow-list"
+        )
 
     hard_fail = bool(hard_fail_reasons)
+    # An unconfigured control does NOT break green: it is the documented
+    # fail-open state and the operator's decision, not a defect. It is loud in
+    # the report instead — see the block render_report() adds for it.
     green = not (
         schema_drift or redteam or other_findings or toolchain_fail
-        or transport_boot_fail or hard_fail
+        or transport_boot_fail or host_allowlist_fail or hard_fail
     )
 
     if hard_fail:
@@ -317,6 +354,8 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         "other_findings": other_findings,
         "toolchain_fail": toolchain_fail,
         "transport_boot_fail": transport_boot_fail,
+        "host_allowlist_fail": host_allowlist_fail,
+        "host_allowlist_unconfigured": host_allowlist_unconfigured,
         "gates": {
             "ruff": args.ruff,
             "mypy": args.mypy,
@@ -324,6 +363,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             "schema_drift_gate": args.schema_drift,
             "promptfoo_rc": args.promptfoo_rc,
             "transport_boot_gate": args.transport_boot,
+            "host_allowlist_gate": args.host_allowlist,
         },
         "promptfoo": pfc,
     }
@@ -336,6 +376,12 @@ def render_report(s: dict[str, Any]) -> str:
         "findings": "Findings detected — see below.",
         "hard-fail": "HARD FAILURE — the audit could not complete. Do NOT treat as passed.",
     }[s["outcome"]]
+    # A green run that ships an unconfigured control must say so in the same
+    # breath. "All gates green" on its own is the sentence a reader stops at.
+    if s["outcome"] == "green" and s.get("host_allowlist_unconfigured"):
+        head = ("All gates green — but the inbound host allow-list is NOT configured "
+                "(see below). Green here means nothing was found broken, not that "
+                "the DNS-rebinding attack is opposed.")
 
     lines = [
         f"# {icon} Nightly audit — `{s['target']}`",
@@ -353,6 +399,8 @@ def render_report(s: dict[str, Any]) -> str:
         f"- schema-drift gate: {_status(s['gates']['schema_drift_gate'])}",
         f"- transport boot gate (initialize + tools/list): "
         f"{_status(s['gates']['transport_boot_gate'])}",
+        f"- DNS-rebinding gate (inbound Host/Origin allow-list): "
+        f"{_rebind_status(s['gates']['host_allowlist_gate'])}",
         f"- promptfoo (contract + red-team): {_status(s['gates']['promptfoo_rc'])}",
         f"- promptfoo profile: **{s.get('promptfoo_profile', 'unknown')}**",
     ]
@@ -399,11 +447,42 @@ def render_report(s: dict[str, Any]) -> str:
             "See the Worker's `transport-boot.log` / `transport-boot.json` for which transport "
             "and which of the two."
         )
+    if s.get("host_allowlist_fail"):
+        findings.append(
+            "**DNS-rebinding control failed** — the target's HTTP transport did not hold "
+            "the inbound host allow-list the gate configured. Either a foreign `Host`, the "
+            "allowed hostname on a wrong port, or a foreign `Origin` was served; or a VALID "
+            "auth token walked past a check that held without one; or the result could not "
+            "be attributed to the configured list at all. CORS does not answer this attack "
+            "(after the rebind the browser sees same-origin) and neither does a token (the "
+            "attacking page holds one). See the Worker's `rebind.log` / `rebind.json` for "
+            "which probe and which pass."
+        )
     if s["toolchain_fail"]:
         findings.append("**Toolchain failure** — ruff/mypy/pytest is red (see gates above).")
     if findings:
         lines += ["", "## 🚨 Findings"]
         lines += [f"- {f}" for f in findings]
+
+    # Its own block, deliberately outside "Findings" and outside the gate list's
+    # tick marks: not a defect, not a pass, and never invisible.
+    if s.get("host_allowlist_unconfigured"):
+        lines += [
+            "",
+            "## 🟡 Control not configured — inbound host allow-list",
+            "",
+            "The target honours no inbound `Host`/`Origin` allow-list, so on a "
+            "non-loopback bind it rejects nothing. This is the **documented "
+            "fail-open state**, not a bug: guessing an allow-list on `0.0.0.0` "
+            "would reject the very deployment it is meant to protect, so these "
+            "servers ship the check off until an operator configures it.",
+            "",
+            "It is reported because the absence is the point. A page in the "
+            "operator's network can resolve its own hostname to this server and "
+            "talk to it from the browser; CORS sees same-origin after the rebind "
+            "and an auth token is already held by the attacking context. Nothing "
+            "in this run should be read as evidence that the attack is opposed.",
+        ]
 
     if pf.get("examples"):
         lines += ["", "## promptfoo detail"]
@@ -434,6 +513,10 @@ def main() -> int:
     p.add_argument("--transport-boot", type=int, dest="transport_boot",
                    help="transport boot gate exit code (0 green / 2 target does not boot / "
                         "127 the harness could not run)")
+    p.add_argument("--host-allowlist", type=int, dest="host_allowlist",
+                   help="DNS-rebinding gate exit code (0 the control is enforced / "
+                        "2 finding / 3 the control is NOT CONFIGURED — neither a pass "
+                        "nor a failure / 127 the harness could not run)")
     p.add_argument("--promptfoo-rc", type=int, dest="promptfoo_rc")
     p.add_argument("--from-evidence", default="", dest="from_evidence",
                    help="read gate exit codes (+ target/sha) from a Worker evidence JSON")

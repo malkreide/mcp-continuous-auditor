@@ -63,7 +63,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -96,7 +96,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "deadbee",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": [
             {"success": False, "testCase": {"description": "schema"},
@@ -117,7 +117,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "c0ffee",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 1},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 1},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 1}, "results": [
             {"error": "model provider unauthorised"},
@@ -132,7 +132,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         s = self._classify(ev, "")  # no --promptfoo-json
         self.assertEqual(s["outcome"], "hard-fail")
@@ -146,7 +146,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": [
             {"success": False, "testCase": {"description": "injection negative-test"},
@@ -166,7 +166,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "promptfoo_profile": "determ",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -180,7 +180,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "promptfoo_profile": "graded",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -194,7 +194,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r; rm -rf /\n## All green", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -209,7 +209,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 1},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 1},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 1}, "results": [
             {"error": "boom\n## FAKE ALL GREEN\n\x1b[31mred"},
@@ -228,7 +228,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 2, "promptfoo_rc": 0},
+                      "transport_boot": 2, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -249,7 +249,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 127, "promptfoo_rc": 0},
+                      "transport_boot": 127, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -276,12 +276,83 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         self._classify(ev, pf)
         report = (self.dir / "report.md").read_text(encoding="utf-8")
         self.assertIn("transport boot gate", report)
+
+    # --- DNS-rebinding gate: the one gate with three outcomes -------------------
+
+    def test_an_unconfigured_allowlist_is_neither_a_pass_nor_a_finding(self) -> None:
+        # Exit 3. The run stays green — nothing is broken — but the report has to
+        # say the control is absent, or a missing control reads like a passing one.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "host_allowlist": 3, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "green")
+        self.assertEqual(s["_exit"], nar.EXIT_GREEN)
+        self.assertFalse(s["host_allowlist_fail"])
+        self.assertTrue(s["host_allowlist_unconfigured"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("Control not configured", report)
+        # …and the gate line must NOT wear a tick.
+        self.assertIn("control not configured (exit 3)", report)
+        self.assertNotIn("DNS-rebinding gate (inbound Host/Origin allow-list): ✅", report)
+        # The headline cannot be left saying only "All gates green".
+        self.assertIn("NOT configured", report)
+
+    def test_a_rebinding_control_that_failed_is_a_finding(self) -> None:
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "host_allowlist": 2, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "findings")
+        self.assertEqual(s["_exit"], nar.EXIT_FINDINGS)
+        self.assertTrue(s["host_allowlist_fail"])
+        self.assertFalse(s["host_allowlist_unconfigured"])
+        self.assertFalse(s["hard_fail"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("DNS-rebinding control failed", report)
+
+    def test_a_rebinding_harness_failure_is_hard_fail_not_a_missing_control(self) -> None:
+        # 127 is the harness. Reporting "the control is missing" on the strength of
+        # a probe that never ran would be the same error as claiming a boot failure
+        # we never observed.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "host_allowlist": 127, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertFalse(s["host_allowlist_fail"])
+        self.assertFalse(s["host_allowlist_unconfigured"])
+        self.assertTrue(any("DNS-rebinding gate could not run" in r
+                            for r in s["hard_fail_reasons"]))
+
+    def test_evidence_without_the_rebinding_gate_is_hard_fail_never_green(self) -> None:
+        # Same rollout rule as the boot gate: a Worker image predating this gate
+        # genuinely did not run it, and must not classify green.
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertFalse(s["green"])
+        self.assertEqual(s["gates"]["host_allowlist_gate"], 127)
 
     def test_partial_evidence_missing_gate_defaults_to_hard_fail(self) -> None:
         # A gate omitted from the evidence must read as could-not-run (127),

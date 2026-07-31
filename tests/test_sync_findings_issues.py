@@ -48,6 +48,28 @@ class FindingClassesTest(unittest.TestCase):
         cls = sfi.finding_classes(_summary(other_findings=True, toolchain_fail=True))
         self.assertEqual([c["label"] for c in cls], ["audit-finding"])
 
+    def test_a_process_gate_finding_routes_somewhere(self) -> None:
+        # A run whose only red gate is the boot probe or the rebinding probe still
+        # has to produce an issue. Before these classes existed it classified as
+        # `findings` and then opened nothing at all.
+        self.assertEqual(
+            [c["label"] for c in sfi.finding_classes(_summary(transport_boot_fail=True))],
+            ["audit-finding"])
+        self.assertEqual(
+            [c["label"] for c in sfi.finding_classes(_summary(host_allowlist_fail=True))],
+            ["dns-rebinding"])
+
+    def test_an_unconfigured_control_is_not_an_issue(self) -> None:
+        # Fail-open is a deployment state, not a defect: it belongs in the report,
+        # not in a tracking issue that would never close.
+        self.assertEqual(
+            sfi.finding_classes(_summary(outcome="green", host_allowlist_unconfigured=True)),
+            [])
+
+    def test_every_routed_label_has_a_colour(self) -> None:
+        for _, label, _ in sfi._CLASSES:
+            self.assertIn(label, sfi._LABEL_COLORS)
+
 
 class DecideTest(unittest.TestCase):
     def test_create_when_no_open_issue_matches(self) -> None:
