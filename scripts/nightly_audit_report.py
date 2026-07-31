@@ -43,6 +43,36 @@ EXIT_GREEN = 0
 EXIT_FINDINGS = 2
 EXIT_HARD_FAIL = 1
 
+# --- a gate that never finished (Iteration: hung gates) ---------------------
+# GNU `timeout` returns 124 when it had to kill the command, and 128+9 = 137 when
+# the command ignored SIGTERM and --kill-after had to SIGKILL it. nightly-audit.sh
+# wraps every gate in `timeout`, so those two codes carry a meaning no ordinary
+# exit code does: the gate produced NO VERDICT at all.
+#
+# This has to be its own class rather than another flavour of "could not run".
+# Twice now a mutation test has surfaced as a HANGING suite rather than a red one
+# — in one case because, without the control under test, an SSE GET under a
+# foreign Host is admitted and opens an endless event stream the test client then
+# waits on at teardown. A timeout that reads as generic infrastructure noise
+# swallows exactly that finding. Naming the gate that hung is the whole point:
+# "pytest hung" and "promptfoo hung" call for entirely different next steps.
+GATE_TIMEOUT_RC = 124
+GATE_KILLED_RC = 137
+_HUNG_CODES = (GATE_TIMEOUT_RC, GATE_KILLED_RC)
+
+# --- a green run that executed nothing (the silent zero) --------------------
+# A test gate that exits 0 having collected no tests is not a pass; it is a gate
+# that made no statement while looking exactly like one that did. `unittest
+# discover` finding nothing prints "Ran 0 tests" and exits 0 — green, empty, and
+# indistinguishable from success in any summary that only reads exit codes.
+# The Worker measures the count from the runner's own output and ships it in the
+# evidence; -1 means it could not be determined, which is itself not a pass.
+TESTS_UNKNOWN = -1
+
+
+def _hung(rc: int) -> bool:
+    return rc in _HUNG_CODES
+
 # promptfoo assertion types that encode a tool-output contract / schema. A
 # failure on one of these is schema drift, not a red-team hit.
 _CONTRACT_ASSERTIONS = {"is-json", "is-valid-json", "javascript"}
@@ -226,8 +256,66 @@ def classify_promptfoo(pf: dict[str, Any] | None, promptfoo_rc: int) -> dict[str
     }
 
 
+# The runner summary lines we can read a test count off. pytest -q ends with
+# "217 passed, 3 skipped in 25.56s" (or "no tests ran in 0.01s"); unittest ends
+# with "Ran 217 tests in 25.560s". Anything else leaves the count UNKNOWN rather
+# than guessed — a wrong count here would either invent a failure or hide one.
+_UNITTEST_RAN_RE = re.compile(r"^Ran (\d+) tests? in ", re.MULTILINE)
+_PYTEST_COLLECTED_RE = re.compile(r"^collected (\d+) items?", re.MULTILINE)
+_PYTEST_NO_TESTS_RE = re.compile(r"no tests ran in ", re.MULTILINE)
+# Outcomes that mean a test was actually reported on. `deselected`, `warnings`
+# and `errors in` (collection errors) are deliberately absent: a suite whose every
+# test was deselected executed nothing, which is precisely what we are looking for.
+_PYTEST_OUTCOME_RE = re.compile(
+    r"(\d+) (passed|failed|xfailed|xpassed|skipped|error|errors)\b")
+_PYTEST_SUMMARY_RE = re.compile(r"^=+ .*\bin \d+\.\d+s.*=+$|^\d+ \w+.* in \d+\.\d+s",
+                                re.MULTILINE)
+
+
+def count_tests(text: str) -> int:
+    """How many tests the runner reported on, or TESTS_UNKNOWN.
+
+    Reads the LAST summary in the log: a gate may legitimately run the suite more
+    than once, and it is the final word that describes what the exit code means.
+    """
+    ran = _UNITTEST_RAN_RE.findall(text or "")
+    if ran:
+        return int(ran[-1])
+
+    # pytest, quiet mode: the final summary line carries the per-outcome counts.
+    summaries = list(_PYTEST_SUMMARY_RE.finditer(text or ""))
+    if summaries:
+        last = (text or "")[summaries[-1].start():summaries[-1].end()]
+        total = sum(int(n) for n, _ in _PYTEST_OUTCOME_RE.findall(last))
+        if total or _PYTEST_NO_TESTS_RE.search(last):
+            return total
+    if _PYTEST_NO_TESTS_RE.search(text or ""):
+        return 0
+
+    collected = _PYTEST_COLLECTED_RE.findall(text or "")
+    if collected:
+        return int(collected[-1])
+    return TESTS_UNKNOWN
+
+
 def _status(rc: int) -> str:
+    if _hung(rc):
+        return f"⏱ HUNG — killed by the gate timeout (exit {rc})"
     return "✅ pass" if rc == 0 else f"❌ fail (exit {rc})"
+
+
+def _pytest_line(s: dict[str, Any]) -> str:
+    """The pytest gate's line, with the suite size on it. A bare "✅ pass" cannot
+    be told apart from a suite that collected nothing, so the count travels with
+    the verdict — and when the count IS zero the tick is withdrawn, because
+    "✅ pass — 0 test(s)" is the exact sentence this class exists to prevent."""
+    rc = s["gates"]["pytest"]
+    n = s.get("tests_collected", TESTS_UNKNOWN)
+    if s.get("no_tests_executed"):
+        return "🕳 0 tests executed (exit 0) — NOT a pass"
+    if not isinstance(n, int) or n < 0:
+        return f"{_status(rc)} — ⚠️ test count unknown"
+    return f"{_status(rc)} — {n} test(s)"
 
 
 def _rebind_status(rc: int) -> str:
@@ -249,17 +337,33 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     target, target_err = _validate_meta(args.target, _TARGET_RE, "target")
     sha, sha_err = _validate_meta(args.sha, _SHA_RE, "target_sha")
 
+    # --- gates that never finished -----------------------------------------
+    # Collected FIRST, because a hung gate must not also be counted as a red one.
+    # A timeout is not "ruff found problems"; it is "ruff never answered", and
+    # folding it into the finding classes would put a defect claim in the report
+    # that no gate ever made.
+    hung_gates = [label for label, rc in (
+        ("ruff", args.ruff), ("mypy", args.mypy), ("pytest", args.pytest),
+        ("schema-drift gate", args.schema_drift),
+        ("transport boot gate", args.transport_boot),
+        ("DNS-rebinding gate", args.host_allowlist),
+        ("promptfoo", args.promptfoo_rc),
+    ) if _hung(rc)]
+    hung = bool(hung_gates)
+
     # Schema drift = the deterministic schema gate diverged OR a promptfoo
     # is-json/contract assertion failed.
-    schema_drift = args.schema_drift != 0 or pfc["contract_failures"] > 0
+    schema_drift = (args.schema_drift != 0 and not _hung(args.schema_drift)) \
+        or pfc["contract_failures"] > 0
     redteam = pfc["redteam_hits"] > 0
     other_findings = pfc.get("other_failures", 0) > 0
-    toolchain_fail = args.ruff != 0 or args.mypy != 0 or args.pytest != 0
+    toolchain_fail = any(rc != 0 and not _hung(rc)
+                         for rc in (args.ruff, args.mypy, args.pytest))
     # Transport boot: the target did not come up, or came up unusable, under at
     # least one configured transport. A server that will not start is a FINDING
     # about the target — only the harness failing to run (126/127, below) is a
     # hard failure. Keeping those two apart is the whole point of the gate.
-    transport_boot_fail = args.transport_boot != 0
+    transport_boot_fail = args.transport_boot != 0 and not _hung(args.transport_boot)
     # The rebinding gate, three ways. Exit 3 is NOT a failure: a target with no
     # allow-list configured is in the documented fail-open state. It is surfaced
     # as its own flag so the report can say so out loud instead of leaving a
@@ -268,7 +372,17 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # "the control did not hold" is a claim we would then not have earned. They
     # land in hard_fail_reasons below instead.
     host_allowlist_unconfigured = args.host_allowlist == REBIND_NOT_CONFIGURED
-    host_allowlist_fail = args.host_allowlist not in (0, REBIND_NOT_CONFIGURED, 126, 127)
+    host_allowlist_fail = (args.host_allowlist not in (0, REBIND_NOT_CONFIGURED, 126, 127)
+                           and not _hung(args.host_allowlist))
+
+    # --- the silent zero ----------------------------------------------------
+    # A green pytest gate that reported on no tests at all. The count comes from
+    # the runner's own output, measured Worker-side (the log never reaches the
+    # Broker) and shipped in the evidence.
+    tests_collected = int(getattr(args, "tests_collected", TESTS_UNKNOWN))
+    pytest_answered = args.pytest == 0 and not _hung(args.pytest)
+    no_tests_executed = pytest_answered and tests_collected == 0
+    tests_unverified = pytest_answered and tests_collected < 0
 
     # Hard failure (never silently downgraded to "passed"):
     #   * an audited gate could not run (missing bin / sync failure, rc 127/126);
@@ -315,6 +429,32 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             f"DNS-rebinding gate could not run (exit {args.host_allowlist}) — the harness "
             "itself failed; this says nothing about the target's host allow-list"
         )
+    if hung:
+        # HARD failure, not a finding. A hung gate returned no verdict, and a
+        # `findings` outcome would route it to a tracking issue asserting a defect
+        # class nothing observed. It is also not merely "could not run": the gate
+        # started, did work, and never came back — which is a real signal about
+        # the target (an endless SSE stream, a deadlock, a suite waiting on a
+        # client teardown) and belongs in front of the operator under its own name.
+        hard_fail_reasons.append(
+            "gate(s) HUNG and were killed by the timeout: " + ", ".join(hung_gates)
+            + " — no verdict was produced. A hang is not infrastructure noise: twice "
+            "now a real defect has surfaced as a hanging suite rather than a red one. "
+            "Read that gate's log for where it stopped before re-running"
+        )
+    if no_tests_executed:
+        hard_fail_reasons.append(
+            "the pytest gate exited 0 but reported on 0 tests — an empty suite is not "
+            "a pass. Check the test paths / selection in the target before reading "
+            "anything else in this run as verified"
+        )
+    if tests_unverified:
+        hard_fail_reasons.append(
+            "the pytest gate exited 0 but no test count could be read from its output "
+            "— a green result whose suite size is unknown cannot be distinguished from "
+            "an empty one, so it is not treated as a pass (same rule as promptfoo's "
+            "rc-0-with-no-output)"
+        )
 
     hard_fail = bool(hard_fail_reasons)
     # An unconfigured control does NOT break green: it is the documented
@@ -356,6 +496,11 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         "transport_boot_fail": transport_boot_fail,
         "host_allowlist_fail": host_allowlist_fail,
         "host_allowlist_unconfigured": host_allowlist_unconfigured,
+        "hung": hung,
+        "hung_gates": hung_gates,
+        "no_tests_executed": no_tests_executed,
+        "tests_unverified": tests_unverified,
+        "tests_collected": tests_collected,
         "gates": {
             "ruff": args.ruff,
             "mypy": args.mypy,
@@ -376,6 +521,14 @@ def render_report(s: dict[str, Any]) -> str:
         "findings": "Findings detected — see below.",
         "hard-fail": "HARD FAILURE — the audit could not complete. Do NOT treat as passed.",
     }[s["outcome"]]
+    # Both of these are hard failures, but "could not complete" is the wrong
+    # sentence for either: one gate ran forever, the other ran nothing. Say which.
+    if s.get("hung"):
+        head = ("HARD FAILURE — " + ", ".join(s.get("hung_gates") or ["a gate"])
+                + " HUNG and had to be killed. No verdict was produced. Do NOT treat as passed.")
+    elif s.get("no_tests_executed"):
+        head = ("HARD FAILURE — the test suite executed 0 tests and still exited 0. "
+                "An empty suite is not a pass. Do NOT treat as passed.")
     # A green run that ships an unconfigured control must say so in the same
     # breath. "All gates green" on its own is the sentence a reader stops at.
     if s["outcome"] == "green" and s.get("host_allowlist_unconfigured"):
@@ -395,7 +548,7 @@ def render_report(s: dict[str, Any]) -> str:
         "## Gates",
         f"- ruff: {_status(s['gates']['ruff'])}",
         f"- mypy: {_status(s['gates']['mypy'])}",
-        f"- pytest: {_status(s['gates']['pytest'])}",
+        f"- pytest: {_pytest_line(s)}",
         f"- schema-drift gate: {_status(s['gates']['schema_drift_gate'])}",
         f"- transport boot gate (initialize + tools/list): "
         f"{_status(s['gates']['transport_boot_gate'])}",
@@ -417,14 +570,63 @@ def render_report(s: dict[str, Any]) -> str:
             "layer passed, **not** that the red-team is clear.",
         ]
 
+    # Hung gates get their own named block ahead of the generic hard-failure list.
+    # "Which gate hung" is the entire actionable content — pytest hanging and
+    # promptfoo hanging call for different next steps, and a timeout buried in a
+    # list of infrastructure reasons is how this class of finding got lost before.
+    if s.get("hung"):
+        lines += [
+            "",
+            "## ⏱ Gate(s) HUNG — no verdict produced",
+            "",
+            "Killed by the gate timeout after producing no result:",
+        ]
+        lines += [f"- **{_clean_inline(g, 60)}**" for g in (s.get("hung_gates") or [])]
+        lines += [
+            "",
+            "A hang is **not** infrastructure noise and is not the same as a gate that "
+            "could not start. The gate ran, did work, and never returned — which has "
+            "twice been how a real defect showed itself (a control removed, an SSE "
+            "stream left open under a foreign `Host`, the test client then waiting on "
+            "teardown). Read that gate's log for where it stopped; do not re-run and "
+            "call the second attempt the answer.",
+        ]
+
+    if s.get("no_tests_executed") or s.get("tests_unverified"):
+        lines += ["", "## 🕳 No tests executed"]
+        if s.get("no_tests_executed"):
+            lines += [
+                "",
+                "The pytest gate exited **0** and reported on **0 tests**. That is not a "
+                "pass — it is a gate that made no statement while looking exactly like "
+                "one that did. Check the target's test paths and selection before "
+                "reading anything else in this run as verified.",
+            ]
+        else:
+            lines += [
+                "",
+                "The pytest gate exited **0** but no test count could be read from its "
+                "output, so a real suite cannot be told apart from an empty one. Treated "
+                "as unverified rather than as a pass, on the same rule as promptfoo "
+                "returning rc 0 with no parseable output.",
+            ]
+
     if s["hard_fail"]:
         lines += ["", "## ⛔ Hard failure"]
         lines += [f"- {r}" for r in s["hard_fail_reasons"]]
-        lines += [
-            "",
-            "The run is **not** a pass. No green claim is made (SOUL.md). "
-            "Resolve the model/provider or the broken gate and re-run.",
-        ]
+        # "Re-run" is the wrong advice for a hang: the second attempt is not the
+        # answer, and a run that passes on retry is how an intermittent deadlock
+        # gets talked out of the record.
+        closing = ("The run is **not** a pass. No green claim is made (SOUL.md). "
+                   "Resolve the model/provider or the broken gate and re-run.")
+        if s.get("hung"):
+            closing = ("The run is **not** a pass. No green claim is made (SOUL.md). "
+                       "Find out *where* the gate stopped before re-running — a hang "
+                       "that disappears on the second attempt has not been explained.")
+        elif s.get("no_tests_executed") or s.get("tests_unverified"):
+            closing = ("The run is **not** a pass. No green claim is made (SOUL.md). "
+                       "Fix the suite's selection so it actually runs, then re-run.")
+        lines += ["", closing]
 
     pf = s["promptfoo"]
     findings: list[str] = []
@@ -518,6 +720,14 @@ def main() -> int:
                         "2 finding / 3 the control is NOT CONFIGURED — neither a pass "
                         "nor a failure / 127 the harness could not run)")
     p.add_argument("--promptfoo-rc", type=int, dest="promptfoo_rc")
+    p.add_argument("--tests-collected", type=int, dest="tests_collected",
+                   default=TESTS_UNKNOWN,
+                   help="how many tests the pytest gate reported on (-1 = could not be "
+                        "determined). A green gate with 0 is NOT a pass")
+    p.add_argument("--count-tests", default="", dest="count_tests",
+                   help="read a runner log and print the test count, then exit. This is "
+                        "how nightly-audit.sh measures the number it ships in the "
+                        "evidence — the log itself never reaches the Broker")
     p.add_argument("--from-evidence", default="", dest="from_evidence",
                    help="read gate exit codes (+ target/sha) from a Worker evidence JSON")
     p.add_argument("--promptfoo-json", default="", dest="promptfoo_json")
@@ -525,9 +735,25 @@ def main() -> int:
                    help="which promptfoo profile ran (determ|graded|full); stamped into the summary")
     p.add_argument("--target", default="")
     p.add_argument("--sha", default="unknown")
-    p.add_argument("--out-report", required=True, dest="out_report")
-    p.add_argument("--out-summary", required=True, dest="out_summary")
+    # Not `required=True`: --count-tests is a measurement mode that writes nothing.
+    p.add_argument("--out-report", default="", dest="out_report")
+    p.add_argument("--out-summary", default="", dest="out_summary")
     args = p.parse_args()
+
+    if args.count_tests:
+        try:
+            text = Path(args.count_tests).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            # Unreadable log -> UNKNOWN, never 0. Reporting "no tests" because we
+            # could not open the file would invent the very finding we are hunting.
+            print(TESTS_UNKNOWN)
+            return 0
+        print(count_tests(text))
+        return 0
+
+    for flag in ("out_report", "out_summary"):
+        if not getattr(args, flag):
+            p.error(f"--{flag.replace('_', '-')} is required")
 
     if args.from_evidence:
         ev = _load_evidence(Path(args.from_evidence))
@@ -540,6 +766,13 @@ def main() -> int:
             args.sha = str(ev.get("target_sha") or "unknown")
         if not args.promptfoo_profile:
             args.promptfoo_profile = str(ev.get("promptfoo_profile") or "")
+        # The runner log stays on the Worker, so the COUNT travels in the evidence.
+        # Absent or unparseable reads as UNKNOWN, which is not a pass — a Worker
+        # that ships no count cannot have a green pytest verdict believed.
+        try:
+            args.tests_collected = int(ev["tests_collected"])
+        except (KeyError, TypeError, ValueError):
+            args.tests_collected = TESTS_UNKNOWN
     else:
         missing = [f"--{n.replace('_', '-')}" for n in _GATE_NAMES if getattr(args, n) is None]
         if missing:
