@@ -9,8 +9,8 @@ red CI check, never a silent break.
 
 | File | Source | Maintained by |
 |---|---|---|
-| `zurich_datastore_sql.json` | FastMCP return-type of the tool | `generate_schemas.py` (regenerate) |
-| `<other-tool>.json` | FastMCP return-type of each tool | `generate_schemas.py` (regenerate) |
+| `zurich_datastore_sql.json` | server-derived return-type of the tool | `generate_schemas.py` (regenerate) |
+| `<other-tool>.json` | server-derived return-type of each tool | `generate_schemas.py` (regenerate) |
 | `geojson_featurecollection.json` | RFC 7946 (GeoJSON) | by hand — resources carry no output schema |
 
 The committed `zurich_datastore_sql.json` here is a **representative** schema for
@@ -28,7 +28,10 @@ python schemas/generate_schemas.py --check    # CI gate: exit 1 if a committed s
 
 ## How the three layers fit together
 
-1. **Generated schemas (this dir)** — derived from FastMCP type hints.
+1. **Generated schemas (this dir)** — derived from the tools' type hints by
+   whichever SDK the target uses (the official `mcp`, or the separate
+   `fastmcp` package — they are different projects; see
+   `skills/fastmcp-testing/SKILL.md`).
 2. **`schemas/generate_schemas.py --check`** in `ci.yml` — fails a PR if the
    committed schemas no longer match the type hints (drift not regenerated).
 3. **`promptfoo` `is-json`** (`promptfoo/promptfooconfig.yaml`) — validates real

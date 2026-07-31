@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the auditor could not drive a target on the 2.x SDK at all
+
+Two different projects are called FastMCP, and conflating them is expensive:
+
+|  | package | server class | in-memory client |
+|---|---|---|---|
+| **(a)** the official SDK | `mcp` (2.0.0) | `mcp.server.mcpserver.MCPServer` — **renamed** from `mcp.server.fastmcp.FastMCP` in the 2.0 break, old module removed with no shim | `mcp.client.client.Client` |
+| **(b)** a separate project | `fastmcp` (3.4.5) | `fastmcp.FastMCP` — **not** renamed, still current, own major line | `fastmcp.Client` |
+
+**This was a real break, not labelling.** `fastmcp` (via `fastmcp-slim`) still
+requires `mcp` 1.x, so the two cannot share an environment — measured:
+
+```
+fastmcp alone                 -> resolves mcp 1.29.0, imports fine
+fastmcp + "mcp>=2.0.0,<3"     -> ImportError: cannot import name 'McpError'
+                                 from 'mcp.shared.exceptions'
+```
+
+Three auditor scripts run **inside the target's environment** and hard-imported
+`fastmcp.Client`: `schemas/generate_schemas.py` (the schema-drift gate),
+`promptfoo/providers/call_tool.py` (the promptfoo provider) and
+`scripts/recall_canary.py`. Against `zurich-opendata-mcp` — which pins
+`mcp[cli]>=2.0.0,<3` and whose `app.py` is `from mcp.server.mcpserver import
+MCPServer` — none of the three could even import their client. Adding `fastmcp`
+to the target's dependencies could not have fixed it; the two exclude each other.
+
+- All three now go through an **`in_memory_client(server)`** dispatch that asks
+  the server object which project it belongs to (`type(server).__module__`) and
+  builds the matching client, falling back to the other. Dispatch is on the
+  object, not on what happens to be importable — that is the one signal that
+  cannot be wrong, and it correctly sends an *old-named* `mcp.server.fastmcp.FastMCP`
+  down the SDK branch rather than the standalone one. Two result shapes are read
+  defensively because they genuinely differ: `list_tools()` returns a
+  `ListToolsResult` in (a) and a plain list in (b), and the schema is
+  `output_schema` in (a) but `outputSchema` in (b).
+- Verified end to end in both directions: the schema gate now derives an output
+  schema from a real `mcp` 2.x `MCPServer`, and `test_smoke_target.py` still
+  drives the `fastmcp` path unchanged.
+
+### Changed — labelling, so the confusion does not recur
+
+`MCP_SERVER_IMPORT` names a **module and an attribute, never a class**, so the
+rename never touched the convention — only the prose beside it claimed a class.
+Corrected in `.github/workflows/ci.yml.template` (including two step names that
+advertised installing a "FastMCP in-memory client" the target never had),
+`.github/workflows/live-probe.yml.template`, `scripts/nightly-audit.sh`,
+`schemas/README.md` and `skills/fastmcp-testing/SKILL.md`, which now opens with
+the (a)/(b) table and the warning that a blind search-and-replace across the two
+does damage.
+
+`tests/fixtures/smoke_server.py` **stays on (b)** and says so at length: it is a
+valid exercise of that branch of the dispatch, and rewriting it to `MCPServer`
+would have been exactly the damaging replacement. Its docstring also states what
+it does *not* prove — a green run there is not evidence that the (a) path works.
+
+`tests/test_sdk_dispatch.py` pins the choosing (the part that silently
+regresses) with fake objects and no SDK installed, and asserts that each of the
+three call sites imports a client exactly once, inside its own branch helper —
+so a hard pin sneaking back in turns CI red.
+
 ### Added — the shipped-artifact gate: green CI is not shipped software
 
 `main` stood at 0.6.0. The GitHub release was never cut, so the publish workflow

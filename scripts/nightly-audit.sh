@@ -54,8 +54,15 @@
 #   TARGET_REPO         owner/name of the target (default: malkreide/zurich-opendata-mcp)
 #   TARGET_REF          git ref to pin (default: main)
 #   AUDIT_DIR           work dir, gitignored (default: <repo>/.audit)
-#   MCP_SERVER_IMPORT   FastMCP server ref for the schema gate
-#                       (default: zurich_opendata_mcp.server:mcp)
+#   MCP_SERVER_IMPORT   "package.module:attr" — where the target's server
+#                       INSTANCE lives, for the schema/boot/rebind gates
+#                       (default: zurich_opendata_mcp.server:mcp). It names a
+#                       module and an attribute, never a class, so the SDK
+#                       rename does not touch it: the instance may be an
+#                       `mcp.server.mcpserver.MCPServer` (official `mcp` 2.x,
+#                       renamed from `mcp.server.fastmcp.FastMCP`) or a
+#                       `fastmcp.FastMCP` (the separate PyPI project, still
+#                       current). The tooling asks the object which it is.
 #   PROMPTFOO_PROFILE   which promptfoo profile to evaluate (Analysis T-C):
 #                         determ  key-less deterministic contract + injection —
 #                                 the credential-free Worker runs ONLY this

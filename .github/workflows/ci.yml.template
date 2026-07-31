@@ -55,7 +55,13 @@ jobs:
     env:
       # Pin the truth-engine — never eval at @latest (a moving deterministic gate).
       PROMPTFOO_VERSION: "0.121.17"
-      # Import path of the FastMCP server instance in the target repo.
+      # "package.module:attr" — the module path and ATTRIBUTE NAME of the server
+      # instance in the target repo. This convention names no class and is
+      # unaffected by any SDK rename: the instance may be an
+      # `mcp.server.mcpserver.MCPServer` (the official `mcp` SDK, 2.x — renamed
+      # from `mcp.server.fastmcp.FastMCP`) or a `fastmcp.FastMCP` (the separate
+      # PyPI project of that name, still current). The tooling asks the object
+      # which it is; do not change this value because of a rename.
       MCP_SERVER_IMPORT: zurich_opendata_mcp.server:mcp
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +70,11 @@ jobs:
           node-version: "20"
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-      - name: Sync Python deps (FastMCP in-memory client)
+      # Installs the target's OWN deps. The in-memory client comes from whichever
+      # SDK the target already depends on — the official `mcp` (>=2) or the
+      # standalone `fastmcp` package. Neither is added here: they are different
+      # projects and cannot be installed together.
+      - name: Sync Python deps (the target's own SDK provides the in-memory client)
         run: uv sync --all-extras --dev
       - name: Schema-drift gate — regenerate from type hints, fail on any diff
         # Deterministic: if a tool's return type (or upstream shape) changed and
@@ -107,7 +117,11 @@ jobs:
           node-version: "20"
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-      - name: Sync Python deps (FastMCP in-memory client)
+      # Installs the target's OWN deps. The in-memory client comes from whichever
+      # SDK the target already depends on — the official `mcp` (>=2) or the
+      # standalone `fastmcp` package. Neither is added here: they are different
+      # projects and cannot be installed together.
+      - name: Sync Python deps (the target's own SDK provides the in-memory client)
         run: uv sync --all-extras --dev
       - name: Enforce writer != grader family (independent check)
         # The writer/tool path is Anthropic; a same-family llm-rubric grader shares
