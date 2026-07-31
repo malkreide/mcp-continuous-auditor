@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the transport boot gate: the first gate that watches the process run
+
+Every gate before this one reads the target. `ruff` reads it, `mypy` reads it,
+`generate_schemas.py --check` imports it and compares shapes, promptfoo drives
+its tools in-process. All of them can be green while the server does not start.
+Two real cases, both of which walked through the full gate set untouched:
+
+1. after the SDK major bump the settings object is read-only, so the surviving
+   `mcp.settings.host = ...` raises `ValueError: "Settings" object has no field
+   "host"` at start and the process never comes up
+   (`malkreide/parlament-mcp#29`);
+2. when `host` is not passed through to the app builder, the SDK derives its
+   inbound host allow-list from the `127.0.0.1` default and answers HTTP 421 to
+   every request made under a real hostname. The process runs, the local health
+   check passes, and the deployment is unusable.
+
+- **`scripts/transport_boot_probe.py`** — starts the target under each transport
+  it configures and runs a real JSON-RPC `initialize` followed by `tools/list`.
+  Transports are derived from the target's own config (source, `Dockerfile`,
+  compose, `.env.example`, `[tool.mcp_auditor.boot]`), never guessed — with a
+  floor of stdio + streamable-http, because probing only what a target
+  *advertises* rebuilds the very blind spot the gate removes. SSE is probed only
+  when the target still offers it.
+
+  **How the target is started decides whether case 2 is visible at all.** Booting
+  it ourselves via `mcp.run(host=...)` means passing `host` correctly on the
+  target's behalf — straight past the bug, which lives in the target's own
+  startup code. So the probe prefers the target's own entrypoint (`declared` argv
+  > `[project.scripts]` / `python -m pkg` > the imported server object) and stamps
+  the mode it used into the report. A green `generic` HTTP result is weaker
+  evidence than a green `entrypoint` one, and says so in the report rather than
+  reading like the same all-clear.
+
+  **HTTP is probed under two `Host` headers, not one.** Bound to `0.0.0.0` like a
+  real deployment, first with a loopback `Host` (which must work, or the
+  transport is simply broken) and then with a non-loopback name. A 421 on the
+  second when the first passed is case 2 and nothing else. A test pins the reason
+  this matters: against the *same* broken server the loopback request returns a
+  perfectly healthy 200, so a probe that only talked to `127.0.0.1` would call
+  that deployment fine.
+
+  **stdin stays open until the answers are in.** Closing it after writing the
+  request shuts the server down before network-bound calls finish, and you record
+  a failure that does not exist. The stdio fixture exits on stdin EOF and delays
+  its `tools/list` answer specifically so that mistake cannot pass by luck, and a
+  test asserts the healthy server *is* measured as broken when stdin is closed
+  early.
+
+  Every start attempt is under a hard deadline (`BOOT_TIMEOUT`, default 30s) with
+  the whole process group killed after it, so a hung target cannot hang the night.
+
+- **Exit-code contract, deliberately matching the auditor's own**: `0` green,
+  `2` finding, `127` the harness could not run. **A target that will not start is
+  a FINDING about the target — only the harness failing is a hard failure.** That
+  line is the one the rest of the classifier rests on, so `nightly-audit.sh` also
+  maps "the probe wrote no report and returned non-zero" onto 127: claiming a
+  boot failure we never actually observed is the worse of the two errors.
+  `BOOT_GATE=off` disables the gate, with the same fail-closed reasoning as
+  `SCHEMA_GATE` — and the knowledge that you are switching off the only check
+  that sees this class of bug.
+
+- **`transport_boot` is now part of the evidence contract.** The Worker writes it
+  into `nightly-evidence.json`'s `gates`, and the Broker re-derives the verdict
+  from it (`nightly_audit_report.py --from-evidence`). Because a gate name absent
+  from the evidence defaults to 127, **evidence from a Worker image still running
+  the previous `nightly-audit.sh` now hard-fails instead of classifying green** —
+  intended, and the reason the Worker image and the Broker roll out together.
+  Nothing new leaves the machine: the probe only ever connects to loopback inside
+  the guest, so no egress-allowlist or forward-proxy entry is required.
+
 ### Added — the published probe, and the false all-clear it was built to end
 
 `identity_probe.py` reads a repository; `release_gap.py` compares version

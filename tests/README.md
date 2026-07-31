@@ -51,6 +51,18 @@ Covers:
   kills a mutant surviving the existing suite (kill map cached per target SHA;
   empty or fully-killed pools HARD-fail). Needs `git`; the suite runner is a
   local fake and mutants are plain diffs — no promptfoo, no mutmut, no network.
+- `test_transport_boot_probe.py` — the transport boot gate
+  (`scripts/transport_boot_probe.py`), the only gate that observes the *running*
+  process. Built around the two bugs no other gate can see: a crash at start
+  under the new SDK (`boot_stdio_crash.py`, the read-only settings object) and an
+  HTTP 421 for every request under a real hostname (`boot_http_server.py` in
+  `host421` mode). One test deliberately proves that a loopback-only probe calls
+  the 421 server healthy — that is why the gate varies the `Host` header. Another
+  pins the stdin trap: the *same* healthy stdio server is measured as broken the
+  moment stdin is closed after the write, so a regression there shows up as a
+  test failure rather than as false findings against slow targets. The fixtures
+  speak enough JSON-RPC on their own, so all of this is stdlib-only and offline;
+  `FastMCPBootTest` is the one class needing `fastmcp` and self-skips without it.
 - `test_release_gap.py` — the release-gap probe (`scripts/release_gap.py`).
   Hardest on the two properties whose failure would turn it into noise or into
   a lie: an unreachable PyPI must not read as "in sync", and a missing tag set
@@ -59,7 +71,8 @@ Covers:
   `git log`, which would only assert that the mock matches the assumption.
   Needs `git`; no network — the index lookup is injected.
 
-`test_smoke_target.py` self-**skips** here — it needs `fastmcp`.
+`test_smoke_target.py` and `test_transport_boot_probe.FastMCPBootTest`
+self-**skip** here — both need `fastmcp`.
 
 ## With fastmcp (the smoke target, finding U-B)
 
@@ -74,3 +87,11 @@ uv run --with fastmcp python -m unittest tests.test_smoke_target
 
 No network is used: the provider's httpx call is mocked against
 `tests/smoke_fixtures/`.
+
+`test_transport_boot_probe.FastMCPBootTest` joins it there: it boots the same
+`smoke_server.py` for real, over stdio and over streamable-http, and speaks
+`initialize` + `tools/list` to it. The stdlib fixtures prove the probe's logic;
+this proves it against the actual SDK, so a change in FastMCP's startup or
+transport handling (the 307 from `/mcp/` to `/mcp` was found exactly this way)
+surfaces here instead of in a target repo at 03:00. Still no network — only
+`tools/list` is called, never a tool.
