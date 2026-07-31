@@ -80,8 +80,12 @@ class BrokerPipelineTest(unittest.TestCase):
         return self._run_payload(header + _tar_bytes(members))
 
     @staticmethod
-    def _evidence(gates: dict, target: str = "o/r", sha: str = "abc1234") -> bytes:
-        return json.dumps({"target": target, "target_sha": sha, "gates": gates}).encode()
+    def _evidence(gates: dict, target: str = "o/r", sha: str = "abc1234",
+                  tests_collected: int = 7) -> bytes:
+        # tests_collected travels in the evidence because the Broker never sees the
+        # runner log: a green pytest gate whose suite size is unknown is not a pass.
+        return json.dumps({"target": target, "target_sha": sha,
+                           "tests_collected": tests_collected, "gates": gates}).encode()
 
     # --- verdict re-derivation ------------------------------------------------
 

@@ -61,7 +61,7 @@ class ClassifierTest(unittest.TestCase):
 
     def test_green_evidence_classifies_green(self) -> None:
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -94,7 +94,7 @@ class ClassifierTest(unittest.TestCase):
         # promptfoo JSON it shipped still carries real failures. The Broker
         # classifies from the promptfoo evidence too -> findings, NOT green.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "deadbee",
+            "target": "o/r", "target_sha": "deadbee", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -130,7 +130,7 @@ class ClassifierTest(unittest.TestCase):
         # Analysis S-A: evidence claims promptfoo passed (rc 0) but ships NO
         # promptfoo JSON. The eval cannot be verified -> hard-fail, never green.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -144,7 +144,7 @@ class ClassifierTest(unittest.TestCase):
         # red-team hit must classify as its own 'other' finding — NOT be folded into
         # schema_drift (which would falsely report a drift).
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -164,7 +164,8 @@ class ClassifierTest(unittest.TestCase):
         # Analysis T-C: a green determ-only run must be stamped so it is never read
         # as "red-team clear" — graded_layer_ran False + a loud report caveat.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234", "promptfoo_profile": "determ",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
+            "promptfoo_profile": "determ",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -178,7 +179,8 @@ class ClassifierTest(unittest.TestCase):
 
     def test_graded_profile_marks_layer_ran(self) -> None:
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234", "promptfoo_profile": "graded",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
+            "promptfoo_profile": "graded",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -207,7 +209,7 @@ class ClassifierTest(unittest.TestCase):
         # Analysis S-D: an untrusted promptfoo example with newlines / escapes must
         # not inject Markdown structure or terminal escapes into the report sink.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 1},
         })
@@ -226,7 +228,7 @@ class ClassifierTest(unittest.TestCase):
         # the TARGET (exit 2), not about the infrastructure. Every other gate is
         # green here — that is exactly the situation the gate was added for.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 2, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -247,7 +249,7 @@ class ClassifierTest(unittest.TestCase):
         # 127 means the HARNESS could not run. That says nothing about whether the
         # target boots, so it must never be reported as a finding about the target.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 127, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -263,7 +265,7 @@ class ClassifierTest(unittest.TestCase):
         # with no transport_boot key. It genuinely did not run the gate, so the run
         # must NOT classify green — the Worker and Broker roll out together.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
@@ -274,7 +276,7 @@ class ClassifierTest(unittest.TestCase):
 
     def test_boot_gate_appears_in_the_rendered_gate_list(self) -> None:
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
         })
@@ -289,7 +291,7 @@ class ClassifierTest(unittest.TestCase):
         # Exit 3. The run stays green — nothing is broken — but the report has to
         # say the control is absent, or a missing control reads like a passing one.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 3, "promptfoo_rc": 0},
         })
@@ -309,7 +311,7 @@ class ClassifierTest(unittest.TestCase):
 
     def test_a_rebinding_control_that_failed_is_a_finding(self) -> None:
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 2, "promptfoo_rc": 0},
         })
@@ -328,7 +330,7 @@ class ClassifierTest(unittest.TestCase):
         # a probe that never ran would be the same error as claiming a boot failure
         # we never observed.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "host_allowlist": 127, "promptfoo_rc": 0},
         })
@@ -344,7 +346,7 @@ class ClassifierTest(unittest.TestCase):
         # Same rollout rule as the boot gate: a Worker image predating this gate
         # genuinely did not run it, and must not classify green.
         ev = self._write("ev.json", {
-            "target": "o/r", "target_sha": "abc1234",
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
                       "transport_boot": 0, "promptfoo_rc": 0},
         })
@@ -353,6 +355,135 @@ class ClassifierTest(unittest.TestCase):
         self.assertEqual(s["outcome"], "hard-fail")
         self.assertFalse(s["green"])
         self.assertEqual(s["gates"]["host_allowlist_gate"], 127)
+
+    # --- hung gates: a timeout is not a failure and not "could not run" ---------
+
+    def _green_gates(self, **over: int) -> dict:
+        gates = {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                 "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0}
+        gates.update(over)
+        return gates
+
+    def _run(self, gates: dict, tests_collected: int = 7) -> dict:
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234",
+            "tests_collected": tests_collected, "gates": gates,
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        return self._classify(ev, pf)
+
+    def test_a_hung_gate_is_hard_fail_and_is_named(self) -> None:
+        # The name is the actionable part: "pytest hung" and "promptfoo hung" call
+        # for entirely different next steps.
+        s = self._run(self._green_gates(pytest=nar.GATE_TIMEOUT_RC))
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertEqual(s["_exit"], nar.EXIT_HARD_FAIL)
+        self.assertTrue(s["hung"])
+        self.assertEqual(s["hung_gates"], ["pytest"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("Gate(s) HUNG", report)
+        self.assertIn("pytest", report)
+        # "Re-run it" is the wrong advice: a hang that disappears on the second
+        # attempt has not been explained, it has been talked out of the record.
+        self.assertIn("has not been explained", report)
+
+    def test_a_sigkilled_gate_counts_as_hung_too(self) -> None:
+        # `timeout --kill-after` returns 137 when the command ignored SIGTERM —
+        # which is exactly the wedged-in-an-uninterruptible-read case this guard
+        # exists for, so it must not fall through as an ordinary failure.
+        s = self._run(self._green_gates(promptfoo_rc=nar.GATE_KILLED_RC))
+        self.assertTrue(s["hung"])
+        self.assertEqual(s["hung_gates"], ["promptfoo"])
+        self.assertEqual(s["outcome"], "hard-fail")
+
+    def test_a_hung_gate_is_not_also_counted_as_a_finding(self) -> None:
+        # A timeout is not "ruff found problems". Folding it into toolchain_fail
+        # would put a defect claim in the report that no gate ever made — and
+        # would route it to a tracking issue asserting that class.
+        s = self._run(self._green_gates(ruff=nar.GATE_TIMEOUT_RC,
+                                        schema_drift=nar.GATE_TIMEOUT_RC,
+                                        transport_boot=nar.GATE_TIMEOUT_RC,
+                                        host_allowlist=nar.GATE_TIMEOUT_RC))
+        self.assertTrue(s["hung"])
+        self.assertFalse(s["toolchain_fail"])
+        self.assertFalse(s["schema_drift"])
+        self.assertFalse(s["transport_boot_fail"])
+        self.assertFalse(s["host_allowlist_fail"])
+        self.assertEqual(s["outcome"], "hard-fail")
+
+    def test_every_gate_can_be_reported_as_hung_under_its_own_name(self) -> None:
+        for key, label in (("ruff", "ruff"), ("mypy", "mypy"), ("pytest", "pytest"),
+                           ("schema_drift", "schema-drift gate"),
+                           ("transport_boot", "transport boot gate"),
+                           ("host_allowlist", "DNS-rebinding gate"),
+                           ("promptfoo_rc", "promptfoo")):
+            with self.subTest(gate=key):
+                s = self._run(self._green_gates(**{key: nar.GATE_TIMEOUT_RC}))
+                self.assertEqual(s["hung_gates"], [label])
+
+    def test_a_hung_gate_does_not_read_as_a_pass_in_the_gate_list(self) -> None:
+        self._run(self._green_gates(mypy=nar.GATE_TIMEOUT_RC))
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("mypy: ⏱ HUNG", report)
+        self.assertNotIn("mypy: ✅", report)
+
+    # --- the silent zero: green, and nothing ran --------------------------------
+
+    def test_zero_tests_with_a_green_gate_is_not_a_pass(self) -> None:
+        s = self._run(self._green_gates(), tests_collected=0)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertEqual(s["_exit"], nar.EXIT_HARD_FAIL)
+        self.assertTrue(s["no_tests_executed"])
+        self.assertFalse(s["green"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("No tests executed", report)
+        # The gate line must withdraw its tick: "✅ pass — 0 test(s)" is exactly
+        # the sentence this class exists to prevent.
+        self.assertIn("pytest: 🕳 0 tests executed (exit 0) — NOT a pass", report)
+        self.assertNotIn("pytest: ✅", report)
+        # And the closing advice must not be "re-run" without fixing anything.
+        self.assertIn("Fix the suite's selection", report)
+
+    def test_an_unknown_test_count_is_also_not_a_pass(self) -> None:
+        # Same rule as promptfoo's rc-0-with-no-output: a green result whose suite
+        # size cannot be established is indistinguishable from an empty one.
+        s = self._run(self._green_gates(), tests_collected=-1)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertTrue(s["tests_unverified"])
+        self.assertFalse(s["no_tests_executed"])
+
+    def test_evidence_without_a_test_count_cannot_be_green(self) -> None:
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234", "gates": self._green_gates(),
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertEqual(s["tests_collected"], nar.TESTS_UNKNOWN)
+
+    def test_a_real_suite_passes_and_the_count_is_shown(self) -> None:
+        s = self._run(self._green_gates(), tests_collected=217)
+        self.assertEqual(s["outcome"], "green")
+        self.assertFalse(s["no_tests_executed"])
+        self.assertFalse(s["tests_unverified"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("217 test(s)", report)
+
+    def test_a_red_pytest_gate_is_a_finding_not_a_silent_zero(self) -> None:
+        # no_tests_executed only speaks about a gate that claimed success. A red
+        # suite is an ordinary toolchain finding and must not be relabelled.
+        s = self._run(self._green_gates(pytest=1), tests_collected=0)
+        self.assertFalse(s["no_tests_executed"])
+        self.assertTrue(s["toolchain_fail"])
+        self.assertEqual(s["outcome"], "findings")
+
+    def test_a_hung_pytest_gate_is_not_reported_as_an_empty_suite(self) -> None:
+        # A killed suite leaves no summary line, so the count arrives as UNKNOWN.
+        # The report must say it HUNG, not that it ran nothing.
+        s = self._run(self._green_gates(pytest=nar.GATE_TIMEOUT_RC), tests_collected=-1)
+        self.assertTrue(s["hung"])
+        self.assertFalse(s["no_tests_executed"])
+        self.assertFalse(s["tests_unverified"])
 
     def test_partial_evidence_missing_gate_defaults_to_hard_fail(self) -> None:
         # A gate omitted from the evidence must read as could-not-run (127),
@@ -364,6 +495,82 @@ class ClassifierTest(unittest.TestCase):
         s = self._classify(ev, "")
         self.assertEqual(s["outcome"], "hard-fail")
         self.assertFalse(s["green"])
+
+
+class CountTestsTest(unittest.TestCase):
+    """The whole `no_tests_executed` class rests on this parser, so it is tested
+    against the literal shapes pytest and unittest actually emit. A parser that
+    guessed would either invent an empty suite or hide one."""
+
+    def test_unittest_ran_line(self) -> None:
+        self.assertEqual(nar.count_tests("Ran 217 tests in 25.560s\n\nOK\n"), 217)
+
+    def test_unittest_empty_discovery_is_zero_not_unknown(self) -> None:
+        # The exact silent zero: discovery found nothing, the runner said OK, the
+        # process exited 0.
+        self.assertEqual(nar.count_tests("\n----\nRan 0 tests in 0.000s\n\nOK\n"), 0)
+
+    def test_unittest_singular_test(self) -> None:
+        self.assertEqual(nar.count_tests("Ran 1 test in 0.001s\n\nOK\n"), 1)
+
+    def test_pytest_quiet_summary(self) -> None:
+        self.assertEqual(nar.count_tests("....\n217 passed in 25.56s\n"), 217)
+
+    def test_pytest_mixed_outcomes_are_summed(self) -> None:
+        self.assertEqual(
+            nar.count_tests("1 failed, 215 passed, 2 skipped in 25.56s\n"), 218)
+
+    def test_pytest_no_tests_ran_is_zero(self) -> None:
+        self.assertEqual(nar.count_tests("no tests ran in 0.01s\n"), 0)
+
+    def test_pytest_deselected_only_counts_as_zero_executed(self) -> None:
+        # Every test deselected by a marker expression: the suite executed nothing,
+        # which is the finding — so `deselected` must NOT count towards the total.
+        self.assertEqual(nar.count_tests("no tests ran in 0.02s\n"), 0)
+        self.assertEqual(nar.count_tests("4 passed, 120 deselected in 1.20s\n"), 4)
+
+    def test_the_last_run_wins(self) -> None:
+        # A gate may run the suite more than once; the final summary is the one the
+        # exit code describes.
+        self.assertEqual(
+            nar.count_tests("Ran 5 tests in 0.1s\nOK\nRan 217 tests in 25.5s\nOK\n"), 217)
+
+    def test_unparseable_output_is_unknown_never_zero(self) -> None:
+        # Reporting "no tests" because we could not read the log would invent the
+        # very finding this parser exists to catch.
+        self.assertEqual(nar.count_tests("segfault\n"), nar.TESTS_UNKNOWN)
+        self.assertEqual(nar.count_tests(""), nar.TESTS_UNKNOWN)
+
+    def test_collected_line_is_the_fallback(self) -> None:
+        self.assertEqual(nar.count_tests("collected 42 items\n"), 42)
+
+    def test_count_tests_mode_prints_the_number(self) -> None:
+        # The measurement path nightly-audit.sh actually calls.
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "pytest.log"
+            log.write_text("Ran 217 tests in 25.560s\n\nOK\n", encoding="utf-8")
+            out = io.StringIO()
+            old = sys.argv
+            sys.argv = ["nightly_audit_report.py", "--count-tests", str(log)]
+            try:
+                with contextlib.redirect_stdout(out):
+                    rc = nar.main()
+            finally:
+                sys.argv = old
+            self.assertEqual(rc, 0)
+            self.assertEqual(out.getvalue().strip(), "217")
+
+    def test_count_tests_mode_reports_unknown_for_a_missing_log(self) -> None:
+        out = io.StringIO()
+        old = sys.argv
+        sys.argv = ["nightly_audit_report.py", "--count-tests", "/does/not/exist.log"]
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = nar.main()
+        finally:
+            sys.argv = old
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().strip(), str(nar.TESTS_UNKNOWN))
 
 
 if __name__ == "__main__":

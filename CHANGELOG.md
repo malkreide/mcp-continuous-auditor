@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — two ways a gate can say nothing while looking like it said yes
+
+Both of these are failure modes of the *harness*, not of any one gate, so they
+apply to every gate at once — the six that exist today and whatever is added
+next.
+
+**A gate that HUNG.** Twice in recent security work a mutation test surfaced as a
+**hanging** suite rather than a red one — in one case because, with the control
+under test removed, an SSE `GET` under a foreign `Host` is admitted and opens an
+endless event stream that the test client then waits on at teardown. A timeout
+that reads as generic infrastructure noise swallows exactly that finding.
+
+- Every gate in `scripts/nightly-audit.sh` now runs through `run_bounded`, a GNU
+  `timeout` wrapper, so a gate that never returns is recorded as **exit 124**
+  (or **137** when it ignored `SIGTERM` and had to be `SIGKILL`ed after
+  `--kill-after`). Provisioning (`git clone`/`fetch`, `uv sync`) is bounded too:
+  a fetch stalling against a filtered egress path hangs exactly like a wedged
+  gate. Budgets are per gate and tunable — `GATE_TIMEOUT` plus
+  `GATE_TIMEOUT_PYTEST`, `_PROMPTFOO`, `_BOOT`, `_REBIND` and friends. `timeout`
+  being absent is a hard failure rather than a quiet fall-through to unbounded
+  execution: running unbounded is the state this removes.
+- `nightly_audit_report.py` gains **`hung`** as its own class, carrying the
+  **name** of every gate that hung. That name is the actionable content —
+  "pytest hung" and "promptfoo hung" call for entirely different next steps. A
+  hung gate is deliberately excluded from the finding classes: a timeout is not
+  "ruff found problems", and folding it into `toolchain_fail` would put a defect
+  claim in the report that no gate ever made. The boot and rebinding probes'
+  existing "wrote no report + non-zero → 127" remap now exempts 124/137, since a
+  killed probe writes no report either and relabelling "it HUNG" as "it never
+  ran" loses the one detail that says where to look.
+
+**A gate that ran nothing.** `unittest discover` finding no tests prints
+`Ran 0 tests`, says `OK`, and **exits 0** — green, empty, and indistinguishable
+from success to anything that only reads exit codes.
+
+- The Worker measures how many tests the suite actually reported on, straight
+  from the runner's own output (`nightly_audit_report.py --count-tests`), and
+  ships the number in the evidence — the Broker never sees the log, so the count
+  has to travel. A count that cannot be read stays **-1 (unknown)**, never 0:
+  reporting "no tests" on the strength of an unreadable log would invent the very
+  finding this hunts.
+- **`no_tests_executed`** is a class of its own, and so is the weaker
+  **`tests_unverified`** (green, but the suite size could not be established) —
+  on the same rule that already makes promptfoo returning rc 0 with no parseable
+  output a hard failure. The gate line withdraws its tick rather than printing
+  `✅ pass — 0 test(s)`, which is the exact sentence the class exists to prevent.
+
+Both are **hard failures (rc 1), not findings (rc 2)**. In both cases a gate
+produced no verdict, and `findings` would route the run to a tracking issue
+asserting a defect class nothing observed — `sync_findings_issues.py` only fires
+on the `findings` outcome, so rc 2 would literally open an issue claiming a
+result that does not exist. The report also stops saying "re-run": for a hang,
+an attempt that passes the second time has not been explained.
+
+Rollout: `tests_collected` is now read from the evidence, and evidence without it
+classifies as unverified rather than green. Same rule as the gate names — **roll
+the Worker image and the Broker together.**
+
+`tests/test_gate_timeouts.py` lifts the real `run_bounded` out of the committed
+script and drives it in bash (124, 137, and that the whole process group dies —
+the gate is `uv run pytest`, so the process that hangs is a grandchild), then
+checks structurally that *every* gate invocation is wrapped. That second half is
+what the file mostly exists for: the natural way to lose a time bound is not to
+break the helper, it is to add a seventh gate next year and call it directly.
+
 ### Added — the DNS-rebinding gate: the control CORS and a token cannot provide
 
 A page in the operator's network resolves its own hostname to the MCP server's

@@ -11,7 +11,23 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 Covers:
 
 - `test_budget_guard.py` — the Phase-5 budget guardrails.
-- `test_nightly_audit_report.py` — the audit classifier (unit level).
+- `test_nightly_audit_report.py` — the audit classifier (unit level), including
+  the two ways a gate can say nothing while looking like it said yes: a gate
+  that **hung** (exit 124/137 from the gate timeout, named in the report and
+  deliberately kept out of the finding classes — a timeout is not "ruff found
+  problems") and a test gate that returned green having executed **0 tests**.
+  `CountTestsTest` pins the parser both classes rest on against the literal
+  shapes pytest and unittest emit, above all that unreadable output reads as
+  *unknown* and never as zero.
+- `test_gate_timeouts.py` — the time bounds in the **real**
+  `scripts/nightly-audit.sh`. The committed `run_bounded` helper is lifted out of
+  the script and driven in bash (124 on a hang, 137 when `SIGTERM` is ignored,
+  and the whole process group dying — a gate is `uv run pytest`, so the process
+  that hangs is a grandchild). The rest is structural: every gate invocation,
+  the promptfoo eval and the provisioning `git` calls must go through a bounded
+  launcher. That is the regression it mostly exists for — the natural way to
+  lose a time bound is not to break the helper but to add a gate next year and
+  call it directly. Needs `bash` + `timeout`.
 - `test_sync_findings_issues.py` — deterministic findings→issue routing: which
   issues a summary implies + open-vs-comment dedup, no network (Analysis U-C).
 - `test_broker_pipeline.py` — the **real** Broker handler

@@ -8,6 +8,8 @@
 #   1. provisions / pulls the target (git over HTTPS, no writes, no push — the
 #      same read-only contract as scripts/audit-target.sh) and uv-syncs deps;
 #   2. runs ruff + mypy + pytest;
+#   2b. measures how many tests the suite actually reported on — a green gate that
+#      collected nothing is not a pass, and the Broker never sees the log;
 #   3. runs the schema-drift gate (schemas/generate_schemas.py --check);
 #   3b. runs the transport boot gate (transport_boot_probe.py): starts the target
 #      under every transport it configures and speaks a real JSON-RPC initialize +
@@ -24,9 +26,19 @@
 # Exit code (the contract with the cron agent — see nightly_audit_report.py):
 #   0  all gates green
 #   2  finding(s): schema drift and/or red-team hit and/or toolchain failure
-#   1  HARD failure: a gate could not run, or a model/provider was unresolvable.
-#      An unresolvable model HARD-fails here — it is never silently downgraded
-#      to a pass (Plan Phase 4: "hart fehlschlagen, nicht still ausweichen").
+#   1  HARD failure: a gate could not run, HUNG, executed no tests at all, or a
+#      model/provider was unresolvable. An unresolvable model HARD-fails here — it
+#      is never silently downgraded to a pass (Plan Phase 4: "hart fehlschlagen,
+#      nicht still ausweichen").
+#
+# EVERY gate runs under GNU `timeout`, so a gate that never returns is recorded as
+# exit 124 (or 137 when it ignored SIGTERM and had to be SIGKILLed) rather than
+# hanging the night or blurring into a generic failure. That distinction is not
+# cosmetic: twice now a real defect has surfaced as a HANGING suite instead of a
+# red one — in one case because, with the control under test removed, an SSE GET
+# under a foreign Host is admitted and opens an endless event stream that the test
+# client then waits on at teardown. A timeout read as infrastructure noise
+# swallows exactly that finding, so 124/137 get their own class in the classifier.
 #
 # Policy (openclaw/workspace/{AGENTS,TOOLS}.md): no `curl | sh`, the token is
 # never inlined, nothing outside the project workspace is written, and the
@@ -97,6 +109,23 @@
 #   BUDGET_GUARD        Phase-5 budget guardrails (default: on; set 0/off to skip)
 #                       — circuit breaker + token ceiling, see budget_guard.py /
 #                       docs/budget/guardrails.md. Tunable via BUDGET_* env vars.
+#   GATE_TIMEOUT        default hard wall-clock bound per gate, in seconds
+#                       (default 600). Per-gate overrides, all seconds:
+#                         GATE_TIMEOUT_PROVISION  git clone/fetch/reset (default 600)
+#                         GATE_TIMEOUT_SYNC       uv sync                (default 900)
+#                         GATE_TIMEOUT_RUFF/_MYPY                        (default 600)
+#                         GATE_TIMEOUT_PYTEST                            (default 1800)
+#                         GATE_TIMEOUT_SCHEMA                            (default 600)
+#                         GATE_TIMEOUT_BOOT       transport boot gate    (default 900)
+#                         GATE_TIMEOUT_REBIND     DNS-rebinding gate     (default 900)
+#                         GATE_TIMEOUT_PROMPTFOO                         (default 3600)
+#                       A gate exceeding its bound is SIGTERMed, then SIGKILLed
+#                       after GATE_TIMEOUT_KILL_AFTER (default 30s) — the second
+#                       step matters, because a process wedged in an un-interruptible
+#                       read is exactly the shape this guard exists for.
+#                       The boot/rebind probes keep their own per-attempt deadlines
+#                       (BOOT_TIMEOUT / REBIND_TIMEOUT); these are the outer backstop
+#                       for the gate as a whole, so keep them comfortably larger.
 #
 set -uo pipefail   # NOT -e: we must observe every gate's exit code, not abort on the first red one.
 
@@ -148,6 +177,38 @@ hard_fail() {
 
 command -v git >/dev/null || hard_fail "git not found"
 command -v uv  >/dev/null || hard_fail "uv not found (required for ruff/mypy/pytest + schema gate)"
+
+# --- the gate timeout wrapper -------------------------------------------------
+# Every gate below runs through `run_bounded`. Without it a single wedged gate
+# takes the whole night with it AND, worse, is indistinguishable from a gate that
+# failed for a reason — which is how a hang stops being a finding and starts being
+# noise. `timeout` is coreutils; on a BSD/macOS box it is `gtimeout`. Its absence
+# is a hard failure rather than a silent fall-through to unbounded execution: an
+# unbounded run is precisely the state this guard removes.
+TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+[ -n "${TIMEOUT_BIN}" ] || hard_fail "timeout(1) not found (coreutils / gtimeout) — refusing to run gates unbounded"
+
+GATE_TIMEOUT="${GATE_TIMEOUT:-600}"
+GATE_TIMEOUT_KILL_AFTER="${GATE_TIMEOUT_KILL_AFTER:-30}"
+GATE_TIMEOUT_PROVISION="${GATE_TIMEOUT_PROVISION:-600}"
+GATE_TIMEOUT_SYNC="${GATE_TIMEOUT_SYNC:-900}"
+GATE_TIMEOUT_RUFF="${GATE_TIMEOUT_RUFF:-${GATE_TIMEOUT}}"
+GATE_TIMEOUT_MYPY="${GATE_TIMEOUT_MYPY:-${GATE_TIMEOUT}}"
+GATE_TIMEOUT_PYTEST="${GATE_TIMEOUT_PYTEST:-1800}"
+GATE_TIMEOUT_SCHEMA="${GATE_TIMEOUT_SCHEMA:-${GATE_TIMEOUT}}"
+GATE_TIMEOUT_BOOT="${GATE_TIMEOUT_BOOT:-900}"
+GATE_TIMEOUT_REBIND="${GATE_TIMEOUT_REBIND:-900}"
+GATE_TIMEOUT_PROMPTFOO="${GATE_TIMEOUT_PROMPTFOO:-3600}"
+
+# run_bounded <seconds> <cmd...>
+# Exit 124 on timeout, 137 when the command had to be SIGKILLed after ignoring
+# SIGTERM. Both are reserved: the classifier reads them as "this gate HUNG", which
+# is a different statement from "this gate failed" and from "this gate could not
+# start". Do NOT pass --preserve-status here — it is what would hide the 124.
+run_bounded() {
+  local secs="$1"; shift
+  "${TIMEOUT_BIN}" --kill-after="${GATE_TIMEOUT_KILL_AFTER}s" "${secs}s" "$@"
+}
 
 # --- writer != checker guard (Analysis S-F) -----------------------------------
 # The auditor writer / tool path is Anthropic. An llm-rubric grader of the SAME
@@ -210,13 +271,17 @@ if [ "${BUDGET_GUARD}" != "0" ] && [ "${BUDGET_GUARD}" != "off" ]; then
 fi
 
 # --- 1) provision (read-only against the target) ------------------------------
+# Provisioning is bounded too: a git operation that stalls against a filtered
+# egress path hangs exactly like a wedged gate, and reporting it as "the audit
+# could not complete" after six hours is not a report anyone can act on.
 if [ -d "${src_dir}/.git" ]; then
   echo "==> updating ${TARGET_REPO} in ${src_dir}"
-  git -C "${src_dir}" fetch --quiet origin || hard_fail "git fetch failed (egress allowlist?)"
+  run_bounded "${GATE_TIMEOUT_PROVISION}" git -C "${src_dir}" fetch --quiet origin \
+    || hard_fail "git fetch failed or timed out after ${GATE_TIMEOUT_PROVISION}s (egress allowlist?)"
 else
   echo "==> cloning ${TARGET_REPO} into ${src_dir}"
-  git clone --quiet "https://github.com/${TARGET_REPO}.git" "${src_dir}" \
-    || hard_fail "git clone failed (egress allowlist? target private?)"
+  run_bounded "${GATE_TIMEOUT_PROVISION}" git clone --quiet "https://github.com/${TARGET_REPO}.git" "${src_dir}" \
+    || hard_fail "git clone failed or timed out after ${GATE_TIMEOUT_PROVISION}s (egress allowlist? target private?)"
 fi
 git -C "${src_dir}" checkout --quiet "${TARGET_REF}" || hard_fail "checkout ${TARGET_REF} failed"
 # Fast-forward to the remote tip ONLY when TARGET_REF is a branch (origin/<ref>
@@ -231,25 +296,39 @@ sha="$(git -C "${src_dir}" rev-parse --short HEAD)"
 echo "==> ${TARGET_REPO} @ ${TARGET_REF} (${sha})"
 
 echo "==> uv sync"
-( cd "${src_dir}" && uv sync --all-extras --dev ) >"${log_dir}/uv-sync.log" 2>&1 \
-  || hard_fail "uv sync failed — see ${log_dir}/uv-sync.log"
+( cd "${src_dir}" && run_bounded "${GATE_TIMEOUT_SYNC}" uv sync --all-extras --dev ) \
+  >"${log_dir}/uv-sync.log" 2>&1 \
+  || hard_fail "uv sync failed or timed out after ${GATE_TIMEOUT_SYNC}s — see ${log_dir}/uv-sync.log"
 
 # --- 2) ruff / mypy / pytest --------------------------------------------------
-run_in_target() {  # run_in_target <name> <cmd...>  -> echoes the exit code
-  local name="$1"; shift
-  echo "==> ${name}: $*" >&2
-  ( cd "${src_dir}" && "$@" ) >"${log_dir}/${name}.log" 2>&1
+run_in_target() {  # run_in_target <name> <seconds> <cmd...>  -> echoes the exit code
+  local name="$1"; local secs="$2"; shift 2
+  echo "==> ${name} (max ${secs}s): $*" >&2
+  ( cd "${src_dir}" && run_bounded "${secs}" "$@" ) >"${log_dir}/${name}.log" 2>&1
   echo $?
 }
-rc_ruff=$(run_in_target ruff   uv run ruff check .)
-rc_mypy=$(run_in_target mypy   uv run mypy .)
-rc_pytest=$(run_in_target pytest uv run pytest -q)
+rc_ruff=$(run_in_target ruff   "${GATE_TIMEOUT_RUFF}"   uv run ruff check .)
+rc_mypy=$(run_in_target mypy   "${GATE_TIMEOUT_MYPY}"   uv run mypy .)
+rc_pytest=$(run_in_target pytest "${GATE_TIMEOUT_PYTEST}" uv run pytest -q)
+
+# --- 2b) how many tests actually ran (the silent zero) ------------------------
+# A pytest gate that exits 0 having collected nothing is not a pass; it is a gate
+# that made no statement while looking exactly like one that did. The Broker never
+# sees this log, so the COUNT is measured here and shipped in the evidence. A
+# count that cannot be read stays -1 (UNKNOWN) — never 0, because reporting "no
+# tests" on the strength of an unreadable log would invent the finding we hunt.
+tests_collected="$(python3 "${HERE}/nightly_audit_report.py" \
+  --count-tests "${log_dir}/pytest.log" 2>/dev/null)"
+case "${tests_collected}" in
+  ''|*[!0-9-]*) tests_collected=-1 ;;
+esac
+echo "==> pytest reported on ${tests_collected} test(s)"
 
 # --- 3) schema-drift gate -----------------------------------------------------
 echo "==> schema-drift gate (generate_schemas.py --check)"
 if [ -f "${src_dir}/schemas/generate_schemas.py" ]; then
   ( cd "${src_dir}" && MCP_SERVER_IMPORT="${MCP_SERVER_IMPORT}" \
-      uv run python schemas/generate_schemas.py --check ) \
+      run_bounded "${GATE_TIMEOUT_SCHEMA}" uv run python schemas/generate_schemas.py --check ) \
     >"${log_dir}/schema-drift.log" 2>&1
   rc_schema=$?
 elif [ "${SCHEMA_GATE}" = "0" ] || [ "${SCHEMA_GATE}" = "off" ]; then
@@ -289,7 +368,7 @@ else
       MCP_SERVER_IMPORT="${MCP_SERVER_IMPORT}" \
       BOOT_TARGET_ROOT="${src_dir}" \
       BOOT_REPORT="${boot_report}" \
-      uv run python "${HERE}/transport_boot_probe.py" ) \
+      run_bounded "${GATE_TIMEOUT_BOOT}" uv run python "${HERE}/transport_boot_probe.py" ) \
     >"${log_dir}/transport-boot.log" 2>&1
   rc_boot=$?
   # The probe always writes its report before returning 0 or 2. No report plus a
@@ -298,7 +377,11 @@ else
   # infrastructure, so map it onto 127 rather than let it read as "the target does
   # not boot". Claiming a boot failure we never actually observed would be the
   # worse error of the two.
-  if [ ! -s "${boot_report}" ] && [ "${rc_boot}" -ne 0 ]; then
+  # 124/137 are exempt from the remap: a gate killed by the timeout also leaves no
+  # report, and rewriting it to 127 would relabel "it HUNG" as "it never ran" —
+  # losing the one detail that says where to look.
+  if [ ! -s "${boot_report}" ] && [ "${rc_boot}" -ne 0 ] \
+     && [ "${rc_boot}" -ne 124 ] && [ "${rc_boot}" -ne 137 ]; then
     echo "    no ${boot_report} written — the probe itself did not run; recording 127 (hard-fail)" \
       | tee -a "${log_dir}/transport-boot.log"
     rc_boot=127
@@ -328,14 +411,17 @@ else
       MCP_SERVER_IMPORT="${MCP_SERVER_IMPORT}" \
       BOOT_TARGET_ROOT="${src_dir}" \
       REBIND_REPORT="${rebind_report}" \
-      uv run python "${HERE}/rebind_probe.py" ) \
+      run_bounded "${GATE_TIMEOUT_REBIND}" uv run python "${HERE}/rebind_probe.py" ) \
     >"${log_dir}/rebind.log" 2>&1
   rc_rebind=$?
   # Same reasoning as the boot gate above: the probe always writes its report
   # before returning 0/2/3, so no report plus a non-zero code means the probe
   # never ran. That is infrastructure (127), not a statement about the target's
   # allow-list — and least of all a claim that the control is missing.
-  if [ ! -s "${rebind_report}" ] && [ "${rc_rebind}" -ne 0 ]; then
+  # Exempt 124/137 for the same reason as the boot gate above: a killed probe
+  # writes no report either, and "HUNG" must not be relabelled "never ran".
+  if [ ! -s "${rebind_report}" ] && [ "${rc_rebind}" -ne 0 ] \
+     && [ "${rc_rebind}" -ne 124 ] && [ "${rc_rebind}" -ne 137 ]; then
     echo "    no ${rebind_report} written — the probe itself did not run; recording 127 (hard-fail)" \
       | tee -a "${log_dir}/rebind.log"
     rc_rebind=127
@@ -362,7 +448,7 @@ if [ -f "${src_dir}/${PROMPTFOO_CONFIG}" ]; then
   else
     echo "==> no pinned lockfile in ${pf_dir} — falling back to npx promptfoo@${PROMPTFOO_VERSION}"
   fi
-  ( cd "${src_dir}" && "${pf_cmd[@]}" eval \
+  ( cd "${src_dir}" && run_bounded "${GATE_TIMEOUT_PROMPTFOO}" "${pf_cmd[@]}" eval \
       -c "${PROMPTFOO_CONFIG}" \
       --output "${pf_json}" \
       "${pf_grader[@]}" \
@@ -390,6 +476,7 @@ cat > "${evidence_path}" <<EOF
   "target": "${TARGET_REPO}",
   "target_sha": "${sha}",
   "promptfoo_profile": "${PROMPTFOO_PROFILE}",
+  "tests_collected": ${tests_collected},
   "gates": {
     "ruff": ${rc_ruff},
     "mypy": ${rc_mypy},
@@ -407,7 +494,7 @@ echo "==> aggregating into ${report_path}"
 python3 "${HERE}/nightly_audit_report.py" \
   --ruff "${rc_ruff}" --mypy "${rc_mypy}" --pytest "${rc_pytest}" \
   --schema-drift "${rc_schema}" --transport-boot "${rc_boot}" \
-  --host-allowlist "${rc_rebind}" \
+  --host-allowlist "${rc_rebind}" --tests-collected "${tests_collected}" \
   --promptfoo-rc "${rc_pf}" --promptfoo-json "${pf_json}" \
   --promptfoo-profile "${PROMPTFOO_PROFILE}" \
   --target "${TARGET_REPO}" --sha "${sha}" \
