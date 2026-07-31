@@ -33,6 +33,9 @@ class BudgetGuardTest(unittest.TestCase):
             "BUDGET_BREAKER_THRESHOLD": "3",
             "BUDGET_BREAKER_COOLDOWN_SECONDS": "21600",
             "BUDGET_MAX_ITERATIONS": "25",
+            "BUDGET_MAX_FANOUT": "25",
+            "BUDGET_MAX_FANOUT_EXPENSIVE": "10",
+            "BUDGET_TOKENS_PER_TARGET": "0",
         }
         self._saved = {k: os.environ.get(k) for k in self._env}
         os.environ.update(self._env)
@@ -152,6 +155,68 @@ class BudgetGuardTest(unittest.TestCase):
         self.assertTrue(s["skipped_by_budget_guard"])
         self.assertFalse(s["green"])
         self.assertIn("circuit breaker OPEN", report.read_text())
+
+    # -- fan-out: a portfolio sweep multiplies whatever one target costs -----
+
+    def fanout_preflight(self, n: int, expensive: int = 0) -> int:
+        return bg.main(["--state", str(self.state), "preflight",
+                        "--fanout", str(n), "--fanout-expensive", str(expensive)])
+
+    def test_a_sweep_within_the_cap_runs(self) -> None:
+        os.environ["BUDGET_MAX_FANOUT"] = "25"
+        self.assertEqual(self.fanout_preflight(12), bg.PREFLIGHT_RUN)
+
+    def test_a_sweep_wider_than_the_cap_is_refused_before_it_clones_anything(self) -> None:
+        # Width is the one property knowable in advance. The breaker and the token
+        # window are both retrospective, and a fan-out's whole risk is that it
+        # spends N times before anyone looks.
+        os.environ["BUDGET_MAX_FANOUT"] = "10"
+        self.assertEqual(self.fanout_preflight(11), bg.PREFLIGHT_SKIP)
+
+    def test_the_expensive_predicate_count_has_its_own_cap(self) -> None:
+        # `boot` starts a real server per target: wall-clock and sockets, not CPU.
+        os.environ["BUDGET_MAX_FANOUT"] = "50"
+        os.environ["BUDGET_MAX_FANOUT_EXPENSIVE"] = "3"
+        self.assertEqual(self.fanout_preflight(20, expensive=3), bg.PREFLIGHT_RUN)
+        self.assertEqual(self.fanout_preflight(20, expensive=4), bg.PREFLIGHT_SKIP)
+
+    def test_a_projected_spend_over_the_window_is_refused_before_spending(self) -> None:
+        os.environ["BUDGET_MAX_FANOUT"] = "50"
+        os.environ["BUDGET_TOKENS_PER_TARGET"] = "500"   # window cap is 2500
+        self.assertEqual(self.fanout_preflight(4), bg.PREFLIGHT_RUN)   # 2000
+        self.assertEqual(self.fanout_preflight(6), bg.PREFLIGHT_SKIP)  # 3000
+
+    def test_deterministic_predicates_project_nothing_by_default(self) -> None:
+        # Today's predicates call no model, so the projection is a deliberate
+        # no-op — the knob exists so the first predicate that DOES call one is
+        # bounded on the day it is added, not discovered afterwards in a bill.
+        os.environ.pop("BUDGET_TOKENS_PER_TARGET", None)
+        os.environ["BUDGET_MAX_FANOUT"] = "50"
+        self.assertEqual(bg.Limits().tokens_per_target, 0)
+        self.assertEqual(self.fanout_preflight(40), bg.PREFLIGHT_RUN)
+
+    def test_an_ordinary_single_target_run_is_unaffected(self) -> None:
+        # The nightly passes no --fanout at all; nothing about its behaviour moves.
+        os.environ["BUDGET_MAX_FANOUT"] = "1"
+        self.assertEqual(self.preflight(), bg.PREFLIGHT_RUN)
+
+    def test_an_open_breaker_still_wins_over_a_legal_width(self) -> None:
+        for _ in range(3):
+            self.record(exit_code=1)
+        self.assertEqual(self.fanout_preflight(2), bg.PREFLIGHT_SKIP)
+
+    def test_the_width_is_recorded_so_the_history_can_be_read_back(self) -> None:
+        # A hard-fail from a 15-target sweep and one from a single nightly are the
+        # same row otherwise, and they are not the same event.
+        bg.main(["--state", str(self.state), "record", "--exit-code", "0",
+                 "--tokens", "0", "--fanout", "15"])
+        self.assertEqual(self.load()["runs"][-1]["fanout"], 15)
+
+    def test_the_refusal_names_the_knob_to_change(self) -> None:
+        limits = bg.Limits()
+        reason = bg.fanout_refusal(999, 0, 0, limits)
+        self.assertIsNotNone(reason)
+        self.assertIn("BUDGET_MAX_FANOUT", reason or "")
 
     def test_corrupt_state_starts_closed(self) -> None:
         self.state.write_text("{ not json")

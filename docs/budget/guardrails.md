@@ -97,6 +97,54 @@ gewünscht ist, liefert ihn TensorZero — siehe
 summiert dann den **echten** Pro-Lauf-Verbrauch (Writer + Grader) aus ClickHouse
 und übergibt ihn per `--tokens` an `record`; damit wird das Ceiling end-to-end real.
 
+## Fan-out — die Breite, nicht die Rechnung
+
+`scripts/portfolio_scan.py` fährt **N** Ziele in einem Lauf. Damit multipliziert
+sich alles, was ein Ziel kostet — und die Knöpfe oben haben je nur *ein* Ziel
+gesehen. Ein Sweep könnte an ihnen vorbeilaufen, indem er einfach breit ist.
+
+Entscheidend ist, was hier tatsächlich multipliziert wird:
+
+- **Modell-Tokens: heute keine.** Die Prädikate sind deterministisch — `manifest`,
+  `sdk_major`, `settings_write`, `host_allowlist_knob`, `nested_manifests` lesen
+  nur den Checkout, `boot` startet den Server und spricht JSON-RPC. Kein
+  Modellaufruf. Das Token-Ceiling ist für den Fan-out also **nicht** die bindende
+  Schranke, und so zu tun, als wäre es das, wäre eine Beruhigung ohne Deckung.
+- **Was wirklich multipliziert:** Wall-Clock, Disk und Netz — N flache Clones,
+  und mit `boot` N Serverstarts samt Ports.
+
+Deshalb greift der Guard an der **Breite**, und zwar im *Preflight*, bevor das
+erste Repo geklont wird. Breaker und Token-Fenster sind beide rückblickend: sie
+reagieren auf das, was ein Lauf schon ausgegeben hat. Das Risiko eines Fan-outs
+ist aber genau, dass er N-mal ausgibt, *bevor* jemand hinsieht. Die Breite ist
+die einzige Eigenschaft, die vorher bekannt ist — also wird sie vorher geprüft.
+
+```bash
+python3 scripts/budget_guard.py preflight --fanout 14 --fanout-expensive 2
+# exit 0  -> Sweep darf laufen
+# exit 75 -> abgelehnt (zu breit / projizierte Tokens sprengen das Fenster / Breaker offen)
+```
+
+`portfolio_scan.py --budget-state <pfad>` hängt das automatisch ein; ein
+abgelehnter Sweep endet mit „incomplete", nie mit grün.
+
+| Variable | Default | Bedeutung |
+|---|---|---|
+| `BUDGET_MAX_FANOUT` | 25 | Wie viele Ziele **ein** Sweep überhaupt anfassen darf. Eine Zieldatei, die versehentlich auf 200 Einträge gewachsen ist, wird abgelehnt statt gefahren. |
+| `BUDGET_MAX_FANOUT_EXPENSIVE` | 10 | Wie viele davon ein teures Prädikat (`boot`) einschalten dürfen. Jedes startet einen echten Server — das ist Wall-Clock und Sockets, nicht CPU. |
+| `BUDGET_TOKENS_PER_TARGET` | 0 | Projizierter Modellverbrauch **pro Ziel**. Default 0, weil die heutigen Prädikate keinen haben. Der Knopf existiert, damit das erste Prädikat, das ein Modell ruft, **an dem Tag** beschränkt ist, an dem es hinzugefügt wird — und nicht danach in einer Rechnung entdeckt wird. Ist er gesetzt, lehnt der Preflight einen Sweep ab, dessen `N × Wert` das Restfenster sprengen würde. |
+
+Der Breaker sieht einen Sweep als **einen** Lauf. `record --fanout N` stempelt
+die Breite in die Historie, damit ein hard-fail aus einem 15-Ziele-Sweep beim
+Nachlesen nicht wie ein gewöhnlicher Einzellauf aussieht — es ist nicht dasselbe
+Ereignis.
+
+> **Egress:** N Ziele heissen nicht N neue Proxy-Einträge — die Repos liegen alle
+> hinter `github.com`, das bereits erlaubt ist. Was fehlt, ist der **Upstream** je
+> Ziel; siehe
+> [`deploy/microvm/forward-proxy/README.md`](../../deploy/microvm/forward-proxy/README.md)
+> → „Portfolio fan-out".
+
 ## Max-Iterationen
 
 Eine Obergrenze auf die Denk-/Tool-Schleife des Agenten gehört dorthin, wo die
