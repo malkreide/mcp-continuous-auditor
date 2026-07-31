@@ -126,7 +126,9 @@ tests/            stdlib unit tests (164) — run by .github/workflows/tests.yml
 .github/          tests.yml = the auditor's own suite; *.yml.template = CI for the target repo
 docs/plans/       the v2 build plan
 docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)
-docs/deployment/  Raspberry Pi (recommended host) + Phase 5 forkd/microVM isolation
+docs/deployment/  Raspberry Pi (recommended host), Phase 5 forkd/microVM isolation,
+                  worker-broker-rollout.md = updating both sides in the right ORDER
+                  (Broker first — an old Broker reports a new Worker's findings as green)
 docs/budget/      Phase 5 budget guardrails (token ceiling, circuit breaker)
 docs/observability/ Phase 5 TensorZero gateway (cost-caps, A/B, audit-trail)
 ```

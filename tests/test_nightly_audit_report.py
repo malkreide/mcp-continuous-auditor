@@ -526,6 +526,26 @@ class ClassifierTest(unittest.TestCase):
         report = (self.dir / "report.md").read_text(encoding="utf-8")
         self.assertIn("shipped-artifact gate (install from PyPI + run it)", report)
 
+    def test_every_evidence_gate_is_visible_in_the_summary(self) -> None:
+        # The rollout runbook (docs/deployment/worker-broker-rollout.md) detects a
+        # violated rollout order by diffing the evidence's gate names against the
+        # summary's `gates` object: a name present in the evidence but absent from
+        # the summary means the Broker ignored it — which is what an OLD Broker
+        # does to a NEW Worker's findings, silently and in green.
+        #
+        # That detector only works while every `_GATE_NAMES` entry actually shows
+        # up in the summary. Add a gate to the evidence contract and forget the
+        # summary, and the runbook starts crying wolf on every healthy run.
+        s = self._run(self._green_gates())
+        rendered = set(s["gates"])
+        for name in nar._GATE_NAMES:
+            with self.subTest(gate=name):
+                self.assertTrue(
+                    any(name in key for key in rendered),
+                    f"{name!r} is in the evidence contract but appears in no summary "
+                    f"gate key ({sorted(rendered)}) — the rollout drift detector "
+                    "would report it as ignored on every run")
+
     def test_partial_evidence_missing_gate_defaults_to_hard_fail(self) -> None:
         # A gate omitted from the evidence must read as could-not-run (127),
         # never as an implicit pass.

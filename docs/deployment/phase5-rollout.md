@@ -192,6 +192,12 @@ entstand, und dessen Kosten im ClickHouse-Audit-Trail stehen.
 
 ## Reihenfolge & Rückzug
 
+> **Für ein UPDATE eines schon laufenden Systems gilt eine eigene, strengere
+> Reihenfolge**: sobald eine Änderung dem Evidence-File ein Pflichtfeld
+> hinzufügt, muss der **Broker zuerst**. Ein alter Broker meldet die Befunde
+> eines neuen Workers still als grün (gemessen). Siehe
+> [worker-broker-rollout.md](worker-broker-rollout.md).
+
 1. Preflight grün.
 2. TensorZero hoch + OpenClaw verdrahtet → ein Lauf, Episode-Tokens > 0.
 3. Worker-Image gebaut, ein manueller `run-worker.sh` liefert ein Ergebnis.
