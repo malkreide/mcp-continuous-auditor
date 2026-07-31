@@ -81,6 +81,39 @@ class PatternTest(unittest.TestCase):
         )
 
 
+class CommentStrippingTest(unittest.TestCase):
+    """`bakom-mcp` 2.0.4 sends the right version and was reported as DRIFT.
+
+    Its `__init__.py` documents the old incident in a comment, and the literal
+    scan read the comment as evidence. Going red on a comment that records the
+    very bug the probe exists to catch teaches people to delete the record.
+    """
+
+    def test_a_comment_recording_old_drift_is_not_evidence(self) -> None:
+        src = (
+            "from importlib.metadata import version\n"
+            '# in server.py carried "bakom-mcp/1.0" to the BAKOM endpoints all the while.\n'
+            '__version__ = version("bakom-mcp")\n'
+        )
+        self.assertNotIn("bakom-mcp/1.0", pp.LITERAL.findall(pp.code_only(src)))
+
+    def test_a_real_literal_still_counts(self) -> None:
+        src = 'HEADERS = {"User-Agent": "bakom-mcp/1.0"}  # legacy\n'
+        self.assertIn("bakom-mcp/1.0", pp.LITERAL.findall(pp.code_only(src)))
+
+    def test_a_hash_inside_a_string_does_not_truncate_the_line(self) -> None:
+        """Why tokenize and not split("#")."""
+        src = 'UA = "demo-mcp/1.2.3"  # note\nURL = "https://x.invalid/#frag"\n'
+        out = pp.code_only(src)
+        self.assertIn("demo-mcp/1.2.3", out)
+        self.assertIn("https://x.invalid/#frag", out)
+        self.assertNotIn("# note", out)
+
+    def test_unparseable_source_is_checked_whole_not_skipped(self) -> None:
+        src = 'def broken(:\n    UA = "demo-mcp/1.2.3"\n'
+        self.assertIn("demo-mcp/1.2.3", pp.code_only(src))
+
+
 class ClassificationTest(unittest.TestCase):
     def test_matching_version_is_ok(self) -> None:
         self.assertEqual(classify([finding("demo-mcp/1.2.3")], "1.2.3", True), "ok")

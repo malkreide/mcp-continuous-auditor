@@ -77,6 +77,28 @@ Two real cases, both of which walked through the full gate set untouched:
   Nothing new leaves the machine: the probe only ever connects to loopback inside
   the guest, so no egress-allowlist or forward-proxy entry is required.
 
+### Fixed — published_probe went red on a comment
+
+`bakom-mcp` 2.0.4 sends the correct `bakom-mcp/2.0.4 (+github…)`, verified by
+importing the installed package. The probe reported `DRIFT … sends 1.0` anyway,
+because `__init__.py` records the old incident in a comment:
+
+```python
+# in server.py carried "bakom-mcp/1.0" to the BAKOM endpoints all the while.
+```
+
+The literal scan read the documentation as evidence. `identity_probe.py`
+learned this lesson early — *a rule that turns CI red on good documentation
+teaches people to delete the documentation* — and strips comments before
+scanning. This probe was written without it and had to relearn it against a
+real package on the day it shipped.
+
+- Source is passed through `code_only()` before the f-string and literal scans.
+  `tokenize`, not `split("#")`: a `#` inside a string literal must not truncate
+  the line. Unparseable source is scanned whole rather than skipped.
+- Four regression tests, including the `#`-in-a-string case and the guarantee
+  that a genuine literal on a line that *also* has a comment still counts.
+
 ### Added — the published probe, and the false all-clear it was built to end
 
 `identity_probe.py` reads a repository; `release_gap.py` compares version
