@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the boot gate reported a healthy target as dead
+
+Found by running the rollout runbook's step 4 against the real
+`zurich-opendata-mcp`, which is exactly what that step is for.
+
+The gate asks for a transport through env vars (`MCP_TRANSPORT`,
+`FASTMCP_TRANSPORT`, `PORT`, …). That target selects HTTP with a **`--http`
+flag** and reads none of them, so the entrypoint ran its stdio default, found
+stdin closed (the probe passes `stdin=DEVNULL` for network transports) and exited
+**rc 0**. The gate called that *"the server never came up"* — a finding against a
+target whose HTTP transport is fine. Measured:
+
+```
+env-var way          -> rc=0     (exits at once, never listens)
+--http --port N way  -> rc=124   (still serving when the timeout kills it)
+```
+
+Two changes, and the second is the one that matters:
+
+- **The gate now tries the common CLI spellings** (`--http --port N`,
+  `--transport http --port N`, `--sse …`) after the env vars come to nothing.
+  This is not the guessing the module docstring refuses: deriving *which*
+  transports a target serves must never be guessed, because a wrong guess there
+  invents a requirement — but guessing how to *invoke* one is self-verifying, an
+  attempt only counting once the port opens and the server answers real MCP.
+  Only the **first** attempt — the target's own argv plus the env — decides the
+  verdict; the flag attempts are chances to succeed and never chances to fail,
+  since an argparse error from a guessed flag says something about the guess.
+  A **declared** argv is never extended: the target said how it wants to start.
+
+- **`not-selected` is its own outcome, exit 3.** When nothing listens, the exit
+  code of the target's own invocation decides which of two statements the
+  evidence supports: `rc != 0` means it tried and died (case 1, a real finding);
+  `rc == 0` means it ran something else and finished, which is *"we never got to
+  ask"*. Same shape as the rebinding gate's "control not configured" — not a
+  pass, not a finding, loud in the report, and it does not turn the run red. A
+  real failure outranks it. The fix belongs in the target, one
+  `[tool.mcp_auditor.boot.commands]` entry, and the report says so.
+
+**What the gate found once it could actually start the server** is the finding it
+was built for: HTTP 421 for a non-loopback `Host` while loopback passes.
+`main()` calls `mcp.run(transport="streamable-http", port=args.port)` with **no
+`host`**, and there is no `--host` option, so the SDK derives its inbound
+allow-list from the `127.0.0.1` default. The practical symptom is that the server
+cannot be served beyond loopback at all; the 421 is that root cause's visible
+signature. Case 2, on a real target, previously hidden behind a false negative
+that looked like a false positive.
+
 ### Fixed — the auditor could not drive a target on the 2.x SDK at all
 
 Two different projects are called FastMCP, and conflating them is expensive:

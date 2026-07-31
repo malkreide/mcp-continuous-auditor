@@ -485,6 +485,28 @@ class ClassifierTest(unittest.TestCase):
         self.assertFalse(s["no_tests_executed"])
         self.assertFalse(s["tests_unverified"])
 
+    # --- the boot gate's third state: never got to ask -------------------------
+
+    def test_an_unselected_transport_is_neither_a_pass_nor_a_finding(self) -> None:
+        # Exit 3. The gate could not request the transport, so nothing about it
+        # was established — reporting a defect would be a claim it never earned,
+        # and a tick would be one too.
+        s = self._run(self._green_gates(transport_boot=3))
+        self.assertEqual(s["outcome"], "green")
+        self.assertFalse(s["transport_boot_fail"])
+        self.assertTrue(s["transport_boot_unmeasured"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("Transport not selected", report)
+        self.assertIn("transport not selected — not measured (exit 3)", report)
+        self.assertNotIn("transport boot gate (initialize + tools/list): ✅", report)
+        self.assertIn("says nothing about whether that transport works", report)
+
+    def test_a_real_boot_failure_is_still_a_finding(self) -> None:
+        s = self._run(self._green_gates(transport_boot=2))
+        self.assertEqual(s["outcome"], "findings")
+        self.assertTrue(s["transport_boot_fail"])
+        self.assertFalse(s["transport_boot_unmeasured"])
+
     # --- the shipped-artifact gate: what users actually install ----------------
 
     def test_a_stale_published_artifact_is_a_finding(self) -> None:
