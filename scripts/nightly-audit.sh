@@ -9,6 +9,9 @@
 #      same read-only contract as scripts/audit-target.sh) and uv-syncs deps;
 #   2. runs ruff + mypy + pytest;
 #   3. runs the schema-drift gate (schemas/generate_schemas.py --check);
+#   3b. runs the transport boot gate (transport_boot_probe.py): starts the target
+#      under every transport it configures and speaks a real JSON-RPC initialize +
+#      tools/list to it;
 #   4. runs the promptfoo eval (tool-output contract + OWASP red-team), writing
 #      machine-readable JSON output;
 #   5. hands every exit code + the promptfoo JSON to
@@ -58,6 +61,21 @@
 #   SCHEMA_GATE         schema-drift gate policy (default on). A missing generator
 #                       in the target is a FINDING; set off to allow a target that
 #                       genuinely ships no output schemas (Analysis T-D).
+#   BOOT_GATE           transport boot gate policy (default on). The gate starts the
+#                       target under every transport it configures and runs a real
+#                       initialize + tools/list. Same fail-closed reasoning as
+#                       SCHEMA_GATE: a target that cannot be booted here is a
+#                       FINDING, because "did not come up" is precisely the class of
+#                       bug every other gate is blind to (unit tests, ruff and the
+#                       schema gate all pass while the server never starts). Set to
+#                       0/off only for a target that genuinely cannot be started in
+#                       this environment — and know that you are disabling the only
+#                       check that would catch it.
+#                       Tunables (see scripts/transport_boot_probe.py):
+#                         BOOT_TRANSPORTS  explicit list instead of derivation
+#                         BOOT_TIMEOUT     hard per-attempt deadline (default 30s)
+#                         BOOT_HTTP_HOST   non-loopback Host used for the 421 probe
+#                         BOOT_BIND_HOST   what the target is told to bind (0.0.0.0)
 #   BUDGET_GUARD        Phase-5 budget guardrails (default: on; set 0/off to skip)
 #                       — circuit breaker + token ceiling, see budget_guard.py /
 #                       docs/budget/guardrails.md. Tunable via BUDGET_* env vars.
@@ -82,6 +100,9 @@ PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-0.121.17}"
 # finding (fail-closed, Analysis T-D); set SCHEMA_GATE=off to allow a target that
 # genuinely ships no output schemas.
 SCHEMA_GATE="${SCHEMA_GATE:-on}"
+# Transport boot gate policy: on by default, same fail-closed reasoning as the
+# schema gate — a target that will not start is a FINDING, not a pass.
+BOOT_GATE="${BOOT_GATE:-on}"
 
 repo_name="${TARGET_REPO##*/}"
 src_dir="${AUDIT_DIR}/${repo_name}"
@@ -96,7 +117,8 @@ hard_fail() {
   local reason="$1"
   echo "FATAL: ${reason}" >&2
   python3 "${HERE}/nightly_audit_report.py" \
-    --ruff 127 --mypy 127 --pytest 127 --schema-drift 127 --promptfoo-rc 127 \
+    --ruff 127 --mypy 127 --pytest 127 --schema-drift 127 --transport-boot 127 \
+    --promptfoo-rc 127 \
     --promptfoo-profile "${PROMPTFOO_PROFILE}" \
     --target "${TARGET_REPO}" --sha "unknown" \
     --out-report "${report_path}" --out-summary "${summary_path}" >/dev/null 2>&1 || true
@@ -224,6 +246,44 @@ else
   rc_schema=2
 fi
 
+# --- 3b) transport boot gate --------------------------------------------------
+# Start the target under every transport it configures and speak a real JSON-RPC
+# initialize + tools/list to it. This is the only gate that observes the running
+# process: a server whose start crashes on a read-only settings object, or which
+# answers 421 to every request under a real hostname, passes ruff, mypy, pytest
+# and the schema gate untouched.
+#
+# The probe owns the 0 / 2 / 127 contract itself (green / the target does not boot
+# / the harness could not run), so nothing here re-interprets its exit code — with
+# one exception below, where we can tell the two apart and the probe cannot.
+echo "==> transport boot gate (initialize + tools/list under every configured transport)"
+boot_report="${log_dir}/transport-boot.json"
+rm -f "${boot_report}"
+if [ "${BOOT_GATE}" = "0" ] || [ "${BOOT_GATE}" = "off" ]; then
+  echo "    transport boot gate explicitly disabled (BOOT_GATE=off)" \
+    | tee "${log_dir}/transport-boot.log"
+  rc_boot=0
+else
+  ( cd "${src_dir}" && \
+      MCP_SERVER_IMPORT="${MCP_SERVER_IMPORT}" \
+      BOOT_TARGET_ROOT="${src_dir}" \
+      BOOT_REPORT="${boot_report}" \
+      uv run python "${HERE}/transport_boot_probe.py" ) \
+    >"${log_dir}/transport-boot.log" 2>&1
+  rc_boot=$?
+  # The probe always writes its report before returning 0 or 2. No report plus a
+  # non-zero code therefore means the probe never got to run at all (uv could not
+  # build the env, python is missing, the script is unreadable) — that is
+  # infrastructure, so map it onto 127 rather than let it read as "the target does
+  # not boot". Claiming a boot failure we never actually observed would be the
+  # worse error of the two.
+  if [ ! -s "${boot_report}" ] && [ "${rc_boot}" -ne 0 ]; then
+    echo "    no ${boot_report} written — the probe itself did not run; recording 127 (hard-fail)" \
+      | tee -a "${log_dir}/transport-boot.log"
+    rc_boot=127
+  fi
+fi
+
 # --- 4) promptfoo eval (contract + OWASP red-team) ----------------------------
 echo "==> promptfoo eval (${PROMPTFOO_CONFIG})"
 pf_json="${log_dir}/promptfoo.json"
@@ -277,6 +337,7 @@ cat > "${evidence_path}" <<EOF
     "mypy": ${rc_mypy},
     "pytest": ${rc_pytest},
     "schema_drift": ${rc_schema},
+    "transport_boot": ${rc_boot},
     "promptfoo_rc": ${rc_pf}
   }
 }
@@ -286,7 +347,7 @@ EOF
 echo "==> aggregating into ${report_path}"
 python3 "${HERE}/nightly_audit_report.py" \
   --ruff "${rc_ruff}" --mypy "${rc_mypy}" --pytest "${rc_pytest}" \
-  --schema-drift "${rc_schema}" \
+  --schema-drift "${rc_schema}" --transport-boot "${rc_boot}" \
   --promptfoo-rc "${rc_pf}" --promptfoo-json "${pf_json}" \
   --promptfoo-profile "${PROMPTFOO_PROFILE}" \
   --target "${TARGET_REPO}" --sha "${sha}" \
