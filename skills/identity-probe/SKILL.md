@@ -58,11 +58,40 @@ Three shortcuts fail here, each of them a bug this probe made first:
 | `DRIFT` | A file repeats the version and disagrees with `pyproject.toml`. Cosmetic for `server.json` (publish rewrites it from the tag) — which is exactly why nothing else catches it. |
 | `HARDCODED` | A hand-maintained version under `src/`. This is the one that reaches upstreams. |
 | `ARTIFACT` | The installed distribution disagrees with the source. Usually a stale editable install; re-run `pip install -e .`. |
+| `UNVERIFIED` | `src/` mentions a User-Agent and no value could be resolved. **Not a pass** — see below. |
 | `NOTE` | Informational — most often "not installed", i.e. artifact not verified. |
 
 A fallback carrying a PEP 440 local segment (`0.0.0+source`) is not a finding.
 A bare `"0.0.0"` is, and correctly so: it is indistinguishable from a real
 release in a log or a User-Agent.
+
+## `UNVERIFIED` is not `OK`
+
+A probe that cannot find a User-Agent must not report that there is none. Those
+are different claims — "this server sends no custom UA" against "I did not
+recognise the shape" — and they look identical in a report.
+
+This probe made that mistake twice. It matched the User-Agent's product token
+against the distribution name literally, so `swisstopo-mcp` sending
+`SwisstopoMCP/0.1` came back `identity OK … src/ clean`, exit 0. And an
+artifact-level sweep built on the same assumption pronounced 24 published
+packages unremarkable; 16 of them were drifting. Both times the output read
+like good news.
+
+Tokens are now compared case- and separator-insensitively, and a User-Agent
+that is mentioned but unreadable is reported as `UNVERIFIED` with a non-zero
+exit. Carry that distinction into the report: "not verified" is not "verified
+clean".
+
+## When the repository is clean and users still get the old identity
+
+This probe reads a repository. It cannot tell you what the *published* package
+sends — and a merged fix changes nothing for anyone until it is released. Of 33
+portfolio packages measured on 2026-07-30, 16 sent a wrong version with the fix
+already merged in every one of them.
+
+For that question use `published-probe`, which installs the distribution and
+measures the artifact.
 
 ## Phase discipline
 
