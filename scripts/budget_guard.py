@@ -95,6 +95,22 @@ class Limits:
         self.breaker_threshold = _env_int("BUDGET_BREAKER_THRESHOLD", 3)
         self.cooldown_seconds = _env_int("BUDGET_BREAKER_COOLDOWN_SECONDS", 21_600)  # 6h
         self.max_iterations = _env_int("BUDGET_MAX_ITERATIONS", 25)
+        # --- fan-out (scripts/portfolio_scan.py) -----------------------------
+        # A portfolio sweep multiplies whatever one target costs. The knobs above
+        # only ever saw ONE target, so a sweep could walk past all of them simply
+        # by being wide. These two bound the width BEFORE it runs:
+        #   max_fanout          the most targets one sweep may touch at all. A
+        #                       targets file that grew to 200 entries by accident
+        #                       is refused, not run.
+        #   tokens_per_target   the projected model spend per target. Today's
+        #                       predicates are deterministic and spend NOTHING, so
+        #                       this defaults to 0 and the projection is a no-op —
+        #                       it exists so that the first predicate to call a
+        #                       model is bounded on the day it is added, rather
+        #                       than discovered afterwards in a bill.
+        self.max_fanout = _env_int("BUDGET_MAX_FANOUT", 25)
+        self.max_fanout_expensive = _env_int("BUDGET_MAX_FANOUT_EXPENSIVE", 10)
+        self.tokens_per_target = _env_int("BUDGET_TOKENS_PER_TARGET", 0)
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -104,7 +120,40 @@ class Limits:
             "breaker_threshold": self.breaker_threshold,
             "cooldown_seconds": self.cooldown_seconds,
             "max_iterations": self.max_iterations,
+            "max_fanout": self.max_fanout,
+            "max_fanout_expensive": self.max_fanout_expensive,
+            "tokens_per_target": self.tokens_per_target,
         }
+
+
+def fanout_refusal(fanout: int, expensive: int, window_used: int,
+                   limits: Limits) -> str | None:
+    """Why a sweep this wide may not run, or None.
+
+    Checked at PREFLIGHT, before a single repository is cloned. The breaker and
+    the token window are both retrospective — they react to what a run already
+    spent — and a fan-out's whole risk is that it spends N times before anyone
+    looks. Width is the one property knowable in advance, so it is the one gated
+    in advance.
+    """
+    if fanout <= 0:
+        return None
+    if limits.max_fanout and fanout > limits.max_fanout:
+        return (f"fan-out of {fanout} targets exceeds BUDGET_MAX_FANOUT="
+                f"{limits.max_fanout} — refusing to sweep a list this wide. Split "
+                "it, or raise the cap deliberately")
+    if limits.max_fanout_expensive and expensive > limits.max_fanout_expensive:
+        return (f"{expensive} target(s) opt into an expensive predicate, over "
+                f"BUDGET_MAX_FANOUT_EXPENSIVE={limits.max_fanout_expensive} — each "
+                "one boots a real server, so this is wall-clock and sockets, not "
+                "just CPU")
+    projected = fanout * limits.tokens_per_target
+    if projected and window_used + projected > limits.tokens_window:
+        return (f"projected {projected} tokens for {fanout} targets would take the "
+                f"rolling window past its cap ({window_used}+{projected} > "
+                f"{limits.tokens_window}) — the sweep is refused BEFORE spending, "
+                "not measured afterwards")
+    return None
 
 
 def _default_state() -> dict[str, Any]:
@@ -211,6 +260,13 @@ def cmd_preflight(args: argparse.Namespace, limits: Limits) -> int:
             # Cooldown elapsed: allow ONE trial run (half-open). record() decides
             # whether to close (success) or re-open (another failure).
             br["state"] = "half_open"
+
+    # Fan-out width, checked before anything is cloned. See fanout_refusal().
+    if skip_reason is None:
+        skip_reason = fanout_refusal(
+            int(getattr(args, "fanout", 0) or 0),
+            int(getattr(args, "fanout_expensive", 0) or 0),
+            int(state["window"]["tokens_used"]), limits)
 
     # Window already over budget is also a skip — a cost circuit, not just a fault one.
     if skip_reason is None and state["window"]["tokens_used"] >= limits.tokens_window:
@@ -333,6 +389,10 @@ def cmd_record(args: argparse.Namespace, limits: Limits) -> int:
             "outcome": outcome,
             "exit_code": args.exit_code,
             "tokens": tokens,
+            # Width belongs in the history: a hard-fail from a 15-target sweep and
+            # one from a single nightly are the same row otherwise, and they are
+            # not the same event when reading back why the breaker tripped.
+            "fanout": int(getattr(args, "fanout", 0) or 0),
             "breaches": breaches,
         }
     )
@@ -388,11 +448,22 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument("--target", default=os.environ.get("TARGET_REPO", "unknown"))
     pf.add_argument("--out-report", dest="out_report", default="")
     pf.add_argument("--out-summary", dest="out_summary", default="")
+    pf.add_argument("--fanout", type=int, default=0,
+                    help="how many targets a portfolio sweep will touch. Gated on "
+                         "WIDTH before anything is cloned — the breaker and the "
+                         "token window only ever react to what a run already spent")
+    pf.add_argument("--fanout-expensive", type=int, default=0, dest="fanout_expensive",
+                    help="how many of those targets opt into an expensive predicate "
+                         "(each boots a real server)")
     pf.set_defaults(func=cmd_preflight)
 
     rec = sub.add_parser("record", help="record a finished run's outcome + tokens")
     rec.add_argument("--exit-code", type=int, required=True, dest="exit_code")
     rec.add_argument("--tokens", type=int, default=-1, help="explicit token total (else from --promptfoo-json)")
+    rec.add_argument("--fanout", type=int, default=0,
+                     help="targets touched, stamped into the run record so a wide "
+                          "sweep is visible in the history rather than looking like "
+                          "an ordinary single-target run")
     rec.add_argument("--promptfoo-json", dest="promptfoo_json", default="")
     rec.add_argument("--strict", action="store_true", help="exit non-zero on a breach / open breaker")
     rec.set_defaults(func=cmd_record)

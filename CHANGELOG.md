@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the portfolio fan-out: one predicate wide, as a matrix
+
+`TARGET_REPO` is one repository per run. That is the right shape for the nightly
+deep pass and the wrong shape for the question this auditor is actually good at:
+*does this failure class exist anywhere in the portfolio?*
+
+The occasion was an SDK major migration across a dozen-odd servers. One server
+was not the root package of its repository, so it fell out of every enumeration
+written by hand, and was still on the old API long after everything else had
+moved. No per-target report would have shown that — the finding is not inside any
+single report. It is in the **row that breaks the pattern**, which only exists
+once the results are a matrix.
+
+- **`scripts/portfolio_scan.py`** — N targets × M predicates → a grid, plus an
+  explicit **outlier pass**. The outlier pass needs no configured expectation:
+  during a migration nobody knows which version is "right" until they see that
+  fourteen repos agree and one does not, so a majority is enough. Predicates are
+  deliberately small — greppable, or checkable in seconds against a shallow
+  checkout: `manifest`, `sdk_major` (which SDK major each target pins),
+  `settings_write` (the `mcp.settings.host = …` crash-at-start from
+  `parlament-mcp#29`, findable across fifteen repos in a second),
+  `host_allowlist_knob` (reuses the rebinding gate's detector) and
+  `nested_manifests`. `boot` — actually starting the server, via the transport
+  boot gate — is the one expensive predicate and is **opt-in per target**.
+
+- **`nested_manifests` is the one the occasion is about.** It reports every
+  manifest below the root that no target entry claims, and it is **fail-closed**:
+  every undeclared manifest is flagged whether or not it looks like a server. A
+  heuristic that only flagged the server-shaped ones would let through exactly
+  the one that does not match the heuristic — the same bet that lost the first
+  time. Acknowledging a manifest in `known_manifests` costs one line and makes
+  the omission deliberate.
+
+- **Cells have five statuses, and the middle one is load-bearing.** `ok`, `flag`,
+  `note` (observed and deliberately *not* a finding — a host allow-list that is
+  simply absent is the documented fail-open state, consistent with the rebinding
+  gate), `na`, and `error`. **Partial results are the deliverable**: a target
+  that cannot be cloned becomes a row of `error` cells with the reason attached
+  and the sweep continues. What an incomplete sweep must never do is report "no
+  findings", so `incomplete` (exit 1) outranks `findings` (exit 2) — "we did not
+  look" and "we looked and found nothing" are different claims. The report still
+  lists every flag it did find.
+
+- **`targets.example.yaml`** is committed; the real `targets.yaml` is gitignored,
+  because a portfolio list names every server you run and that is inventory
+  rather than source. PyYAML is used when present, and a strict stdlib subset
+  reader stands in when it is not — the Worker carries no dependencies. A test
+  hides PyYAML and asserts the two agree on the committed example: a targets file
+  that parses differently on the Worker drops a server from the sweep, which is
+  this module's own failure mode turned on itself.
+
+- **The budget guard now knows about width.** A fan-out multiplies whatever one
+  target costs, and every existing knob had only ever seen one target — a sweep
+  could walk past all of them simply by being wide. `BUDGET_MAX_FANOUT` (25) and
+  `BUDGET_MAX_FANOUT_EXPENSIVE` (10) bound it at **preflight, before the first
+  clone**, because the breaker and the token window are both retrospective and a
+  fan-out's whole risk is that it spends N times before anyone looks. Being
+  honest about what actually multiplies: today's predicates are deterministic and
+  call **no model**, so tokens are not the binding constraint — wall-clock, disk
+  and sockets are. `BUDGET_TOKENS_PER_TARGET` defaults to 0 for exactly that
+  reason and exists so the first predicate that *does* call a model is bounded on
+  the day it is added rather than discovered afterwards in a bill. `record
+  --fanout N` stamps the width into the run history, so a hard-fail from a
+  15-target sweep does not read back as an ordinary single-target run.
+
+- **Egress, spelled out rather than assumed.** N target repositories need **no**
+  new proxy entries — they all sit behind `github.com`, which is already allowed.
+  What is *not* covered is each target's own **upstream data origin**:
+  `worker-allow.txt` names only Zürich's, because that is the one target the
+  fixtures were recorded against. The cheap predicates reach no upstream at all,
+  but `boot` starts the real server, and a startup that touches an unlisted
+  origin fails against the default-deny proxy in a way that reads exactly like a
+  target defect and is not one. Documented in
+  `deploy/microvm/forward-proxy/README.md` with a worked example per server, and
+  `portfolio_scan.py --print-egress` prints what a targets file implies while
+  saying out loud that the upstreams are not among them. The nft ruleset needs no
+  change: it filters ports, LAN and resolvers, none of which vary with N.
+
 ### Added — two ways a gate can say nothing while looking like it said yes
 
 Both of these are failure modes of the *harness*, not of any one gate, so they

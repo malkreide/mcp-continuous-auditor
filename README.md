@@ -114,6 +114,12 @@ scripts/          audit harness, live-probe, nightly-audit core, budget guard,
                   deterministic findings→issue routing, pinned-promptfoo installer,
                   gateway-independent Telegram announce + intake (telegram_notify.py,
                   telegram_intake.py)
+                  portfolio_scan.py = the fan-out: one cheap predicate across
+                  EVERY server as a matrix (targets.example.yaml), for the
+                  question a single-target nightly cannot answer — which repo
+                  is the one out of line
+targets.example.yaml  format reference for the fan-out target list; the real
+                  targets.yaml is gitignored (inventory, not source)
 relay/            optional Cloudflare Worker for real-time Telegram push intake
 tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
 tests/            stdlib unit tests (164) — run by .github/workflows/tests.yml

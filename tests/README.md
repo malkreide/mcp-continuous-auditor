@@ -19,6 +19,21 @@ Covers:
   `CountTestsTest` pins the parser both classes rest on against the literal
   shapes pytest and unittest emit, above all that unreadable output reads as
   *unknown* and never as zero.
+- `test_portfolio_scan.py` — the portfolio fan-out (`scripts/portfolio_scan.py`).
+  Built around the three properties that would have caught the nested server
+  left on the old SDK: `nested_manifests` flags an unclaimed manifest below the
+  root **fail-closed** (a heuristic that only flagged server-shaped ones would
+  let through the one that does not match the heuristic — the same bet that lost
+  the first time); the outlier pass finds the target that disagrees with the
+  majority **with no expectation configured**, because mid-migration nobody
+  knows which version is right until they see fourteen agree and one not; and an
+  unreachable target yields a row of "could not run" cells while the sweep
+  continues, with `incomplete` outranking `findings` so a partial run can never
+  read as a clean bill. One test hides PyYAML and asserts the stdlib subset
+  reader parses the committed `targets.example.yaml` identically — the Worker has
+  no PyYAML, and a targets file that parses differently there drops a server
+  from the sweep, which is this module's own failure mode turned on itself.
+  Offline: targets carry a local `path:` so nothing is cloned.
 - `test_gate_timeouts.py` — the time bounds in the **real**
   `scripts/nightly-audit.sh`. The committed `run_bounded` helper is lifted out of
   the script and driven in bash (124 on a hang, 137 when `SIGTERM` is ignored,

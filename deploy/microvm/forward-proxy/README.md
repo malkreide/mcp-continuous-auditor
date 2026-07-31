@@ -45,6 +45,43 @@ git, uv/pip and npm all honour `http(s)_proxy`; apt needs the `Acquire::*::Proxy
 key above. Verify a denied host is refused (e.g. `curl https://example.com` → 403)
 before trusting the allowlist.
 
+## Portfolio fan-out — what N targets actually cost you here
+
+`scripts/portfolio_scan.py` sweeps N repositories in one run. The instinct is
+that N targets need N allowlist entries. They do not, and the honest breakdown
+matters, because guessing either way leaves a hole:
+
+| what the sweep touches | already allowed? | what to do |
+|---|---|---|
+| the N target **repositories** | **yes** — `github.com` / `codeload.github.com` are host entries, and every target lives behind them | nothing. One entry covers all N |
+| each target's own **upstream data origin** | **no** — `worker-allow.txt` names only `data.stadt-zuerich.ch`, because that is the one target the fixtures were recorded against | **add one line per origin**, see below |
+| **PyPI / npm / Debian** for `uv sync` | yes | nothing |
+| a target hosted somewhere **other than GitHub** | no | add that host explicitly |
+
+The second row is the one that bites. The cheap predicates (`manifest`,
+`sdk_major`, `settings_write`, `host_allowlist_knob`, `nested_manifests`) only
+read the checkout and reach **no** upstream at all — but `boot` starts the real
+server, and a server whose startup touches its data source will hang or fail
+against a default-deny proxy. That failure surfaces as a `boot` cell reading
+"does not boot", which looks exactly like a target defect and is not one.
+
+So when you add a target that opts into `boot`, add its upstream origin to
+`worker-allow.txt` in the same change. For example:
+
+```
+(^|\.)data\.stadt-zuerich\.ch$      # zurich-opendata-mcp
+(^|\.)idd\.bag\.admin\.ch$          # bag-health-mcp
+(^|\.)api\.opentransportdata\.swiss$ # swiss-transport-mcp
+(^|\.)ws\.parlament\.ch$            # parlament-mcp
+```
+
+`scripts/portfolio_scan.py --print-egress` prints the entries a given targets
+file implies and says out loud that the upstream origins are *not* among them —
+it cannot know them, since they live in each target's own code.
+
+The nft ruleset needs **no** change for a fan-out: it filters ports, the LAN and
+the DNS resolver set, none of which vary with the number of targets.
+
 ## Trade-offs
 
 - tinyproxy filters the **CONNECT host** for HTTPS, not the TLS SNI, so it trusts

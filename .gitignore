@@ -20,6 +20,13 @@ promptfoo-output.*
 # Audit work dir — cloned target source + run logs (scripts/audit-target.sh)
 .audit/
 
+# Portfolio fan-out target list (scripts/portfolio_scan.py). A real list names
+# every server you run, which is inventory rather than source — the format lives
+# in the committed targets.example.yaml.
+targets.yaml
+targets.*.yaml
+!targets.example.yaml
+
 # Phase-5 rollout artifacts — base images, per-run overlays, seeds, rendered
 # cloud-init. (The per-connection handler _receive-one.sh is now a committed
 # source file, exercised by tests/test_broker_pipeline.py — no longer generated.)

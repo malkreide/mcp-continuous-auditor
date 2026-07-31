@@ -2,6 +2,15 @@
 # One POSIX extended regex per line; each matches an allowed host. The Worker only
 # needs: the auditor + target on GitHub, the Python/Node/Debian package sources,
 # and the Zürich open-data endpoints the fixtures were recorded against.
+#
+# PORTFOLIO FAN-OUT (scripts/portfolio_scan.py): N target repositories need NO new
+# entries — github.com below is a host match and covers all of them. What is NOT
+# covered is each target's own UPSTREAM data origin: only Zürich's is listed, because
+# that is the one target the fixtures were recorded against. A target that opts into
+# the `boot` predicate starts its real server, and a startup that reaches an unlisted
+# origin fails against this default-deny proxy in a way that reads exactly like a
+# target defect. Add the origin in the same change as the target.
+# See forward-proxy/README.md → "Portfolio fan-out".
 (^|\.)github\.com$
 (^|\.)githubusercontent\.com$
 (^|\.)codeload\.github\.com$

@@ -1,0 +1,53 @@
+# Portfolio fan-out targets — example. Copy to `targets.yaml` and edit.
+#
+# `targets.yaml` is gitignored: a real portfolio list names every server you run,
+# which is inventory, not source. This example is committed so the format has a
+# reference and the tests have something to parse.
+#
+# Run it:   scripts/portfolio_scan.py --targets targets.yaml
+#
+# WHAT THIS IS FOR — and what it is not. The nightly audit takes ONE target and
+# goes deep. This goes WIDE: one cheap predicate across every server, so the
+# answer is a MATRIX (target × predicate) rather than N separate reports. The
+# value is the row that breaks the pattern — during the SDK major migration a
+# nested server fell out of every enumeration and was left running the old API
+# for weeks, which no per-target report would ever have surfaced.
+#
+# A predicate is deliberately small: greppable, or checkable in seconds. `boot`
+# is the expensive exception and is opt-in per target.
+
+schema: 1
+
+defaults:
+  ref: main
+
+  # Which predicates to evaluate. See `scripts/portfolio_scan.py --list-predicates`.
+  predicates: [manifest, sdk_major, settings_write, host_allowlist_knob, nested_manifests]
+
+  # The SDK major this portfolio is supposed to be on. A target pinning anything
+  # else is the finding the matrix exists to make obvious. Leave it out and the
+  # scan still reports the odd one out — the outlier pass needs no expectation,
+  # only a majority.
+  sdk_major_expect: "2"
+
+targets:
+  - repo: malkreide/zurich-opendata-mcp
+    server_import: zurich_opendata_mcp.server:mcp
+
+  - repo: malkreide/bag-health-mcp
+    server_import: bag_health_mcp.server:mcp
+
+  - repo: malkreide/swiss-transport-mcp
+    server_import: swiss_transport_mcp.server:mcp
+    # Opt a single target into the expensive predicate.
+    predicates: [manifest, sdk_major, settings_write, host_allowlist_knob,
+                 nested_manifests, boot]
+
+  - repo: malkreide/parlament-mcp
+    ref: main
+    server_import: parlament_mcp.server:mcp
+    # Manifests below the root that are NOT separate servers — acknowledge them
+    # once here and `nested_manifests` stops reporting them. Anything found and
+    # not listed is flagged, on purpose: the nested server that was missed was
+    # missed because nobody had to say out loud that it existed.
+    known_manifests: [examples/demo/pyproject.toml]
