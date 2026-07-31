@@ -126,7 +126,7 @@ def _load_promptfoo(path: Path) -> dict[str, Any] | None:
 # running the previous nightly-audit.sh genuinely did not run the new gate, and
 # must not be classified as green. Roll the Worker image and the Broker together.
 _GATE_NAMES = ("ruff", "mypy", "pytest", "schema_drift", "promptfoo_rc", "transport_boot",
-               "host_allowlist")
+               "host_allowlist", "shipped_artifact")
 
 # The DNS-rebinding gate is the one gate whose exit code is not binary. 3 means
 # "the target has no inbound host allow-list configured" — the documented
@@ -347,6 +347,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         ("schema-drift gate", args.schema_drift),
         ("transport boot gate", args.transport_boot),
         ("DNS-rebinding gate", args.host_allowlist),
+        ("shipped-artifact gate", args.shipped_artifact),
         ("promptfoo", args.promptfoo_rc),
     ) if _hung(rc)]
     hung = bool(hung_gates)
@@ -371,6 +372,10 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # 126/127 are excluded here on purpose: those mean the harness never ran, and
     # "the control did not hold" is a claim we would then not have earned. They
     # land in hard_fail_reasons below instead.
+    # The shipped-artifact gate: what users actually install. Binary — a stale or
+    # absent release is a finding about the target, 126/127 is the harness.
+    shipped_artifact_fail = (args.shipped_artifact not in (0, 126, 127)
+                             and not _hung(args.shipped_artifact))
     host_allowlist_unconfigured = args.host_allowlist == REBIND_NOT_CONFIGURED
     host_allowlist_fail = (args.host_allowlist not in (0, REBIND_NOT_CONFIGURED, 126, 127)
                            and not _hung(args.host_allowlist))
@@ -429,6 +434,12 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             f"DNS-rebinding gate could not run (exit {args.host_allowlist}) — the harness "
             "itself failed; this says nothing about the target's host allow-list"
         )
+    if args.shipped_artifact in infra_codes:
+        hard_fail_reasons.append(
+            f"shipped-artifact gate could not run (exit {args.shipped_artifact}) — most "
+            "often an unreachable index. The published artifact was NOT compared, which "
+            "is emphatically not 'in sync'"
+        )
     if hung:
         # HARD failure, not a finding. A hung gate returned no verdict, and a
         # `findings` outcome would route it to a tracking issue asserting a defect
@@ -462,7 +473,8 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # the report instead — see the block render_report() adds for it.
     green = not (
         schema_drift or redteam or other_findings or toolchain_fail
-        or transport_boot_fail or host_allowlist_fail or hard_fail
+        or transport_boot_fail or host_allowlist_fail or shipped_artifact_fail
+        or hard_fail
     )
 
     if hard_fail:
@@ -496,6 +508,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         "transport_boot_fail": transport_boot_fail,
         "host_allowlist_fail": host_allowlist_fail,
         "host_allowlist_unconfigured": host_allowlist_unconfigured,
+        "shipped_artifact_fail": shipped_artifact_fail,
         "hung": hung,
         "hung_gates": hung_gates,
         "no_tests_executed": no_tests_executed,
@@ -509,6 +522,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             "promptfoo_rc": args.promptfoo_rc,
             "transport_boot_gate": args.transport_boot,
             "host_allowlist_gate": args.host_allowlist,
+            "shipped_artifact_gate": args.shipped_artifact,
         },
         "promptfoo": pfc,
     }
@@ -554,6 +568,8 @@ def render_report(s: dict[str, Any]) -> str:
         f"{_status(s['gates']['transport_boot_gate'])}",
         f"- DNS-rebinding gate (inbound Host/Origin allow-list): "
         f"{_rebind_status(s['gates']['host_allowlist_gate'])}",
+        f"- shipped-artifact gate (install from PyPI + run it): "
+        f"{_status(s['gates']['shipped_artifact_gate'])}",
         f"- promptfoo (contract + red-team): {_status(s['gates']['promptfoo_rc'])}",
         f"- promptfoo profile: **{s.get('promptfoo_profile', 'unknown')}**",
     ]
@@ -660,6 +676,17 @@ def render_report(s: dict[str, Any]) -> str:
             "attacking page holds one). See the Worker's `rebind.log` / `rebind.json` for "
             "which probe and which pass."
         )
+    if s.get("shipped_artifact_fail"):
+        findings.append(
+            "**Shipped artifact diverges** — the package users actually install is not "
+            "the repository. Either it is absent from the index entirely (no publish "
+            "process to repair — one to create), or it is behind `main`/the last tag "
+            "(the process exists and did not fire; look at the publish WORKFLOW RUN), "
+            "or the installed server did not start or answered a tool call with "
+            "nothing. Green CI is not shipped software: the case this gate exists for "
+            "ran green every night while PyPI served a release with three broken "
+            "tools. See the Worker's `shipped.log` / `shipped.json` for which."
+        )
     if s["toolchain_fail"]:
         findings.append("**Toolchain failure** — ruff/mypy/pytest is red (see gates above).")
     if findings:
@@ -720,6 +747,10 @@ def main() -> int:
                         "2 finding / 3 the control is NOT CONFIGURED — neither a pass "
                         "nor a failure / 127 the harness could not run)")
     p.add_argument("--promptfoo-rc", type=int, dest="promptfoo_rc")
+    p.add_argument("--shipped-artifact", type=int, dest="shipped_artifact",
+                   help="shipped-artifact gate exit code (0 the published package "
+                        "matches and runs / 2 absent, stale, or it does not run / "
+                        "127 the harness could not run, e.g. an unreachable index)")
     p.add_argument("--tests-collected", type=int, dest="tests_collected",
                    default=TESTS_UNKNOWN,
                    help="how many tests the pytest gate reported on (-1 = could not be "

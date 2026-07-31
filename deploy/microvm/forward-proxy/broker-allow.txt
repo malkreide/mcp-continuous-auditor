@@ -1,6 +1,12 @@
 # Broker forward-proxy domain allowlist (tinyproxy, FilterExtended On, default-deny).
 # The credential side only needs the LLM provider + grader, the GitHub API, and
 # the Telegram API. Nothing else — a compromise here must not exfiltrate anywhere.
+#
+# DELIBERATELY ABSENT: pypi.org / files.pythonhosted.org. The shipped-artifact
+# gate (scripts/shipped_probe.py) installs packages from the index, but it runs on
+# the WORKER, which holds no credentials. Mirroring the entries here would widen
+# the egress of the one side that does hold them, to buy nothing. If you ever find
+# yourself wanting to run that gate on the Broker, move the gate, not the entry.
 (^|\.)api\.anthropic\.com$
 (^|\.)api\.openai\.com$
 (^|\.)api\.github\.com$

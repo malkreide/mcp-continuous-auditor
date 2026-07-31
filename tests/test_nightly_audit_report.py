@@ -63,7 +63,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -96,7 +96,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "deadbee", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": [
             {"success": False, "testCase": {"description": "schema"},
@@ -117,7 +117,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "c0ffee",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 1},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 1},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 1}, "results": [
             {"error": "model provider unauthorised"},
@@ -132,7 +132,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         s = self._classify(ev, "")  # no --promptfoo-json
         self.assertEqual(s["outcome"], "hard-fail")
@@ -146,7 +146,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": [
             {"success": False, "testCase": {"description": "injection negative-test"},
@@ -167,7 +167,7 @@ class ClassifierTest(unittest.TestCase):
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "promptfoo_profile": "determ",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -182,7 +182,7 @@ class ClassifierTest(unittest.TestCase):
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "promptfoo_profile": "graded",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -196,7 +196,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r; rm -rf /\n## All green", "target_sha": "abc1234",
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -211,7 +211,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 1},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 1},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 1}, "results": [
             {"error": "boom\n## FAKE ALL GREEN\n\x1b[31mred"},
@@ -230,7 +230,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 2, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 2, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -251,7 +251,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 127, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 127, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -278,7 +278,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         self._classify(ev, pf)
@@ -293,7 +293,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 3, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 3, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -313,7 +313,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 2, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 2, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -332,7 +332,7 @@ class ClassifierTest(unittest.TestCase):
         ev = self._write("ev.json", {
             "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
             "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                      "transport_boot": 0, "host_allowlist": 127, "promptfoo_rc": 0},
+                      "transport_boot": 0, "host_allowlist": 127, "shipped_artifact": 0, "promptfoo_rc": 0},
         })
         pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
         s = self._classify(ev, pf)
@@ -360,7 +360,7 @@ class ClassifierTest(unittest.TestCase):
 
     def _green_gates(self, **over: int) -> dict:
         gates = {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                 "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0}
+                 "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0}
         gates.update(over)
         return gates
 
@@ -484,6 +484,47 @@ class ClassifierTest(unittest.TestCase):
         self.assertTrue(s["hung"])
         self.assertFalse(s["no_tests_executed"])
         self.assertFalse(s["tests_unverified"])
+
+    # --- the shipped-artifact gate: what users actually install ----------------
+
+    def test_a_stale_published_artifact_is_a_finding(self) -> None:
+        s = self._run(self._green_gates(shipped_artifact=2))
+        self.assertEqual(s["outcome"], "findings")
+        self.assertTrue(s["shipped_artifact_fail"])
+        self.assertFalse(s["hard_fail"])
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("Shipped artifact diverges", report)
+        self.assertIn("Green CI is not shipped software", report)
+
+    def test_an_unreachable_index_is_hard_fail_not_in_sync(self) -> None:
+        # The whole family's rule: a comparison that did not happen is never a
+        # pass, and must not quietly become one.
+        s = self._run(self._green_gates(shipped_artifact=127))
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertFalse(s["shipped_artifact_fail"])
+        self.assertTrue(any("was NOT compared" in r for r in s["hard_fail_reasons"]))
+
+    def test_a_hung_shipped_gate_is_hung_not_a_stale_release(self) -> None:
+        s = self._run(self._green_gates(shipped_artifact=nar.GATE_TIMEOUT_RC))
+        self.assertTrue(s["hung"])
+        self.assertEqual(s["hung_gates"], ["shipped-artifact gate"])
+        self.assertFalse(s["shipped_artifact_fail"])
+
+    def test_evidence_without_the_shipped_gate_is_hard_fail_never_green(self) -> None:
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        s = self._classify(ev, pf)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertEqual(s["gates"]["shipped_artifact_gate"], 127)
+
+    def test_the_gate_appears_in_the_rendered_list(self) -> None:
+        self._run(self._green_gates())
+        report = (self.dir / "report.md").read_text(encoding="utf-8")
+        self.assertIn("shipped-artifact gate (install from PyPI + run it)", report)
 
     def test_partial_evidence_missing_gate_defaults_to_hard_fail(self) -> None:
         # A gate omitted from the evidence must read as could-not-run (127),

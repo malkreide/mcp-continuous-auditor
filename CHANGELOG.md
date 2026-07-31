@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the shipped-artifact gate: green CI is not shipped software
+
+`main` stood at 0.6.0. The GitHub release was never cut, so the publish workflow
+never fired, and PyPI served 0.5.0 for an entire release cycle — with three tools
+that were demonstrably broken in it. Every nightly run was green, because every
+gate read the source and none of them ever read what users install.
+
+- **`scripts/shipped_probe.py`** installs the target's distribution from the
+  index into a **fresh venv** — never the checkout — and makes that artifact
+  prove itself: the installed version is held against the repository's version
+  *and* the last git tag, then the installed console script is started and asked
+  for a real `initialize`, `tools/list` and `tools/call`. `--no-cache-dir` is not
+  optional: a warm wheel cache measures what pip kept on disk last time, which is
+  precisely the stale artifact being hunted, so the check would confirm the bug
+  as healthy. `--index-url` is pinned for the same reason — a `pip.conf` mirror
+  must not get to answer for PyPI.
+
+- **Absent and stale are different findings.** `NOT_ON_INDEX` means the release
+  process has never run for this package — there is no process to repair, there
+  is one to create. `STALE_ON_INDEX` means it exists and did not fire this time —
+  look at the workflow *run*, which usually failed on an approval or an OIDC
+  trust nobody was watching. `INDEX_AHEAD` is the rarer inverse: something was
+  published from a tree this checkout does not have. Reporting all three as "PyPI
+  is out of date" sends the maintainer to the wrong place.
+
+- **The stdin trap from the boot gate, where it bites hardest.** A tool call is
+  the most network-bound thing a server does, so closing stdin after the write
+  fabricates a failure more readily here than anywhere else. stdin is held open
+  until the last answer is read, and `_close_stdin_early` exists purely so a test
+  can demonstrate that the *same* healthy server is measured as broken the moment
+  it is closed.
+
+- **An empty answer is a finding; a blocked socket is not.** `TOOL_EMPTY` — the
+  tool answered, and answered with nothing — is the incident's own shape and stays
+  a finding. But this gate runs behind a default-deny egress allowlist, where a
+  tool whose upstream is not listed fails in the same place a broken one does, so
+  failures whose text reads like the sandbox (`connection refused`, `getaddrinfo`,
+  `tunnel connection failed: 403`, `timed out`, …) are recorded as
+  **unattributable** and raise nothing. A gate that fires on every target whose
+  upstream nobody has allowlisted yet gets muted, and a muted gate catches
+  nothing — the same reasoning that keeps recall floors at half the observed
+  count. An empty content list looks nothing like a blocked socket and is
+  deliberately not in that list.
+
+- **An unreachable index is 127, never "in sync".** A comparison that did not
+  happen is not a pass. The gate joins the evidence `gates` object and the
+  classifier as `shipped_artifact`; missing from evidence still defaults to 127
+  and hard-fails, so **roll the Worker image and the Broker together**.
+  `SHIPPED_GATE=off` opts out, `SHIPPED_DIST` overrides the distribution name
+  (derived from the target's own manifest rather than guessed from the repo slug,
+  which is wrong often enough — underscores, prefixes — to be worth not doing).
+
+- **Egress: nothing had to be added, and that is worth saying precisely.**
+  `pypi.org` and `files.pythonhosted.org` were already in `worker-allow.txt` (for
+  `uv sync`), and `egress-allowlist.nft` is a port/LAN/resolver layer that cannot
+  express per-domain rules at all — it already allows 443 and already names PyPI
+  in its comment. What changed is that those two entries are now **load-bearing
+  for a gate** rather than incidental, so they are annotated as such and
+  `tests/test_shipped_probe.py` asserts their presence: a cleanup pass that prunes
+  them as unused now turns CI red instead of silently disabling the gate. The
+  Broker's allowlist is deliberately **not** extended — it holds the credentials
+  and never installs anything, so mirroring the entries there would widen the one
+  side that matters to buy nothing. A test pins that too.
+
+- **Three bugs the tests found while being written**, all in the reused
+  `release_gap` helpers: `read_project` returns the `[project]` table rather than
+  the whole document, it raises when there is no `pyproject.toml`, and
+  `release_tags` sorts **newest first** — so taking `[-1]` compared the index
+  against the *oldest* release the repository ever cut, which is always behind and
+  would therefore have made this gate right by accident on every target.
+
 ### Added — the portfolio fan-out: one predicate wide, as a matrix
 
 `TARGET_REPO` is one repository per run. That is the right shape for the nightly

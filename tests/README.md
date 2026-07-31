@@ -19,6 +19,21 @@ Covers:
   `CountTestsTest` pins the parser both classes rest on against the literal
   shapes pytest and unittest emit, above all that unreadable output reads as
   *unknown* and never as zero.
+- `test_shipped_probe.py` — the shipped-artifact gate
+  (`scripts/shipped_probe.py`), which installs the target's package from PyPI and
+  makes *that* prove it runs. The network half is not deterministically testable,
+  so the module keeps it in three named seams — the index lookup, the install and
+  the subprocess — and everything that decides anything lives outside them: these
+  tests own the version comparison, the publication states (absent ≠ stale ≠ index
+  ahead), the tool-result classification and the finding set, with the seams
+  injected. The one thing **not** faked is the stdio conversation: it runs against
+  a real subprocess, because the stdin trap is a *timing* property no fake can
+  reproduce, and the fixture delays its `tools/call` answer precisely so closing
+  stdin early fabricates a failure. Two tests guard the muting risk from both
+  sides — an error that reads like the sandbox's egress raises nothing, while an
+  empty content list (the incident's own shape) is never excused as one. A last
+  pair asserts the Worker's proxy allowlist still permits the index and that the
+  credential-holding Broker's has *not* been widened to match.
 - `test_portfolio_scan.py` — the portfolio fan-out (`scripts/portfolio_scan.py`).
   Built around the three properties that would have caught the nested server
   left on the old SDK: `nested_manifests` flags an unclaimed manifest below the
