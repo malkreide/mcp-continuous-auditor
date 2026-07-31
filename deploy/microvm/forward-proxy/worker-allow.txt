@@ -14,6 +14,14 @@
 (^|\.)github\.com$
 (^|\.)githubusercontent\.com$
 (^|\.)codeload\.github\.com$
+# LOAD-BEARING FOR A GATE, not just for `uv sync`. scripts/shipped_probe.py
+# installs the target's package from the index into a fresh venv and makes THAT
+# prove it runs — the one check that reads what users actually install rather
+# than the checkout. Remove either line and that gate stops working; because it
+# fails closed it will report 127 ("the index could not be reached") rather than
+# a false green, but the check is gone either way.
+# tests/test_shipped_probe.py asserts both are present, so a cleanup pass that
+# prunes them as unused turns CI red instead of silently disabling the gate.
 (^|\.)pypi\.org$
 (^|\.)files\.pythonhosted\.org$
 (^|\.)registry\.npmjs\.org$

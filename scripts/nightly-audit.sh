@@ -17,6 +17,9 @@
 #   3c. runs the DNS-rebinding gate (rebind_probe.py): boots the target with an
 #      inbound host allow-list configured and tries to walk past it — with and
 #      without a valid auth token;
+#   3d. runs the shipped-artifact gate (shipped_probe.py): installs the package
+#      from PyPI into a FRESH venv and makes that prove it runs — green CI is
+#      not shipped software;
 #   4. runs the promptfoo eval (tool-output contract + OWASP red-team), writing
 #      machine-readable JSON output;
 #   5. hands every exit code + the promptfoo JSON to
@@ -153,6 +156,9 @@ BOOT_GATE="${BOOT_GATE:-on}"
 # DNS-rebinding gate policy: on by default. It owns a 0/2/3/127 contract — 3 is
 # "the control is not configured", which is neither a pass nor a finding.
 REBIND_GATE="${REBIND_GATE:-on}"
+# Shipped-artifact gate: on by default. Reads the PUBLISHED package, not the
+# checkout — the one class every other gate is blind to.
+SHIPPED_GATE="${SHIPPED_GATE:-on}"
 
 repo_name="${TARGET_REPO##*/}"
 src_dir="${AUDIT_DIR}/${repo_name}"
@@ -168,7 +174,7 @@ hard_fail() {
   echo "FATAL: ${reason}" >&2
   python3 "${HERE}/nightly_audit_report.py" \
     --ruff 127 --mypy 127 --pytest 127 --schema-drift 127 --transport-boot 127 \
-    --host-allowlist 127 --promptfoo-rc 127 \
+    --host-allowlist 127 --shipped-artifact 127 --promptfoo-rc 127 \
     --promptfoo-profile "${PROMPTFOO_PROFILE}" \
     --target "${TARGET_REPO}" --sha "unknown" \
     --out-report "${report_path}" --out-summary "${summary_path}" >/dev/null 2>&1 || true
@@ -199,6 +205,9 @@ GATE_TIMEOUT_SCHEMA="${GATE_TIMEOUT_SCHEMA:-${GATE_TIMEOUT}}"
 GATE_TIMEOUT_BOOT="${GATE_TIMEOUT_BOOT:-900}"
 GATE_TIMEOUT_REBIND="${GATE_TIMEOUT_REBIND:-900}"
 GATE_TIMEOUT_PROMPTFOO="${GATE_TIMEOUT_PROMPTFOO:-3600}"
+# Generous: a fresh venv plus a cold `pip install` from the index, then a real
+# server start and tool call.
+GATE_TIMEOUT_SHIPPED="${GATE_TIMEOUT_SHIPPED:-900}"
 
 # run_bounded <seconds> <cmd...>
 # Exit 124 on timeout, 137 when the command had to be SIGKILLed after ignoring
@@ -428,6 +437,54 @@ else
   fi
 fi
 
+# --- 3d) shipped-artifact gate ------------------------------------------------
+# Green CI is not shipped software. Every gate above reads the CHECKOUT; this one
+# installs the package from PyPI into a fresh venv and makes THAT prove it runs.
+# The case it exists for: main stood at 0.6.0, the GitHub release was never cut,
+# so the publish workflow never fired, and PyPI served 0.5.0 for a whole release
+# cycle — with three tools that were broken in it. Every nightly was green.
+#
+# Note the tool call reaches the target's own UPSTREAM origin, exactly like the
+# portfolio scan's `boot` predicate. A failure that reads like this Worker's
+# egress allowlist is recorded as unattributable rather than raised as a finding
+# (see scripts/shipped_probe.py) — a gate that fires on every un-allowlisted
+# target gets muted, and a muted gate catches nothing.
+echo "==> shipped-artifact gate (install from PyPI, run it, compare versions)"
+shipped_report="${log_dir}/shipped.json"
+rm -f "${shipped_report}"
+if [ "${SHIPPED_GATE}" = "0" ] || [ "${SHIPPED_GATE}" = "off" ]; then
+  echo "    shipped-artifact gate explicitly disabled (SHIPPED_GATE=off)" \
+    | tee "${log_dir}/shipped.log"
+  rc_shipped=0
+else
+  # The distribution name comes from the target's own manifest unless the
+  # operator names it — guessing it from the repo slug is wrong often enough
+  # (underscores, prefixes) to be worth not doing.
+  shipped_dist="${SHIPPED_DIST:-$(python3 - "${src_dir}" <<'PY'
+import re, sys, pathlib
+try:
+    text = (pathlib.Path(sys.argv[1]) / "pyproject.toml").read_text(encoding="utf-8")
+except OSError:
+    raise SystemExit(0)
+m = re.search(r'^name\s*=\s*"([^"]+)"', text, re.MULTILINE)
+print(m.group(1) if m else "")
+PY
+)}"
+  if [ -z "${shipped_dist}" ]; then
+    echo "    could not determine the distribution name from ${src_dir}/pyproject.toml; " \
+         "set SHIPPED_DIST — recording 127 (hard-fail), not a pass" \
+      | tee "${log_dir}/shipped.log"
+    rc_shipped=127
+  else
+    run_bounded "${GATE_TIMEOUT_SHIPPED}" python3 "${HERE}/shipped_probe.py" \
+        --dist "${shipped_dist}" --target "${src_dir}" \
+        --report "${shipped_report}" \
+        ${SHIPPED_TOOL:+--tool "${SHIPPED_TOOL}"} \
+      >"${log_dir}/shipped.log" 2>&1
+    rc_shipped=$?
+  fi
+fi
+
 # --- 4) promptfoo eval (contract + OWASP red-team) ----------------------------
 echo "==> promptfoo eval (${PROMPTFOO_CONFIG})"
 pf_json="${log_dir}/promptfoo.json"
@@ -484,6 +541,7 @@ cat > "${evidence_path}" <<EOF
     "schema_drift": ${rc_schema},
     "transport_boot": ${rc_boot},
     "host_allowlist": ${rc_rebind},
+    "shipped_artifact": ${rc_shipped},
     "promptfoo_rc": ${rc_pf}
   }
 }
@@ -494,7 +552,8 @@ echo "==> aggregating into ${report_path}"
 python3 "${HERE}/nightly_audit_report.py" \
   --ruff "${rc_ruff}" --mypy "${rc_mypy}" --pytest "${rc_pytest}" \
   --schema-drift "${rc_schema}" --transport-boot "${rc_boot}" \
-  --host-allowlist "${rc_rebind}" --tests-collected "${tests_collected}" \
+  --host-allowlist "${rc_rebind}" --shipped-artifact "${rc_shipped}" \
+  --tests-collected "${tests_collected}" \
   --promptfoo-rc "${rc_pf}" --promptfoo-json "${pf_json}" \
   --promptfoo-profile "${PROMPTFOO_PROFILE}" \
   --target "${TARGET_REPO}" --sha "${sha}" \

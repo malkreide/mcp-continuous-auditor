@@ -145,6 +145,12 @@ class EveryGateIsBoundedTest(unittest.TestCase):
         unbounded = self._unbounded(lambda ln: "uv run " in ln)
         self.assertEqual(unbounded, [], f"unbounded gate invocation(s): {unbounded}")
 
+    def test_the_shipped_artifact_gate_is_bounded(self) -> None:
+        # It builds a venv and does a cold `pip install` from the index — the gate
+        # most likely to sit waiting on a socket.
+        unbounded = self._unbounded(lambda ln: "shipped_probe.py" in ln)
+        self.assertEqual(unbounded, [], f"unbounded shipped-artifact call: {unbounded}")
+
     def test_the_promptfoo_eval_is_bounded(self) -> None:
         unbounded = self._unbounded(lambda ln: '"${pf_cmd[@]}"' in ln)
         self.assertEqual(unbounded, [], f"unbounded promptfoo invocation: {unbounded}")
@@ -173,7 +179,11 @@ class EveryGateIsBoundedTest(unittest.TestCase):
         # 127. A killed probe also writes no report, so without the exemption a
         # hang would be relabelled "never ran" — losing the one detail that says
         # where to look.
-        remaps = [ln for ln in self.lines if "recording 127 (hard-fail)" in ln]
+        # Anchored on the phrase unique to the two REMAPS ("the probe itself did
+        # not run"), not on "recording 127" — other gates legitimately record 127
+        # for their own reasons, and matching that would make this test fail every
+        # time an unrelated gate is added.
+        remaps = [ln for ln in self.lines if "the probe itself did not run" in ln]
         self.assertEqual(len(remaps), 2, "expected the boot and rebinding remaps")
         self.assertEqual(self.text.count('-ne 124 ] && [ "${rc_boot}" -ne 137 ]'), 1)
         self.assertEqual(self.text.count('-ne 124 ] && [ "${rc_rebind}" -ne 137 ]'), 1)
