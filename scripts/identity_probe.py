@@ -95,6 +95,7 @@ class Report:
     declared: list[dict[str, str]] = field(default_factory=list)
     hardcoded: list[dict[str, Any]] = field(default_factory=list)
     runtime: dict[str, str] | None = None
+    unresolved: str | None = None
 
     @property
     def drift(self) -> list[dict[str, str]]:
@@ -103,7 +104,7 @@ class Report:
     @property
     def ok(self) -> bool:
         runtime_bad = bool(self.runtime and self.runtime.get("status") == "mismatch")
-        return not self.drift and not self.hardcoded and not runtime_bad
+        return not self.drift and not self.hardcoded and not runtime_bad and not self.unresolved
 
 
 def read_project(root: Path) -> dict[str, Any]:
@@ -138,17 +139,33 @@ def code_lines(text: str) -> list[str]:
     return lines
 
 
+def norm(token: str) -> str:
+    """Casefolded, separator-free — for comparing a UA product token to a dist name.
+
+    The product token is not always the distribution name: swisstopo-mcp sends
+    ``SwisstopoMCP/0.1``. Matching the dist name literally let that one pass as
+    clean, which is the failure this whole probe exists to catch.
+    """
+    return re.sub(r"[^a-z0-9]", "", token.lower())
+
+
+ANY_UA = re.compile(r"([A-Za-z][A-Za-z0-9_.+-]*)/(\d+\.\d[^\s\"']*)")
+# A User-Agent assembled at runtime: any interpolation on either side of the
+# slash. This is the shape a correct, metadata-driven server has.
+DYNAMIC_UA = re.compile(r"""["'][^"']*\{[^}]*\}[^"']*/|["'][^"']*/[^"']*\{[^}]*\}""")
+MENTIONS_UA = re.compile(r"user.?agent", re.I)
+
+
 def find_hardcoded(root: Path, dist: str) -> list[dict[str, Any]]:
     """Hand-maintained versions under src/, fallback markers excluded."""
     src = root / "src"
     if not src.is_dir():
         return []
-    ua = re.compile(rf"{re.escape(dist)}/(\d+\.\d[^\s\"']*)")
     dunder = re.compile(r"""__version__\s*=\s*["']([^"']+)["']""")
     hits: list[dict[str, Any]] = []
     for path in sorted(src.rglob("*.py")):
         for lineno, line in enumerate(code_lines(path.read_text(encoding="utf-8")), 1):
-            values = [m.group(1) for m in ua.finditer(line)]
+            values = [m.group(2) for m in ANY_UA.finditer(line) if norm(m.group(1)) == norm(dist)]
             values += [
                 m.group(1) for m in dunder.finditer(line) if re.match(r"\d+\.\d", m.group(1))
             ]
@@ -157,6 +174,39 @@ def find_hardcoded(root: Path, dist: str) -> list[dict[str, Any]]:
                     {"file": str(path.relative_to(root)), "line": lineno, "code": line.strip()}
                 )
     return hits
+
+
+def unresolved_user_agent(root: Path, dist: str) -> str | None:
+    """Does src/ talk about a User-Agent this probe never managed to read?
+
+    "No finding" and "nothing recognised" are different claims, and reporting
+    the second as the first is the more dangerous error: an artifact-level
+    sweep of 33 published packages was first pronounced 24-clean by a check
+    that had simply failed to recognise the shape. 16 of those were drifting.
+
+    So: if src/ mentions a User-Agent but neither a hand-maintained value nor a
+    runtime-assembled one turns up, say so instead of reporting clean.
+    """
+    src = root / "src"
+    if not src.is_dir():
+        return None
+    mentions, resolved = [], False
+    for path in sorted(src.rglob("*.py")):
+        lines = code_lines(path.read_text(encoding="utf-8"))
+        for lineno, line in enumerate(lines, 1):
+            if MENTIONS_UA.search(line):
+                mentions.append(f"{path.relative_to(root)}:{lineno}")
+            if DYNAMIC_UA.search(line) or any(
+                norm(m.group(1)) == norm(dist) for m in ANY_UA.finditer(line)
+            ):
+                resolved = True
+    if mentions and not resolved:
+        return (
+            f"src/ mentions a User-Agent ({mentions[0]}"
+            f"{', +%d more' % (len(mentions) - 1) if len(mentions) > 1 else ''}) "
+            "but no value could be resolved — source checked, User-Agent not"
+        )
+    return None
 
 
 def collect_declared(root: Path) -> list[dict[str, str]]:
@@ -213,6 +263,8 @@ def probe(target: Path, check_installed: bool) -> Report:
     report = Report(dist=dist, version=version)
     report.declared = collect_declared(target)
     report.hardcoded = find_hardcoded(target, dist)
+    if not report.hardcoded:
+        report.unresolved = unresolved_user_agent(target, dist)
     if check_installed:
         report.runtime = resolve_runtime(dist, version)
     return report
@@ -226,6 +278,8 @@ def render(report: Report) -> str:
         out.append(f"DRIFT      {d['where']} = {d['value']!r} (pyproject {report.version!r})")
     for h in report.hardcoded:
         out.append(f"HARDCODED  {h['file']}:{h['line']}: {h['code'][:100]}")
+    if report.unresolved:
+        out.append(f"UNVERIFIED {report.unresolved}")
     if report.runtime and report.runtime["status"] == "mismatch":
         out.append(
             f"ARTIFACT   installed {report.runtime['installed']!r} != "
@@ -265,6 +319,7 @@ def main() -> int:
                     "version": report.version,
                     "drift": report.drift,
                     "hardcoded": report.hardcoded,
+                    "unresolved": report.unresolved,
                     "runtime": report.runtime,
                     "ok": report.ok,
                 },

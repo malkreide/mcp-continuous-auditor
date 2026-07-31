@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the published probe, and the false all-clear it was built to end
+
+`identity_probe.py` reads a repository; `release_gap.py` compares version
+*numbers*. Neither opens the artifact, and `swiss-efv-mcp` walks straight
+through both: PyPI 0.3.0, `main` 0.3.0, `src/` clean, exit 0 from each — while
+the package every user installs sends
+`Mozilla/5.0 (X11; Linux x86_64) … Chrome/124.0`. It presents itself to
+upstreams as a browser, and nothing in this repository could see it.
+
+- **`scripts/published_probe.py`** — installs a distribution from the index
+  into a throwaway venv and measures the User-Agent the shipped code actually
+  puts on the wire. Across 33 published portfolio packages, 16 announced a
+  version they were not, with the fix merged in every one and released in none.
+
+  Three detection strategies run together because each is blind somewhere
+  different, and each reported a clean result for packages that were drifting:
+  a regex for `f"…{__version__}…"` misses `lobbywatch-mcp`, which spells the
+  variable `PACKAGE_VERSION`; reading the module namespace misses
+  `seco-labor-mcp`, whose User-Agent sits in
+  `_HTTP_KWARGS["headers"]["User-Agent"]`, and `swiss-transport-mcp`, which
+  passes the literal inline to the `httpx` constructor inside a function, where
+  it exists in no module attribute at all; scanning source for literals misses
+  every f-string, since there is no digit after the slash to anchor on. Every
+  finding records which strategy produced it.
+
+  **`unverified` is the load-bearing state.** "This server sends no custom
+  User-Agent" and "I did not recognise the shape" look identical in a report
+  and mean opposite things. Conflating them is how the first version of this
+  check pronounced 24 packages unremarkable, 16 of which were drifting — and it
+  read like good news. `no_user_agent` is now claimed only when the installed
+  source never mentions one; otherwise `unverified`, exit 1.
+
+  `FOREIGN-UA` is separated from drift: parsed naively, `Mozilla/5.0` yields
+  version `5.0` and reports as drift against `0.3.0`, which is wrong twice —
+  the package is not announcing a stale version of itself, and the browser
+  impersonation goes unnamed. Product tokens are compared to the distribution
+  name case- and separator-insensitively, since `swisstopo-mcp` legitimately
+  sends `SwisstopoMCP/…`.
+
+  `--constraint` pins a dependency so a package can be measured at all:
+  published `swiss-statistics-mcp 0.6.0` imports `mcp.server.fastmcp`, which
+  `mcp` 2.0.0 removed, so a fresh install dies at import. Needing a constraint
+  is itself a finding about the package.
+
+- **`skills/published-probe/SKILL.md`** — when to reach for it and how to read
+  each line, with the reasons the shortcuts fail.
+
+### Fixed — identity_probe reported a false all-clear
+
+`find_hardcoded` matched the User-Agent's product token against the
+distribution name *literally*. `swisstopo-mcp` sends `SwisstopoMCP/0.1`, so a
+repository hardcoding a wrong version came back `identity OK … src/ clean` with
+exit 0 — the probe producing exactly the failure it exists to catch.
+
+- Tokens are compared case- and separator-insensitively.
+- New `UNVERIFIED` category: when `src/` mentions a User-Agent and neither a
+  hand-maintained nor a runtime-assembled value can be resolved, that is
+  reported and exits non-zero instead of passing as clean.
+- **`tests/test_identity_probe.py`** — the script had no tests. Eight cases,
+  including both false all-clears above and the regressions that must not come
+  back: comments are not findings, `0.0.0+source` is not a finding, and badge
+  drift must not hide the source scan.
+- **`tests/test_published_probe.py`** — 16 cases over the classification rules,
+  no network.
+
 ### Added — the auditor runs its own tests
 
 The test suite existed and nothing ran it. `ci.yml` ships as a `.yml.template` for
