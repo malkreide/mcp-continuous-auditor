@@ -44,7 +44,13 @@ Covers:
   sides — an error that reads like the sandbox's egress raises nothing, while an
   empty content list (the incident's own shape) is never excused as one. A last
   pair asserts the Worker's proxy allowlist still permits the index and that the
-  credential-holding Broker's has *not* been widened to match.
+  credential-holding Broker's has *not* been widened to match. `LookupIndexTest`
+  owns the existence check, which used to consult the JSON API while the install
+  resolved against the Simple one — two caches of the same index, for a question
+  whose wrong answer (`NOT_ON_INDEX`) tells a maintainer they have no release
+  process. It pins the fallback (a Simple index that only speaks HTML is not an
+  index that is down) and that a 404 is corroborated against the second API
+  before being believed.
 - `test_portfolio_scan.py` — the portfolio fan-out (`scripts/portfolio_scan.py`).
   Built around the three properties that would have caught the nested server
   left on the old SDK: `nested_manifests` flags an unclaimed manifest below the

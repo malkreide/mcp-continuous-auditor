@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import release_gap as rg  # noqa: E402
 import shipped_probe as sp  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -215,6 +216,94 @@ class PickToolTest(unittest.TestCase):
 # the probe, with the three impure seams injected
 # ---------------------------------------------------------------------------
 
+class LookupIndexTest(unittest.TestCase):
+    """The existence check, which used to ask a different cache than pip resolves.
+
+    Patched at ``release_gap._get`` — the single point either fetcher uses to
+    reach the network — so the parsing and the precedence run for real. The
+    payload shapes are the ones ``tests/test_release_gap.py`` records from the
+    live index.
+    """
+
+    def setUp(self) -> None:
+        self._orig = rg._get
+        self.calls: list[str] = []
+
+    def tearDown(self) -> None:
+        rg._get = self._orig  # type: ignore[assignment]
+
+    def _serve(self, simple, json_api) -> None:
+        def fake(url: str, timeout: float, accept: str | None = None):
+            which = "simple" if "/simple/" in url else "json"
+            self.calls.append(which)
+            served = simple if which == "simple" else json_api
+            if served is None:
+                return None, "unreachable", "PyPI unreachable: simulated"
+            if served == 404:
+                return None, "not_published", "not on PyPI (HTTP 404)"
+            return served, "ok", ""
+
+        rg._get = fake  # type: ignore[assignment]
+
+    def _simple(self, versions, yanked=()):
+        return {
+            "meta": {"api-version": "1.4"},
+            "versions": list(versions),
+            "files": [
+                {"filename": f"demo_mcp-{v}.tar.gz", "yanked": v in yanked} for v in versions
+            ],
+        }
+
+    def _json(self, versions, latest=None):
+        return {
+            "info": {"version": latest or list(versions)[-1]},
+            "releases": {v: [{"filename": f"demo_mcp-{v}.tar.gz", "yanked": False}]
+                         for v in versions},
+        }
+
+    def test_the_simple_api_answers_and_the_json_api_is_never_asked(self) -> None:
+        self._serve(self._simple(["0.5.0", "0.6.0"]), self._json(["0.5.0", "0.6.0"]))
+        version, status, _ = sp.lookup_index("demo-mcp", 5.0)
+        self.assertEqual((version, status), ("0.6.0", "ok"))
+        self.assertEqual(self.calls, ["simple"], "the fallback is a fallback, not a second call")
+
+    def test_a_yanked_newest_release_resolves_to_what_pip_would_install(self) -> None:
+        """pip skips a yanked release; so must the version this reports."""
+        self._serve(self._simple(["0.5.0", "0.6.0"], yanked=["0.6.0"]), None)
+        version, status, _ = sp.lookup_index("demo-mcp", 5.0)
+        self.assertEqual((version, status), ("0.5.0", "ok"))
+
+    def test_an_html_only_simple_index_falls_back_instead_of_failing(self) -> None:
+        """A Simple index that does not speak PEP 691 JSON is not an index that
+        is down — pip installs from it. A bare swap would have made those
+        setups exit 127, trading one wrong answer for another."""
+        self._serve(None, self._json(["0.6.0"]))
+        version, status, _ = sp.lookup_index("demo-mcp", 5.0)
+        self.assertEqual((version, status), ("0.6.0", "ok"))
+        self.assertEqual(self.calls, ["simple", "json"])
+
+    def test_both_indexes_unreachable_stays_unreachable(self) -> None:
+        self._serve(None, None)
+        _, status, detail = sp.lookup_index("demo-mcp", 5.0)
+        self.assertEqual(status, "unreachable")
+        self.assertIn("unreachable", detail)
+
+    def test_a_404_is_corroborated_before_accusing_a_maintainer(self) -> None:
+        """NOT_ON_INDEX says "you have no release process". A first-ever publish
+        is exactly when the two APIs are most likely to be seconds apart, so one
+        404 is not enough — and here the install can settle it."""
+        self._serve(404, self._json(["0.1.0"]))
+        version, status, _ = sp.lookup_index("demo-mcp", 5.0)
+        self.assertEqual((version, status), ("0.1.0", "ok"))
+        self.assertEqual(self.calls, ["simple", "json"])
+
+    def test_a_404_both_indexes_agree_on_is_not_published(self) -> None:
+        self._serve(404, 404)
+        version, status, detail = sp.lookup_index("ghost-mcp", 5.0)
+        self.assertEqual((version, status), (None, "not_published"))
+        self.assertIn("ghost-mcp", detail)
+
+
 class ProbeWiringTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -278,6 +367,26 @@ class ProbeWiringTest(unittest.TestCase):
                      installer=installer, speaker=lambda *a, **k: {})
         self.assertEqual(codes(r.findings), ["NOT_ON_INDEX"])
         self.assertEqual(calls, [], "nothing to install — do not try")
+
+    def test_an_uninjected_probe_uses_lookup_index(self) -> None:
+        """The seam's default must be the surface the install resolves against.
+
+        Every other test here injects the lookup, so nothing else would notice
+        the default pointing at a different cache of the index than pip uses.
+        """
+        seen: list[str] = []
+        original = sp.lookup_index
+        sp.lookup_index = lambda d, t: (seen.append(d), ("0.6.0", "ok", ""))[1]
+        try:
+            r = sp.probe(
+                "demo-mcp", self.target,
+                installer=lambda *a, **k: sp.Installed(
+                    True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"),
+                speaker=lambda *a, **k: {"tools": [], "call": {}, "error": ""})
+        finally:
+            sp.lookup_index = original
+        self.assertEqual(seen, ["demo-mcp"])
+        self.assertEqual(r.versions.installed, "0.6.0")
 
     def test_an_install_failure_carries_pips_own_words(self) -> None:
         r = self._probe(installed=sp.Installed(False, detail="ResolutionImpossible: x"))

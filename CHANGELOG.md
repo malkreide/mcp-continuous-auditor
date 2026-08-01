@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the shipped-artifact gate checked one cache of the index and installed from another
+
+Follow-up to the release-gap change below, and the narrower half of the same
+mistake. `shipped_probe.py` installs from the **Simple API** (`--index-url`,
+default `https://pypi.org/simple`) but answered "does this distribution exist at
+all?" from the **JSON API**. Two caches of one index, for the question whose
+wrong answer is the most accusatory thing this probe says: `NOT_ON_INDEX` tells
+a maintainer there is no publish process to repair, only one to create.
+
+The exposure was always narrower than the release gap's — a JSON 404 only lags
+for a package's *first ever* release — but that is precisely the moment
+`NOT_ON_INDEX` fires, and precisely the maintainer who has in fact just built
+the release process being told they never did.
+
+`lookup_index()` now reads the Simple API first, and two details in it are not
+decoration:
+
+- **The JSON API stays as a fallback**, because a Simple response that cannot be
+  read as PEP 691 JSON — an index or a caching proxy serving only the HTML
+  flavour — is *not* an index that is down: `pip` installs from it perfectly
+  well. A bare swap would have turned those setups into exit 127, trading one
+  wrong answer for another. If both are unreadable the probe still exits 127, as
+  before: a comparison that did not happen is never a pass.
+
+- **A 404 is corroborated, not believed.** If the Simple API 404s and the JSON
+  API has heard of the package, the probe returns "published" and lets the
+  INSTALL settle it. Unlike `release_gap.py` this probe has a tiebreaker, so a
+  disagreement does not have to be reported unresolved — it can be resolved.
+
+The version it reports is now also the one `pip` would actually resolve to: a
+yanked newest release is skipped, which the JSON API's `info.version` gave no
+way to do.
+
+Not changed, and still open: `--index-url` continues to be honoured only by the
+install, while this check is hardcoded to pypi.org. For a private index the two
+still consult different hosts. Fixing that means depending on PEP 691 support in
+whatever index a target points at, which is a bigger bet than this change makes.
+
 ### Fixed — the release gap read the wrong PyPI API, and could not see a yank at all
 
 Measured externally against `zurich-opendata-mcp` on 2026-07-31, and the two

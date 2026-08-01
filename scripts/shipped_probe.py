@@ -30,6 +30,13 @@ did not fire this time — the fix is to look at the workflow run, which usually
 failed on an approval or an OIDC trust that nobody was watching. Reporting both
 as "PyPI is out of date" sends the maintainer to the wrong place.
 
+Because that distinction carries an accusation, the check behind it reads the
+SIMPLE API — the surface pip resolves against, and therefore the one this
+probe's entire claim is about. It used to ask the JSON API and then install
+from the Simple one, so the existence check and the install consulted two
+different caches of the same index. ``lookup_index`` below documents what the
+fallback is for and why a 404 is corroborated rather than believed.
+
 THE STDIN TRAP, AGAIN — AND WORSE HERE
 --------------------------------------
 ``transport_boot_probe.py`` documents it: close stdin after writing and the
@@ -307,6 +314,41 @@ def pick_tool(tools: list[dict[str, Any]], preferred: str = "") -> tuple[str, st
     return "", "the server listed no tools"
 
 
+def lookup_index(dist: str, timeout: float) -> tuple[str | None, str, str]:
+    """Does this distribution exist on the index, and at which version?
+
+    Simple API first, JSON API as the fallback — the precedence ``release_gap``
+    documents, for the reason that applies twice as hard here: the Simple API is
+    the surface ``pip`` resolves against, and this probe's whole claim is about
+    what ``pip`` does. Asking the JSON API and then installing from the Simple
+    one meant the existence check and the install could disagree.
+
+    The fallback is not decoration. A Simple response that cannot be read as
+    PEP 691 JSON — an index or a caching proxy that only speaks the HTML flavour
+    — is not an index that is down: ``pip`` installs from it perfectly well. A
+    bare swap would turn those setups into exit 127, trading one wrong answer
+    for another.
+
+    404 on the Simple API is checked against the JSON API rather than believed.
+    "Never published" is the one verdict here that accuses the maintainer of not
+    having a release process at all, and a first-ever publish is exactly when
+    the two APIs are most likely to be seconds apart. If either index has heard
+    of the package, this returns "published" and lets the INSTALL settle it —
+    unlike ``release_gap``, this probe has a tiebreaker and does not have to
+    report the disagreement unresolved.
+    """
+    view = rg.fetch_simple(dist, timeout)
+    if view.readable:
+        return (view.latest_installable or view.latest), "ok", ""
+
+    fallback_version, fallback_status, fallback_detail = rg.fetch_pypi_version(dist, timeout)
+    if view.status == "not_published":
+        if fallback_status == "ok":
+            return fallback_version, "ok", ""
+        return None, "not_published", f"{dist} is not on PyPI (HTTP 404)"
+    return fallback_version, fallback_status, fallback_detail
+
+
 def build_findings(report: Report) -> list[Finding]:
     """The whole verdict, from an already-populated report. Pure."""
     out: list[Finding] = []
@@ -550,7 +592,7 @@ def probe(dist: str, target: Path, *, tool: str = "",
     """Everything, wired. The three injectable seams are the three impure parts:
     the index lookup, the install, and the subprocess."""
     report = Report(dist=dist)
-    index_lookup = index_lookup or rg.fetch_pypi_version
+    index_lookup = index_lookup or lookup_index
     installer = installer or install_from_index
     speaker = speaker or speak_mcp
 
