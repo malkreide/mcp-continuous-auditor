@@ -93,22 +93,6 @@ Covers:
   a probe and not a credential holder: no option performs a yank (asserted
   against the argparse surface, not a source grep), no `Authorization` header, no
   `getenv`, and every request a GET. No network, no `git`.
-- `test_release_gap_shim.py` — the `release_gap.py` compatibility shim. The
-  merge deleted a file that callers outside this repository were invoking and
-  changed the exit codes underneath anyone who moved to the new one; the shim
-  restores the old name, flags and codes. The tests are about that contract, and
-  hardest on the place a shim like this goes quietly wrong: the merged probe
-  answers `127` both for an unreachable index and for "no distribution name", so
-  a table-driven translation would tell a caller *"not a Python MCP repo"* about
-  a repository that plainly is one. The `2` case is therefore decided before
-  forwarding — one test pins that it is decided without touching the network at
-  all. `JsonSchemaTest` pins `--format json` against the exact key set the old
-  `to_json` emitted (hardcoded from `git show 9dc1934^`, so it holds in a shallow
-  clone), including that the merged probe's own keys are not leaked into it: a
-  renamed key breaks a JSON consumer silently, which is why the payload is
-  translated where the report text deliberately is not. A structural test keeps the shim a shim: if the file grows `urllib`,
-  `fetch_simple` or a `Finding(`, the duplication the merge removed is back
-  under a new name. Needs `git`; no network.
 - `test_portfolio_scan.py` — the portfolio fan-out (`scripts/portfolio_scan.py`).
   Built around the three properties that would have caught the nested server
   left on the old SDK: `nested_manifests` flags an unclaimed manifest below the

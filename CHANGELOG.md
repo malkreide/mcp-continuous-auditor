@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed — the `release_gap.py` compatibility shim
+
+The shim existed to unbreak callers outside this repository after the merge
+deleted the name they invoked. Removed on request now that those callers have
+moved.
+
+**This re-breaks anything still calling `scripts/release_gap.py`** — the name no
+longer resolves at all, which is a loud failure rather than a quiet one. The
+replacement is `shipped_probe.py --target <path> --metadata-only`, and the exit
+codes are that probe's: `0` clean, `2` findings, `127` the harness could not
+run. A caller testing `$? -eq 1` needs `2`; a directory with no `pyproject.toml`
+now gives `127` rather than `2`.
+
+Gone with it: `tests/test_release_gap_shim.py` (17 tests), the shim's entries in
+both READMEs, and the paragraph in the shipped-probe skill that described it as
+still present.
+
+Kept deliberately: every *historical* mention of the old script — the exit-code
+note in the skill and in `shipped_probe.py`'s docstring, and the comments that
+explain why the merged probe is shaped the way it is. Those describe how the
+current contract came to be, and they are more useful now that the shim no
+longer softens the transition, not less. `RELEASE_GAP_LIVE` also keeps its name;
+it is the opt-in flag for the live index re-measurement in
+`tests/test_release_metadata.py` and renaming it would break a documented
+invocation to remove a word.
+
 ### Added — `yank_probe.py`: a known-broken release that is still installable
 
 The auditor knew what a yank *is* — `shipped_probe.py` parses PEP 592 flags off

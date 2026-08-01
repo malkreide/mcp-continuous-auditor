@@ -44,13 +44,10 @@ index, venv failure). Report every line; the findings are independent.
 > — `2` now means *the target has a defect*, which such a directory has not been
 > shown to have.
 >
-> `scripts/release_gap.py` still exists as a **deprecated shim** that forwards to
-> `--metadata-only` and translates both the exit codes and the `--format json`
-> keys back, so callers outside this repository keep working unmodified. The
-> report *text* is not translated — a human notices a changed layout, where a
-> program reading a renamed JSON key does not. It prints a deprecation notice on every
-> run and should be deleted once nothing invokes that name. New callers use this
-> probe directly.
+> A `scripts/release_gap.py` shim carried the old name, exit codes and
+> `--format json` keys for a while so outside callers kept working. It has been
+> removed — the old name no longer resolves at all, and the exit codes above are
+> the only contract.
 
 ## Which depth to use
 
