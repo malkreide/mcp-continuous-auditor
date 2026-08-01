@@ -54,6 +54,10 @@ now see 2, and a target with no ``pyproject.toml`` gives 127 rather than 2 —
 which is also more correct, since 2 now means "the target has a defect" and a
 directory that is not a Python project has not been shown to have one.
 
+A ``release_gap.py`` shim carried the old name and the old codes for a while so
+outside callers kept working. It has been removed: the old name no longer
+resolves, and the codes above are the only contract.
+
 WHY (4) IS ITS OWN DISTINCTION
 ------------------------------
 "Never published" means the release process has never run for this package —
