@@ -34,15 +34,22 @@ target without ``pyproject.toml`` never reached the network then either.
 Everything else that prevents a verdict collapses into ``1``, which is what the
 old script did with an unreachable index.
 
-WHAT IS DELIBERATELY NOT REPRODUCED
------------------------------------
-The **output text** is the merged probe's, not the old one's. Reproducing the
-old rendering would mean keeping a second formatter alive, which is the
-duplication the merge removed. The finding CODES are unchanged
-(``PUBLISH_GAP``, ``RELEASE_YANKED``, ``UNRELEASED``, ``UNTAGGED_VERSION``,
-``CHANGELOG_UNRELEASED``), so a caller grepping for those still works; a caller
-matching the old prose, or parsing ``--format json`` by its old key names, does
-not. ``--format json`` therefore warns on stderr rather than pretending.
+``--format json`` IS TRANSLATED; THE TEXT IS NOT
+------------------------------------------------
+A JSON consumer is a *program*, and a renamed key breaks it silently — it reads
+``None`` where it used to read a version and carries on. So ``--format json``
+emits exactly the old key set, rebuilt from the merged report by
+``to_old_schema`` below. Only five keys actually moved; the other thirteen
+survived the merge unchanged, which is why this is a rename table and not a
+second serialiser.
+
+The **output text** is not translated. Reproducing the old rendering would mean
+keeping a second formatter alive, which is the duplication the merge removed —
+and a human reading a report notices a changed layout, where a program reading a
+renamed key does not. The finding CODES are unchanged (``PUBLISH_GAP``,
+``RELEASE_YANKED``, ``UNRELEASED``, ``UNTAGGED_VERSION``,
+``CHANGELOG_UNRELEASED``), so a caller grepping for those still works; one
+matching the old prose does not.
 
 Usage — identical to the old script:
   python scripts/release_gap.py --target ../some-mcp
@@ -52,6 +59,9 @@ Usage — identical to the old script:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
+import json
 import sys
 from pathlib import Path
 
@@ -66,6 +76,56 @@ EXIT_FINDINGS = 1
 EXIT_NOT_A_PYTHON_REPO = 2
 
 REPLACEMENT = "python scripts/shipped_probe.py --target <path> --metadata-only"
+
+
+def to_old_schema(new: dict) -> dict:
+    """The merged probe's report payload, in the keys this script used to emit.
+
+    Thirteen of the eighteen keys survived the merge untouched and are copied
+    straight through. Five moved, and each is a rename rather than a
+    recomputation — nothing here derives a value the merged report does not
+    already state:
+
+        version      <- versions.repo      (the repository's own version)
+        pypi_version <- index_version      }
+        pypi_status  <- index_status       } `pypi_*` predates --index-url
+        pypi_detail  <- index_detail       }
+        ok           <- exit_code == 0
+
+    The merged report's own additions (``schema``, ``depth``, ``publication``,
+    ``tool_call`` …) are dropped rather than passed through. A consumer written
+    against the old contract expects that key set; handing it a third, wider
+    shape would be its own kind of surprise.
+    """
+    versions = new.get("versions") or {}
+    repo_version = versions.get("repo") or ""
+    return {
+        "dist": new.get("dist"),
+        # The old script defaulted a missing `[project] version` to the literal
+        # "(dynamic)"; the merged one stores an empty string. Restored, because a
+        # caller may well be testing for that exact word. A version that is
+        # present but genuinely empty is indistinguishable here — it was already
+        # a pathological case in the old script and stays one.
+        "version": repo_version or "(dynamic)",
+        "index_url": new.get("index_url"),
+        "pypi_version": new.get("index_version"),
+        "pypi_status": new.get("index_status"),
+        "pypi_detail": new.get("index_detail"),
+        "yanked": new.get("yanked", {}),
+        "yank_source": new.get("yank_source"),
+        "yank_detail": new.get("yank_detail"),
+        "index_views": new.get("index_views", {}),
+        "latest_tag": new.get("latest_tag"),
+        "tags_available": new.get("tags_available"),
+        "unreleased_commits": new.get("unreleased_commits"),
+        "oldest_unreleased_age_days": new.get("oldest_unreleased_age_days"),
+        "changelog_unreleased_entries": new.get("changelog_unreleased_entries"),
+        "findings": new.get("findings", []),
+        # `ok` was a property, not a stored field. The merged report exposes the
+        # same judgement as its exit code, so it is read back off that rather
+        # than re-derived from the findings list — one source, not two.
+        "ok": new.get("exit_code") == sp.EXIT_GREEN,
+    }
 
 
 def translate(rc: int) -> int:
@@ -97,17 +157,12 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     print(f"release_gap.py is deprecated — this is a shim over `{REPLACEMENT}`. "
-          "Its exit codes are translated back to this script's old contract; "
-          "the report text is the merged probe's.", file=sys.stderr)
+          "Its exit codes and its --format json keys are translated back to this "
+          "script's old contract; the report TEXT is the merged probe's.",
+          file=sys.stderr)
     if args.timeout is not None:
         print("release_gap.py: --timeout is ignored by the merged probe.",
               file=sys.stderr)
-    if args.format == "json":
-        print("release_gap.py: --format json emits the MERGED probe's schema, not "
-              "this script's old keys (`pypi_version` is now `index_version`, and "
-              "the report carries `depth`, `index_url` and `index_views`).",
-              file=sys.stderr)
-
     target = Path(args.target).resolve()
     # Decided here, not translated from 127 — see the module docstring. This is
     # also where the old script decided it, before touching the network.
@@ -125,7 +180,28 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if args.offline:
         forwarded.append("--offline")
-    return translate(sp.main(forwarded))
+
+    if args.format != "json":
+        return translate(sp.main(forwarded))
+
+    # Forward as usual, then rewrite the payload. Capturing the merged probe's
+    # own JSON rather than calling `probe()` directly keeps this file a
+    # forwarder: it never decides what goes in the report, only what the keys
+    # are called.
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        rc = sp.main(forwarded)
+    raw = captured.getvalue()
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        # It did not print JSON — an argparse or harness path. Pass it through
+        # untouched rather than swallowing it into a translation that cannot be
+        # made; the exit code below still carries the verdict.
+        sys.stdout.write(raw)
+        return translate(rc)
+    print(json.dumps(to_old_schema(payload), indent=2, ensure_ascii=False))
+    return translate(rc)
 
 
 if __name__ == "__main__":

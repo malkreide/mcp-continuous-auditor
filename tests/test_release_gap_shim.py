@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -37,10 +38,11 @@ import release_gap as shim  # noqa: E402
 import shipped_probe as sp  # noqa: E402
 
 PYPROJECT = '[project]\nname = "demo-mcp"\nversion = "0.6.0"\n'
+PYPROJECT_NO_VERSION = '[project]\nname = "demo-mcp"\n'
 
 
-def make_repo(tmp: Path, tag: str = "v0.6.0") -> Path:
-    (tmp / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
+def make_repo(tmp: Path, tag: str = "v0.6.0", pyproject: str = PYPROJECT) -> Path:
+    (tmp / "pyproject.toml").write_text(pyproject, encoding="utf-8")
     env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e.invalid",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e.invalid"}
     run = lambda *a: subprocess.run(  # noqa: E731
@@ -160,14 +162,6 @@ class OldFlagsStillParseTest(unittest.TestCase):
                 shim.main(["--target", str(repo), "--timeout", "30"])
         self.assertIn("--timeout is ignored", err.getvalue())
 
-    def test_json_warns_that_the_schema_is_the_new_one(self):
-        """The shim restores the contract it can. It does not fake the payload."""
-        err = io.StringIO()
-        with tempfile.TemporaryDirectory() as d, served():
-            repo = make_repo(Path(d))
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-                shim.main(["--target", str(repo), "--format", "json"])
-        self.assertIn("index_version", err.getvalue())
 
     def test_every_run_says_it_is_deprecated(self):
         err = io.StringIO()
@@ -177,6 +171,88 @@ class OldFlagsStillParseTest(unittest.TestCase):
                 shim.main(["--target", str(repo)])
         self.assertIn("deprecated", err.getvalue())
         self.assertIn("--metadata-only", err.getvalue())
+
+
+# The exact top-level key set `release_gap.to_json` emitted, taken from the last
+# version of the file before the merge deleted it:
+#     git show 9dc1934^:scripts/release_gap.py
+# Hardcoded rather than read back out of git, so the test still pins the contract
+# in a shallow clone — and so that changing it is a visible edit to this list.
+OLD_JSON_KEYS = {
+    "dist", "version", "index_url", "pypi_version", "pypi_status", "pypi_detail",
+    "yanked", "yank_source", "yank_detail", "index_views", "latest_tag",
+    "tags_available", "unreleased_commits", "oldest_unreleased_age_days",
+    "changelog_unreleased_entries", "findings", "ok",
+}
+
+
+class JsonSchemaTest(unittest.TestCase):
+    """`--format json` must be the OLD payload, key for key.
+
+    A renamed key breaks a JSON consumer silently — it reads `None` where it used
+    to read a version and carries on. That is the difference from the report
+    text, which is deliberately not translated: a human notices a changed
+    layout, a program does not.
+    """
+
+    def _json(self, *argv, versions=("0.6.0",), status="ok",
+              pyproject=PYPROJECT, tag="v0.6.0"):
+        """Run the shim in JSON mode and hand back (payload, exit code).
+
+        The index stub and the repository take separate arguments on purpose —
+        an earlier version forwarded one **kw bag to both and passed a pyproject
+        into the stub's constructor.
+        """
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d, served(versions=versions, status=status):
+            repo = make_repo(Path(d), tag=tag, pyproject=pyproject)
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                rc = shim.main(["--target", str(repo), "--format", "json", *argv])
+        return json.loads(out.getvalue()), rc
+
+    def test_exactly_the_old_keys_no_more_no_less(self):
+        payload, _ = self._json()
+        self.assertEqual(set(payload), OLD_JSON_KEYS)
+
+    def test_the_merged_probes_own_keys_are_not_leaked(self):
+        """Handing an old consumer a third, wider shape is its own surprise."""
+        payload, _ = self._json()
+        for key in ("schema", "depth", "publication", "tool_call", "exit_code",
+                    "index_version", "index_status", "versions"):
+            self.assertNotIn(key, payload)
+
+    def test_the_renamed_keys_carry_the_values(self):
+        payload, _ = self._json()
+        self.assertEqual(payload["pypi_version"], "0.6.0")
+        self.assertEqual(payload["pypi_status"], "ok")
+        self.assertEqual(payload["version"], "0.6.0", "the repository's own version")
+
+    def test_ok_is_true_when_clean_and_false_on_findings(self):
+        clean, rc = self._json()
+        self.assertTrue(clean["ok"])
+        self.assertEqual(rc, 0)
+        # tag v0.6.0 against an index that only has 0.1.0 -> PUBLISH_GAP
+        found, rc = self._json(versions=["0.1.0"])
+        self.assertFalse(found["ok"])
+        self.assertEqual(rc, 1)
+        self.assertIn("PUBLISH_GAP", [f["code"] for f in found["findings"]])
+
+    def test_ok_is_false_when_the_comparison_could_not_be_made(self):
+        """An unreachable index was never a pass under the old contract either."""
+        payload, rc = self._json(status="unreachable")
+        self.assertFalse(payload["ok"])
+        self.assertEqual(rc, 1)
+
+    def test_a_missing_version_is_the_literal_dynamic(self):
+        """The old script defaulted an absent `[project] version` to that word,
+        and a caller may well be testing for it."""
+        payload, _ = self._json(pyproject=PYPROJECT_NO_VERSION)
+        self.assertEqual(payload["version"], "(dynamic)")
+
+    def test_findings_keep_their_old_entry_shape(self):
+        payload, _ = self._json(versions=["0.1.0"])
+        self.assertTrue(payload["findings"])
+        self.assertEqual(set(payload["findings"][0]), {"code", "detail", "severity"})
 
 
 class NoSecondImplementationTest(unittest.TestCase):

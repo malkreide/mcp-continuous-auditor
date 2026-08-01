@@ -102,7 +102,11 @@ Covers:
   a table-driven translation would tell a caller *"not a Python MCP repo"* about
   a repository that plainly is one. The `2` case is therefore decided before
   forwarding — one test pins that it is decided without touching the network at
-  all. A structural test keeps the shim a shim: if the file grows `urllib`,
+  all. `JsonSchemaTest` pins `--format json` against the exact key set the old
+  `to_json` emitted (hardcoded from `git show 9dc1934^`, so it holds in a shallow
+  clone), including that the merged probe's own keys are not leaked into it: a
+  renamed key breaks a JSON consumer silently, which is why the payload is
+  translated where the report text deliberately is not. A structural test keeps the shim a shim: if the file grows `urllib`,
   `fetch_simple` or a `Finding(`, the duplication the merge removed is back
   under a new name. Needs `git`; no network.
 - `test_portfolio_scan.py` — the portfolio fan-out (`scripts/portfolio_scan.py`).
