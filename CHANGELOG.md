@@ -40,13 +40,33 @@ decided it, and a test pins that it is decided without touching the network at
 all. Everything else that is not green collapses to `1`, which is the collapse
 the old script already made.
 
+**`--format json` is translated too**, key for key. A JSON consumer is a
+*program*, and a renamed key breaks it silently — it reads `None` where it used
+to read a version and carries on. Only five of the seventeen keys actually
+moved, which is why this is a rename table and not a second serialiser:
+
+```
+version      <- versions.repo      pypi_status  <- index_status
+pypi_version <- index_version      pypi_detail  <- index_detail
+                                   ok           <- exit_code == 0
+```
+
+The merged report's own additions (`schema`, `depth`, `publication`,
+`tool_call`, …) are dropped rather than passed through: a consumer written
+against the old contract expects that key set, and handing it a third, wider
+shape would be its own kind of surprise. A test pins the emitted keys against
+the exact set the old `to_json` produced, taken from
+`git show 9dc1934^:scripts/release_gap.py` and hardcoded so it still holds in a
+shallow clone.
+
 Not reproduced, and said out loud rather than faked: the **report text** is the
 merged probe's. Reproducing the old rendering would mean keeping a second
-formatter alive, which is the duplication the merge removed. The finding codes
-are unchanged, so a caller grepping `PUBLISH_GAP` still works; `--format json`
-emits the merged schema and warns on stderr that it has done so. A structural
-test keeps the shim a shim — if it ever grows `urllib`, `fetch_simple` or a
-`Finding(`, the duplication is back under a new name.
+formatter alive, which is the duplication the merge removed — and a human
+reading a report notices a changed layout, where a program reading a renamed key
+does not. The finding codes are unchanged, so a caller grepping `PUBLISH_GAP`
+still works. A structural test keeps the shim a shim — if it ever grows
+`urllib`, `fetch_simple` or a `Finding(`, the duplication is back under a new
+name.
 
 ### Added — the shipped gate's metadata pre-run reaches the nightly summary
 

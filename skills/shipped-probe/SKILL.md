@@ -45,8 +45,10 @@ index, venv failure). Report every line; the findings are independent.
 > shown to have.
 >
 > `scripts/release_gap.py` still exists as a **deprecated shim** that forwards to
-> `--metadata-only` and translates the exit codes back, so callers outside this
-> repository keep working unmodified. It prints a deprecation notice on every
+> `--metadata-only` and translates both the exit codes and the `--format json`
+> keys back, so callers outside this repository keep working unmodified. The
+> report *text* is not translated — a human notices a changed layout, where a
+> program reading a renamed JSON key does not. It prints a deprecation notice on every
 > run and should be deleted once nothing invokes that name. New callers use this
 > probe directly.
 
