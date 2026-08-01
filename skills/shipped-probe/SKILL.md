@@ -43,6 +43,12 @@ index, venv failure). Report every line; the findings are independent.
 > `$? -eq 1` now sees `2`, and a directory with no `pyproject.toml` gives `127`
 > — `2` now means *the target has a defect*, which such a directory has not been
 > shown to have.
+>
+> `scripts/release_gap.py` still exists as a **deprecated shim** that forwards to
+> `--metadata-only` and translates the exit codes back, so callers outside this
+> repository keep working unmodified. It prints a deprecation notice on every
+> run and should be deleted once nothing invokes that name. New callers use this
+> probe directly.
 
 ## Which depth to use
 
