@@ -146,12 +146,26 @@ Covers:
   which makes argparse exit non-zero cannot vote on the verdict — otherwise the
   fix would swap one false finding for another.
 - `test_release_gap.py` — the release-gap probe (`scripts/release_gap.py`).
-  Hardest on the two properties whose failure would turn it into noise or into
-  a lie: an unreachable PyPI must not read as "in sync", and a missing tag set
-  (a `--depth 1` clone fetches none) must not read as "never released". The
-  git-backed cases build a real repository in a temp dir rather than mocking
+  Hardest on the three properties whose failure would turn it into noise or
+  into a lie: an unreachable PyPI must not read as "in sync"; a missing tag set
+  (a `--depth 1` clone fetches none) must not read as "never released"; and two
+  disagreeing PyPI index APIs must produce neither a finding nor a clean bill.
+  The git-backed cases build a real repository in a temp dir rather than mocking
   `git log`, which would only assert that the mock matches the assumption.
-  Needs `git`; no network — the index lookup is injected.
+  Index responses are recorded, in `tests/fixtures/pypi/` — two captured from
+  the live index and two reconstructed from them, with that README explaining
+  which is which and why the divergence could not be captured directly. They
+  are injected at `release_gap._get`, the one point that touches the network,
+  so the parsing, the yank attribution and the reconciliation all still run.
+  Two classes pin the divergences measured on 2026-07-31 against
+  `zurich-opendata-mcp`: `YankLagRegressionTest` (the JSON API reporting six
+  yanked releases as healthy) and `PublishLagRegressionTest` (the JSON API
+  still serving `0.6.0` some 90 s after `0.7.0` was published, which the probe
+  used to report as a high-severity `PUBLISH_GAP` against a release that had
+  just succeeded). `LiveDivergenceTest` re-runs the measurement against the
+  real index and is skipped unless `RELEASE_GAP_LIVE=1` — it asserts only that
+  both APIs answered, and prints what they said. Needs `git`; no network in the
+  default run.
 
 `test_smoke_target.py`, `test_transport_boot_probe.FastMCPBootTest` and
 `test_rebind_probe.FastMCPRebindTest` self-**skip** here — all three need

@@ -1,6 +1,6 @@
 ---
 name: release-gap
-description: Verify that the fix on main is the fix users install — published PyPI version, release tags and unreleased commits against the repository. Deterministic; run it, do not reason about it.
+description: Verify that the fix on main is the fix users install — published PyPI version, yank status, release tags and unreleased commits against the repository. Deterministic; run it, do not reason about it.
 requires:
   bins: [python, git]
 ---
@@ -43,12 +43,45 @@ Run against a reconstruction of that state, the probe reports
 
 | Line | Means |
 |---|---|
-| `PUBLISH_GAP` | A release tag exists that PyPI does not have. Someone cut a release and it did not land — a failed workflow, or a pending environment approval. The sharpest finding here, because the maintainer already believes it shipped. |
+| `PUBLISH_GAP` | A release tag exists that PyPI does not have. Someone cut a release and it did not land — a failed workflow, or a pending environment approval. The sharpest finding here, because the maintainer already believes it shipped. Raised only when the tag is ahead of **both** index APIs. |
+| `RELEASE_YANKED` | The release this repository treats as current is on PyPI and **withdrawn**. Every other check reads healthy — the version exists, the tag matches, CI is green — while `pip install` quietly resolves to something older. Older yanked releases are listed as a `NOTE`, not as a finding. |
+| `UNCONFIRMED` | PyPI's two index APIs disagree — about the latest version, or about a yank flag. Nothing is claimed from it and the run does not go red. See below. |
 | `UNRELEASED` | Commits beyond the last release, with the age of the oldest and a breakdown by Conventional-Commit type. `high` when any are user-facing (`fix`, `feat`, `perf`, `revert`), `low` when it is housekeeping. |
 | `UNTAGGED_VERSION` | `pyproject.toml` was bumped, no tag matches. The ordinary state of a prepared release — a finding only once it ages. |
 | `CHANGELOG_UNRELEASED` | An `[Unreleased]` section with entries. Weakest signal, reported last: prose lags. |
 | `UNKNOWN` | PyPI could not be reached. The comparison that matters **did not happen**. |
 | `NOTE` | Informational — `--offline`, not on PyPI, or tags unavailable. |
+
+## Which PyPI API is believed
+
+The **Simple API** (`/simple/{dist}/`, PEP 503/691/700) is primary: it is the
+one `pip` and `uv` read, so it is the one that decides what a user gets, and it
+carries the per-file `yanked` flag. The **JSON API** (`/pypi/{dist}/json`) is a
+fallback and a second opinion.
+
+Measured against `zurich-opendata-mcp` on 2026-07-31, minutes after the
+operations involved, the two disagreed twice:
+
+- six freshly yanked releases still read `yanked: false` on the JSON API while
+  the Simple API had all six as yanked;
+- ~90 s after `0.7.0` was published, the JSON API still answered `0.6.0` while
+  the Simple API already served `0.7.0`.
+
+Re-measured on 2026-08-01 both had converged. The divergence is a propagation
+window, not a standing property — which is exactly what makes it dangerous: it
+is only visible in the minutes right after a release or a yank, the minutes in
+which somebody is most likely to be running this probe.
+
+Where the two disagree the probe reports **`UNCONFIRMED`** and claims nothing.
+It is not a pass and not a finding: loud in the report, does not turn the run
+red — the same shape as the boot gate's `not-selected`. Exit `0` with an
+`UNCONFIRMED` line means *read the line*.
+
+To see what the two APIs say right now:
+
+```bash
+RELEASE_GAP_LIVE=1 python3 -m unittest tests.test_release_gap.LiveDivergenceTest -v
+```
 
 ## Three things not to shortcut
 
@@ -67,6 +100,11 @@ Run against a reconstruction of that state, the probe reports
    the minutes after a merge. Firing on that gets the check muted, and a muted
    check catches nothing — the same reasoning that keeps recall floors at half
    the observed count. `--max-age-days` defaults to 7.
+
+4. **`UNCONFIRMED` is not "probably fine".** It means the two indexes were
+   asked and gave different answers. Re-run it a minute later — propagation is
+   measured in seconds — and if it persists, that is worth a look at PyPI
+   rather than at the target.
 
 ## Why the commit type matters
 

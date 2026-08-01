@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the release gap read the wrong PyPI API, and could not see a yank at all
+
+Measured externally against `zurich-opendata-mcp` on 2026-07-31, and the two
+halves of this finding did not survive re-measurement equally. Both are reported
+here, because the difference is the point.
+
+**What did not reproduce.** The report was that PyPI's two index APIs diverge:
+after six releases were yanked the JSON API still answered `yanked: false` for
+all six while the Simple API had them all as yanked, and ~90 s after `0.7.0` was
+published the JSON API still said `latest = 0.6.0` while the Simple API already
+served `0.7.0`. Re-measured on 2026-08-01, both had converged:
+
+```
+JSON   latest=0.7.0  yanked={0.2.0…0.5.1: true, 0.6.0: false, 0.7.0: false}
+SIMPLE latest=0.7.0  yanked={0.2.0…0.5.1: true, 0.6.0: false, 0.7.0: false}
+```
+
+So the divergence is a **propagation window, not a standing property** of either
+API, and no claim is made here that the JSON API is wrong in general. That is
+not a reason to dismiss it — a window that only opens in the minutes right after
+a release or a yank opens in exactly the minutes somebody is most likely to be
+running this probe, and it is closed by the time you go looking. It could not be
+captured on demand; `tests/fixtures/pypi/README.md` says which fixtures are the
+index's own bytes and which are reconstructed from them.
+
+**What did reproduce, and does not depend on any of the above.** `release_gap.py`
+had no `yanked` field of any kind. "Published and healthy" and "published and
+withdrawn" were the same report — the version exists, the tag matches, CI is
+green, and `release OK` came out. That is a permanent hole in a script whose one
+job is asking whether the fix on `main` is the fix users install, and a yanked
+release is precisely a release users are no longer installing.
+
+Three changes:
+
+- **The Simple API is the primary source; the JSON API is a fallback.** The
+  Simple API (PEP 503/691/700, with `Accept: application/vnd.pypi.simple.v1+json`
+  and a cache-buster) is what `pip` and `uv` read, so it is what decides what a
+  user gets. Asking the convenient API about an install is asking the wrong
+  party. Two details that only show up once you read it: its `versions` list
+  includes pre-releases where `info.version` does not — `pydantic` served
+  `2.14.0a1` there against `2.13.4` on the JSON API — and PEP 700 does not
+  promise the list is ordered, so `versions[-1]` would have reported an alpha as
+  the current release. Ranking is done here, pre-releases excluded.
+
+- **`yanked` is a field in its own right**, in the text report and in
+  `--format json`, alongside which API it came from. A withdrawn release that is
+  *not* the current one is a `NOTE` — history, not a defect. The current one is
+  `RELEASE_YANKED`, high, and the detail names the version installs actually
+  resolve to instead. A version counts as yanked only when every one of its
+  files is: PEP 592 yanks files, and a version with one live wheel left is still
+  installable.
+
+- **Divergence is `UNCONFIRMED`, never a guess.** Where both APIs are readable
+  and disagree, nothing is claimed: loud in the report, and it does not turn the
+  run red. Same shape as the boot gate's `not-selected`. An auditor that fires
+  `PUBLISH_GAP` because one PyPI cache is 90 s behind another gets muted, and a
+  muted auditor catches nothing. The suppression is deliberately narrow — a tag
+  ahead of *both* readings is a publish gap whichever cache you believe, and is
+  still reported as one.
+
+Regression tests cover both measured cases against recorded payloads, with no
+live calls in the default run; `RELEASE_GAP_LIVE=1` re-runs the measurement
+against the real index.
+
+**Not done, and deliberately.** `shipped_probe.py` installs from the Simple API
+already and would catch a yanked current release indirectly — pip would resolve
+to the older version and the installed-vs-repo comparison would fire
+`STALE_ON_INDEX`. It would attribute it wrongly, though: that finding says "the
+release was never cut", which sends the maintainer to a publish workflow that
+ran fine. The two probes also cost differently — one HTTP request against a venv
+plus a subprocess — so folding `release_gap.py` into it would make the cheap
+check as expensive as the expensive one. Merging them is a real option and it is
+not being taken unasked.
+
 ### Fixed — the boot gate reported a healthy target as dead
 
 Found by running the rollout runbook's step 4 against the real
