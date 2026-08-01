@@ -105,6 +105,47 @@ New: `scripts/yank_probe.py`, `skills/yank-probe/SKILL.md`,
 `tests/test_yank_probe.py` (40 tests, offline, asserted so under a blocked
 socket), and three captured fixtures under `tests/fixtures/pypi/`.
 
+### Fixed — `release_gap.py` is back as a shim, because deleting it broke callers
+
+The merge deleted `scripts/release_gap.py` and folded its question into
+`shipped_probe.py --metadata-only`. That was the requested change, and it broke
+every caller outside this repository twice over: the name vanished, and anyone
+who ported to the new script found the exit codes had moved underneath them.
+
+The alternative on the table was reverting the merge. That was measured — both
+merges revert cleanly in the order #44 → #43, 472 tests green — and rejected:
+it would have taken the nightly metadata pre-run with it, which is a real
+capability, to solve a CLI problem.
+
+So `release_gap.py` exists again as a **deprecated shim**: old name, old flags,
+old exit codes, no probe logic. It prints a deprecation notice naming its
+replacement on every run, and can be deleted once nothing invokes that name.
+
+**The exit-code translation is the part that had to be thought about**, because
+the two vocabularies are not a bijection:
+
+| old (shim) | new (`shipped_probe.py`) |
+|---|---|
+| `0` no findings | `0` green |
+| `1` findings, **or** the comparison could not be made | `2` findings |
+| `2` not a Python MCP repo | `127` the harness could not run — unreachable index **or** no distribution name |
+
+`127` covers two old codes at once. A table-driven translation is wrong half the
+time: as `2` it would tell a caller *"this is not a Python MCP repo"* about a
+repository that plainly is one, when the truth was an unreachable index. So the
+`2` case is decided in the shim before forwarding — exactly where the old script
+decided it, and a test pins that it is decided without touching the network at
+all. Everything else that is not green collapses to `1`, which is the collapse
+the old script already made.
+
+Not reproduced, and said out loud rather than faked: the **report text** is the
+merged probe's. Reproducing the old rendering would mean keeping a second
+formatter alive, which is the duplication the merge removed. The finding codes
+are unchanged, so a caller grepping `PUBLISH_GAP` still works; `--format json`
+emits the merged schema and warns on stderr that it has done so. A structural
+test keeps the shim a shim — if it ever grows `urllib`, `fetch_simple` or a
+`Finding(`, the duplication is back under a new name.
+
 ### Added — the shipped gate's metadata pre-run reaches the nightly summary
 
 The pre-run below wrote `shipped-metadata.json` and nothing read it, so its
