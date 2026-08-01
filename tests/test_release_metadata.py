@@ -41,10 +41,32 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import release_gap as rg  # noqa: E402
+import shipped_probe as rg  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pypi"
 DIST = "zurich-opendata-mcp"
+
+
+def probe_metadata(target, max_age_days=7.0, offline=False, timeout=1.0,
+                   now=None, index_url=None):
+    """The merged probe at its metadata depth, in the shape these tests use.
+
+    They predate the merge, when this was `release_gap.probe(target, ...)` with
+    no distribution name — it came from the target's pyproject. That is still
+    how the CLI behaves, so the shim is the CLI's own default, not a fiction
+    invented for the tests.
+    """
+    try:
+        dist = rg.read_project(target).get("name", target.name)
+    except OSError:
+        dist = target.name
+    return rg.probe(dist, target, metadata_only=True, offline=offline,
+                    max_age_days=max_age_days, now=now,
+                    index_url=index_url or rg.DEFAULT_INDEX)
+
+
+def as_dict(report):
+    return report.as_dict()
 
 
 PYPROJECT = """\
@@ -200,22 +222,31 @@ class UnreachablePypiTest(unittest.TestCase):
     def test_unreachable_index_is_not_ok(self):
         with tempfile.TemporaryDirectory() as d, stub_index():
             repo = make_repo(Path(d))
-            report = rg.probe(repo, max_age_days=7, offline=False, timeout=1)
-            self.assertEqual(report.pypi_status, "unreachable")
+            report = probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
+            self.assertEqual(report.index_status, "unreachable")
             self.assertFalse(report.ok, "an unreachable index must not report success")
 
     def test_report_says_the_comparison_did_not_happen(self):
+        """The merge changed the wording, not the property.
+
+        `release_gap` printed `UNKNOWN`; the merged report says the same thing in
+        the shipped probe's own voice and routes it through `harness_error`, so
+        it exits 127 rather than 0. What must not change is that the run never
+        reads as a clean comparison.
+        """
         with tempfile.TemporaryDirectory() as d, stub_index():
             repo = make_repo(Path(d))
-            text = rg.render(rg.probe(repo, max_age_days=7, offline=False, timeout=1))
-            self.assertIn("UNKNOWN", text)
-            self.assertNotIn("release OK", text)
+            report = probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
+            text = rg.render(report)
+            self.assertIn("NOT compared", text)
+            self.assertNotIn("consistent", text)
+            self.assertEqual(report.exit_code(), 127)
 
     def test_yank_status_is_unavailable_not_healthy(self):
         """No index means no yank answer — never "nothing is yanked"."""
         with tempfile.TemporaryDirectory() as d, stub_index():
             repo = make_repo(Path(d))
-            report = rg.probe(repo, max_age_days=7, offline=False, timeout=1)
+            report = probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
             self.assertEqual(report.yank_source, "unavailable")
 
 
@@ -223,8 +254,8 @@ class OfflineTest(unittest.TestCase):
     def test_offline_is_declared_and_not_a_failure(self):
         with tempfile.TemporaryDirectory() as d:
             repo = make_repo(Path(d))
-            report = rg.probe(repo, max_age_days=7, offline=True, timeout=1)
-            self.assertEqual(report.pypi_status, "skipped")
+            report = probe_metadata(repo, max_age_days=7, offline=True, timeout=1)
+            self.assertEqual(report.index_status, "skipped")
             self.assertTrue(report.ok)
             self.assertIn("--offline", rg.render(report))
 
@@ -235,7 +266,7 @@ class PublishGapTest(unittest.TestCase):
     def _probe_with_pypi(self, repo: Path, pypi_version: str):
         versions = sorted({"0.1.0", pypi_version}, key=lambda v: rg.release_key(v) or ())
         with stub_index(simple_payload(versions), json_payload(versions, pypi_version)):
-            return rg.probe(repo, max_age_days=7, offline=False, timeout=1)
+            return probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
 
     def test_tag_ahead_of_pypi_is_high_severity(self):
         with tempfile.TemporaryDirectory() as d:
@@ -257,7 +288,7 @@ class PublishGapTest(unittest.TestCase):
 class UnreleasedCommitsTest(unittest.TestCase):
     def _probe(self, repo: Path, max_age_days: float = 7.0):
         with stub_index(simple_payload(["0.1.0"]), json_payload(["0.1.0"])):
-            return rg.probe(repo, max_age_days=max_age_days, offline=False, timeout=1)
+            return probe_metadata(repo, max_age_days=max_age_days, offline=False, timeout=1)
 
     def test_recent_work_is_not_a_finding(self):
         """Every repo is ahead of PyPI right after a merge. That is not news."""
@@ -300,7 +331,7 @@ class NoTagsTest(unittest.TestCase):
             orig = rg.release_tags
             rg.release_tags = lambda root: None  # type: ignore[assignment]
             try:
-                report = rg.probe(repo, max_age_days=7, offline=True, timeout=1)
+                report = probe_metadata(repo, max_age_days=7, offline=True, timeout=1)
             finally:
                 rg.release_tags = orig  # type: ignore[assignment]
             self.assertIsNone(report.tags)
@@ -322,13 +353,13 @@ class ConvergedIndexTest(unittest.TestCase):
             with stub_index(
                 payload("zurich_simple_converged"), payload("zurich_json_converged")
             ):
-                return rg.probe(repo, max_age_days=7, offline=False, timeout=1)
+                return probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
 
     def test_agreement_is_ok_and_quiet(self):
         report = self._probe()
-        self.assertEqual(report.pypi_status, "ok")
+        self.assertEqual(report.index_status, "ok")
         self.assertEqual(report.yank_source, "simple")
-        self.assertEqual(report.pypi_version, "0.7.0")
+        self.assertEqual(report.index_version, "0.7.0")
         self.assertEqual([f.code for f in report.findings], [])
 
     def test_historic_yanks_are_reported_without_being_a_finding(self):
@@ -360,7 +391,7 @@ class ConvergedIndexTest(unittest.TestCase):
             repo = make_repo(Path(d), version="0.7.0")
             run(repo, "git", "tag", "v0.7.0")
             with stub_index(simple, json_api):
-                report = rg.probe(repo, max_age_days=7, offline=False, timeout=1)
+                report = probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
 
         codes = {f.code: f for f in report.findings}
         self.assertIn("RELEASE_YANKED", codes)
@@ -387,7 +418,7 @@ class YankLagRegressionTest(unittest.TestCase):
             with stub_index(
                 payload("zurich_simple_converged"), payload("zurich_json_yank_lag")
             ):
-                return rg.probe(repo, max_age_days=7, offline=False, timeout=1)
+                return probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
 
     def test_the_yanks_are_visible_at_all(self):
         """The core of the finding: yank status must reach the report."""
@@ -434,7 +465,7 @@ class PublishLagRegressionTest(unittest.TestCase):
             with stub_index(
                 payload("zurich_simple_converged"), payload("zurich_json_publish_lag")
             ):
-                return rg.probe(repo, max_age_days=7, offline=False, timeout=1)
+                return probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
 
     def test_no_publish_gap_is_claimed_from_a_stale_json_api(self):
         report = self._probe()
@@ -448,7 +479,7 @@ class PublishLagRegressionTest(unittest.TestCase):
     def test_the_run_is_not_silently_green_either(self):
         """Suppressing the false alarm must not become suppressing the fact."""
         report = self._probe()
-        self.assertEqual(report.pypi_status, "unconfirmed")
+        self.assertEqual(report.index_status, "unconfirmed")
         text = rg.render(report)
         self.assertIn("UNCONFIRMED", text)
         self.assertIn("0.7.0", text)
@@ -473,13 +504,13 @@ class IndexPrecedenceTest(unittest.TestCase):
             repo = make_repo(Path(d), version="0.7.0")
             run(repo, "git", "tag", "v0.7.0")
             with stub_index(simple, json_api):
-                return rg.probe(repo, max_age_days=7, offline=False, timeout=1)
+                return probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
 
     def test_json_only_is_used_and_flagged_as_the_weaker_source(self):
         report = self._probe(None, payload("zurich_json_converged"))
-        self.assertEqual(report.pypi_status, "ok")
+        self.assertEqual(report.index_status, "ok")
         self.assertEqual(report.yank_source, "json-fallback")
-        self.assertEqual(report.pypi_version, "0.7.0")
+        self.assertEqual(report.index_version, "0.7.0")
         self.assertIn("not the one pip reads", rg.render(report))
 
     def test_the_fallback_names_the_version_installs_land_on(self):
@@ -500,9 +531,9 @@ class IndexPrecedenceTest(unittest.TestCase):
 
     def test_simple_alone_is_enough_and_is_not_apologised_for(self):
         report = self._probe(payload("zurich_simple_converged"), None)
-        self.assertEqual(report.pypi_status, "ok")
+        self.assertEqual(report.index_status, "ok")
         self.assertEqual(report.yank_source, "simple")
-        self.assertEqual(report.pypi_version, "0.7.0")
+        self.assertEqual(report.index_version, "0.7.0")
 
     def test_prereleases_do_not_become_the_latest_release(self):
         """Simple lists pre-releases; `info.version` does not. Measured on
@@ -511,8 +542,8 @@ class IndexPrecedenceTest(unittest.TestCase):
         then read as a disagreement with the JSON API on every such package."""
         versions = ["0.6.0", "0.7.0", "0.8.0a1"]
         report = self._probe(simple_payload(versions), json_payload(versions, "0.7.0"))
-        self.assertEqual(report.pypi_version, "0.7.0")
-        self.assertEqual(report.pypi_status, "ok")
+        self.assertEqual(report.index_version, "0.7.0")
+        self.assertEqual(report.index_status, "ok")
 
     def test_a_partly_yanked_version_is_still_installable(self):
         """PEP 592 yanks files. One live wheel left means the version stands."""
@@ -626,7 +657,7 @@ class CustomIndexTest(unittest.TestCase):
                 run(repo, "git", "tag", tag)
             served = payload("zurich_simple_converged") if simple is self.DEFAULT else simple
             with stub_index(served, json_api) as stub:
-                report = rg.probe(repo, 7, False, 1, index_url=index_url)
+                report = probe_metadata(repo, 7, False, 1, index_url=index_url)
         return report, stub
 
     def test_pypi_org_is_never_asked_about_a_private_index_package(self):
@@ -637,7 +668,7 @@ class CustomIndexTest(unittest.TestCase):
     def test_the_missing_cross_check_is_stated_not_silently_skipped(self):
         """A run with one opinion must not look like a run with two that agreed."""
         report, _ = self._probe(self.PRIVATE)
-        self.assertEqual(report.pypi_status, "ok")
+        self.assertEqual(report.index_status, "ok")
         text = rg.render(report)
         self.assertIn("not PyPI", text)
         self.assertIn("did not run", text)
@@ -645,7 +676,7 @@ class CustomIndexTest(unittest.TestCase):
 
     def test_the_simple_answer_still_stands_on_its_own(self):
         report, _ = self._probe(self.PRIVATE)
-        self.assertEqual(report.pypi_version, "0.7.0")
+        self.assertEqual(report.index_version, "0.7.0")
         self.assertEqual(report.yank_source, "simple")
         self.assertIn("0.5.1", report.yanked)
         self.assertEqual([f.code for f in report.findings], [])
@@ -653,25 +684,25 @@ class CustomIndexTest(unittest.TestCase):
     def test_unconfirmed_cannot_be_reached_without_a_second_opinion(self):
         """The status that exists to describe a disagreement needs two parties."""
         report, _ = self._probe(self.PRIVATE)
-        self.assertNotEqual(report.pypi_status, "unconfirmed")
+        self.assertNotEqual(report.index_status, "unconfirmed")
         self.assertNotEqual(report.yank_source, "unconfirmed")
 
     def test_an_unreachable_private_index_says_there_was_no_fallback(self):
         report, _ = self._probe(self.PRIVATE, simple=None)
-        self.assertEqual(report.pypi_status, "unreachable")
+        self.assertEqual(report.index_status, "unreachable")
         self.assertFalse(report.ok)
-        self.assertIn("no JSON API to fall back to", report.pypi_detail)
+        self.assertIn("no JSON API to fall back to", report.index_detail)
 
     def test_the_default_index_still_cross_checks(self):
         """The narrowing is conditional on the index, not a general retreat."""
         report, stub = self._probe(
-            rg.PYPI_SIMPLE, json_api=payload("zurich_json_publish_lag"))
+            rg.DEFAULT_INDEX, json_api=payload("zurich_json_publish_lag"))
         self.assertEqual(stub.seen, ["simple", "json"])
-        self.assertEqual(report.pypi_status, "unconfirmed")
+        self.assertEqual(report.index_status, "unconfirmed")
 
     def test_the_index_url_reaches_the_json_output(self):
         report, _ = self._probe(self.PRIVATE)
-        self.assertEqual(json.loads(json.dumps(rg.to_json(report)))["index_url"], self.PRIVATE)
+        self.assertEqual(json.loads(json.dumps(as_dict(report)))["index_url"], self.PRIVATE)
 
     def test_a_private_html_index_all_the_way_to_a_finding(self):
         """The whole chain on the shape a private index actually has: PEP 503
@@ -694,7 +725,7 @@ class CustomIndexTest(unittest.TestCase):
                 rg._parse_simple_html(html), "ok", ""
             )
             try:
-                report = rg.probe(repo, 7, False, 1, index_url="http://localhost:8099")
+                report = probe_metadata(repo, 7, False, 1, index_url="http://localhost:8099")
             finally:
                 rg._get = orig  # type: ignore[assignment]
 
@@ -804,17 +835,19 @@ class JsonOutputTest(unittest.TestCase):
     def test_json_is_serialisable_and_complete(self):
         with tempfile.TemporaryDirectory() as d:
             repo = make_repo(Path(d))
-            out = rg.to_json(rg.probe(repo, max_age_days=7, offline=True, timeout=1))
+            out = as_dict(probe_metadata(repo, max_age_days=7, offline=True, timeout=1))
             round_tripped = json.loads(json.dumps(out))
             for key in (
                 "dist",
-                "version",
-                "pypi_status",
+                "versions",
+                "index_status",
+                "index_url",
                 "findings",
-                "ok",
+                "exit_code",
                 "tags_available",
                 "yanked",
                 "yank_source",
+                "depth",
             ):
                 self.assertIn(key, round_tripped)
 
@@ -826,21 +859,23 @@ class JsonOutputTest(unittest.TestCase):
             with stub_index(
                 payload("zurich_simple_converged"), payload("zurich_json_converged")
             ):
-                out = json.loads(json.dumps(rg.to_json(rg.probe(repo, 7, False, 1))))
+                out = json.loads(json.dumps(as_dict(probe_metadata(repo, 7, False, 1))))
         self.assertEqual(out["yank_source"], "simple")
         self.assertIn("0.5.1", out["yanked"])
         self.assertEqual(out["index_views"]["simple"]["latest_installable"], "0.7.0")
 
 
 class NonPythonTargetTest(unittest.TestCase):
-    def test_missing_pyproject_exits_two(self):
+    def test_missing_pyproject_cannot_run(self):
+        """127, not 2.
+
+        Before the merge this was exit 2, which meant "not a Python MCP repo".
+        In the merged exit-code vocabulary 2 means FINDINGS, so keeping it would
+        have reported a directory with no pyproject.toml as a defect in a target
+        rather than as a probe that could not be pointed at one.
+        """
         with tempfile.TemporaryDirectory() as d:
-            argv = sys.argv
-            sys.argv = ["release_gap", "--target", d]
-            try:
-                self.assertEqual(rg.main(), 2)
-            finally:
-                sys.argv = argv
+            self.assertEqual(rg.main(["--target", d]), 127)
 
 
 if __name__ == "__main__":

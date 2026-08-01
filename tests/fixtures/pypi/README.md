@@ -1,9 +1,9 @@
 # PyPI index fixtures
 
-Recorded responses for `scripts/release_gap.py`, so the two index APIs can be
+Recorded responses for `scripts/shipped_probe.py`, so the two index APIs can be
 made to disagree in a test without a live call. The default suite never touches
 the network; `RELEASE_GAP_LIVE=1` opts into the live re-measurement in
-`tests/test_release_gap.py`.
+`tests/test_release_metadata.py`.
 
 All four describe `zurich-opendata-mcp`, trimmed to the fields the probe reads.
 

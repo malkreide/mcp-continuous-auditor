@@ -1,28 +1,62 @@
 ---
-name: release-gap
-description: Verify that the fix on main is the fix users install — published PyPI version, yank status, release tags and unreleased commits against the repository. Deterministic; run it, do not reason about it.
+name: shipped-probe
+description: Verify that the fix on main is the fix users install — index version, yank status, release tags and unreleased commits against the repository, and optionally install the artifact and make it run. Deterministic; run it, do not reason about it.
 requires:
   bins: [python, git]
 ---
 
-# Release Gap
+# Shipped probe
 
 `identity-probe` asks whether the version a server reports is *correct*. This
-asks whether it is *current*. A repository can be green, audited and entirely
-fixed while every `pip install` still hands out the broken release — and
-nothing in CI contradicts that, because CI tests the branch, not the artifact.
+asks whether it is *current*, and then whether it *runs*. A repository can be
+green, audited and entirely fixed while every `pip install` still hands out the
+broken release — nothing in CI contradicts that, because CI tests the branch,
+not the artifact.
+
+This absorbed the former `release-gap` skill. That question — is the published
+metadata consistent with the repository? — is now the **cheap depth** of this
+one, not a separate tool.
 
 Run:
 
 ```bash
-python scripts/release_gap.py --target <path-to-server-repo>
-python scripts/release_gap.py --target <path> --max-age-days 14
-python scripts/release_gap.py --target <path> --offline    # git-only, says so
-python scripts/release_gap.py --target <path> --index-url https://pypi.example.com/simple
+# metadata only: index + git. Two HTTP requests, no venv, no install.
+python scripts/shipped_probe.py --target <path> --metadata-only
+python scripts/shipped_probe.py --target <path> --offline          # git-only, says so
+python scripts/shipped_probe.py --target <path> --max-age-days 14
+
+# full: also install the distribution into a fresh venv and speak MCP to it.
+python scripts/shipped_probe.py --dist <name> --target <path>
+python scripts/shipped_probe.py --dist <name> --target <path> --tool health --format json
+
+# any PEP 503 index, as pip takes it
+python scripts/shipped_probe.py --target <path> --index-url https://pypi.example.com/simple
 ```
 
-Exit `0` clean, `1` findings **or an unreachable index**, `2` not a Python MCP
-repo. Report every line; the findings are independent.
+`--dist` defaults to the `[project] name` in the target's `pyproject.toml`.
+
+Exit `0` clean, `2` **findings**, `127` the harness could not run (unreachable
+index, venv failure). Report every line; the findings are independent.
+
+> **Changed:** the old `release_gap.py` exited `1` for findings and `2` for "not
+> a Python repo". Both moved to this probe's vocabulary. A script testing
+> `$? -eq 1` now sees `2`, and a directory with no `pyproject.toml` gives `127`
+> — `2` now means *the target has a defect*, which such a directory has not been
+> shown to have.
+
+## Which depth to use
+
+| | `--metadata-only` | default |
+|---|---|---|
+| Cost | 2 HTTP requests + git | venv + install + a live tool call |
+| Answers | did the release land, is it yanked, has `main` drifted | all of that, **and** does the installed artifact start and answer |
+| Use for | a pre-release check, a wide portfolio sweep | the nightly gate, anything before trusting a release |
+
+Phase 1's findings are carried into the full run, never replaced — the deeper
+run can only report *more*. Where both depths reach the same conclusion from
+different evidence (`PUBLISH_GAP` from metadata, `TAG_NOT_ON_INDEX` after an
+install) the metadata code is the one reported, so what you see does not depend
+on which depth ran.
 
 ## The incident
 
@@ -38,7 +72,7 @@ fixes landed, and until the next release PyPI served a server whose
 nothing.
 
 Run against a reconstruction of that state, the probe reports
-`UNRELEASED [high] … 2 of them user-facing` and exits `1`.
+`UNRELEASED [high] … 2 of them user-facing` and exits `2`.
 
 ## Reading the output
 
@@ -95,7 +129,7 @@ red — the same shape as the boot gate's `not-selected`. Exit `0` with an
 To see what the two APIs say right now:
 
 ```bash
-RELEASE_GAP_LIVE=1 python3 -m unittest tests.test_release_gap.LiveDivergenceTest -v
+RELEASE_GAP_LIVE=1 python3 -m unittest tests.test_release_metadata.LiveDivergenceTest -v
 ```
 
 ## Three things not to shortcut

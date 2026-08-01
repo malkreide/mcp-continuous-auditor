@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — `release_gap.py` merged into `shipped_probe.py` as its cheap depth
+
+Requested after the two probes had been made to agree on how they read an index.
+Both previously read PyPI, compared versions against tags, and disagreed about
+what to call the result; `shipped_probe.py` imported eight helpers from
+`release_gap.py` to do it.
+
+`release_gap.py` is **deleted**. Its question is now a depth of the surviving
+probe rather than a second tool:
+
+```
+shipped_probe.py --target . --metadata-only   # index + git. Two requests, no venv.
+shipped_probe.py --dist X --target .          # the above, then install and run.
+```
+
+`--dist` now defaults to the `[project] name` in the target's `pyproject.toml`,
+which is what kept the cheap depth a one-flag invocation instead of making every
+caller repeat what the file already says.
+
+**The cost objection that blocked this twice is answered by the depth flag, not
+waved away.** Three of the absorbed findings — `UNRELEASED`, `UNTAGGED_VERSION`,
+`CHANGELOG_UNRELEASED` — read git history and need no artifact at all. Making
+them cost a venv and a `pip install` would have been a real regression, and
+`--metadata-only` is what stops that.
+
+Four things had to be decided rather than mechanically moved:
+
+- **Two vocabularies overlapped.** `PUBLISH_GAP` (a tag the index does not have,
+  from metadata) and `TAG_NOT_ON_INDEX` (a tag the *installed* version is behind,
+  after paying for a venv) are one statement reached twice. Reporting both is not
+  extra information — it is double-counting with different provenance. The
+  metadata code wins, because it is the one that also fires under
+  `--metadata-only`, so what a maintainer sees does not depend on which depth ran.
+
+- **Two exit-code conventions collided**, and this is user-visible. `release_gap`
+  used `1` for findings and `2` for "not a Python repo"; this probe uses `0`/`2`
+  FINDINGS/`127` cannot-run, and that is the vocabulary the nightly gate reads.
+  A caller testing `$? -eq 1` now sees `2`. A target with no `pyproject.toml` now
+  gives `127` rather than `2` — also more correct, since `2` now means *the
+  target has a defect*, which such a directory has not been shown to have.
+
+- **Phase 1's findings are carried into phase 2, never replaced.** The first
+  wiring recomputed the finding list after the install and silently dropped the
+  yank and unreleased-commit findings, so the expensive run reported *less* than
+  the cheap one.
+
+- **One network door, not two.** The merged probe initially read the index twice
+  — phase 1 through `fetch_simple`/`fetch_json`, phase 2 through the old
+  `index_lookup` seam — which meant two chances to disagree, and made the
+  existing tests reach the real network in phase 1 while believing they had
+  stubbed it. `lookup_index()` is gone: `reconcile()` already encoded its
+  PyPI-only fallback and its 404 corroboration. Everything now goes through
+  `_get`, which is also the single point the tests stub.
+
+A side effect worth naming: the release-gap cross-check now guards the
+shipped-artifact gate too. Both index APIs are read on PyPI and a disagreement
+between them is `UNCONFIRMED` rather than a finding, so the nightly gate no
+longer fires during the minutes after a publish. That costs one extra HTTP
+request per run.
+
+The skill moves `skills/release-gap/` → `skills/shipped-probe/` and documents
+both depths and the exit-code change. `tests/test_release_gap.py` becomes
+`tests/test_release_metadata.py`, still 55 tests, still pinning the two measured
+API divergences. Verified end to end at all three depths against the live index,
+including a full run that installed `zurich-opendata-mcp` 0.7.0, listed 26 tools
+and made a real tool call.
+
 ### Added — `release_gap.py` takes `--index-url`, and refuses the cross-check that would lie
 
 `shipped_probe.py` got this in the change below; `release_gap.py` was still
