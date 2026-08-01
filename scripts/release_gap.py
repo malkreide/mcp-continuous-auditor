@@ -72,6 +72,19 @@ not a permanent property of either API. That is precisely why it is dangerous:
 it is invisible except in the minutes right after a release or a yank — the
 minutes in which somebody is most likely to be running this script.
 
+``--index-url`` points this at any PEP 503 index, the way ``pip`` takes it. Two
+consequences follow and neither is optional:
+
+* the **HTML** flavour has to be read, because PEP 691's JSON is optional and
+  HTML is the only format an index is required to serve. Both are parsed into
+  one shape in ``_get``, so nothing downstream knows which arrived;
+* against anything but PyPI the **JSON cross-check does not run at all**. It is
+  not a weaker second opinion there — pypi.org would answer about a *different
+  package* that happens to share the name, and any agreement or disagreement
+  between the two would be noise. That is reported (``not_applicable``), not
+  quietly skipped: every UNCONFIRMED outcome below depends on having two
+  opinions, and on a private index there is exactly one.
+
 So: **the Simple API is the primary source, the JSON API is a fallback**, and
 where the two disagree the answer is reported as UNCONFIRMED rather than
 picked. An auditor that raises an alarm because one of PyPI's caches is 90 s
@@ -119,6 +132,7 @@ Usage:
   python scripts/release_gap.py --target ../meteoswiss-mcp
   python scripts/release_gap.py --target . --max-age-days 14 --format json
   python scripts/release_gap.py --target . --offline      # git-only, honest about it
+  python scripts/release_gap.py --target . --index-url https://pypi.example.com/simple
 """
 from __future__ import annotations
 
@@ -130,6 +144,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from html.parser import HTMLParser
+from urllib.parse import quote, urlsplit
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -141,10 +157,13 @@ except ModuleNotFoundError:  # Python 3.10 — tomllib landed in 3.11
     tomllib = None  # type: ignore[assignment]
 
 PYPI_JSON = "https://pypi.org/pypi/{dist}/json"
-PYPI_SIMPLE = "https://pypi.org/simple/{dist}/"
-# PEP 691. Without this header the Simple API answers HTML, which carries the
-# same data behind an attribute-scraping exercise nobody should be writing.
-SIMPLE_ACCEPT = "application/vnd.pypi.simple.v1+json"
+PYPI_SIMPLE = "https://pypi.org/simple"
+# PEP 691 first, HTML second, and the HTML is not a formality: the JSON flavour
+# is OPTIONAL, and the only response format a PEP 503 index is required to serve
+# is HTML. PyPI content-negotiates to JSON; a devpi, an Artifactory or a plain
+# directory listing answers HTML, and refusing to read it would mean refusing to
+# audit every private index. Both are parsed into the same shape below.
+SIMPLE_ACCEPT = "application/vnd.pypi.simple.v1+json, text/html;q=0.5, */*;q=0.1"
 
 TAG = re.compile(r"^v?(\d+(?:\.\d+)*.*)$")
 CHANGELOG_UNRELEASED = re.compile(r"^##\s*\[?Unreleased\]?", re.IGNORECASE)
@@ -164,6 +183,12 @@ USER_FACING = frozenset({"fix", "feat", "perf", "revert"})
 PRERELEASE = re.compile(r"^\s*v?\d+(?:\.\d+)*[._-]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)", re.I)
 
 ARCHIVE_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".zip", ".whl", ".egg")
+
+# The JSON API exists only on PyPI. Against any other index it is not a source
+# that failed — it is a source that does not exist, and the two must not be
+# reported as the same thing: one is a degraded run, the other a correct one
+# that simply has no second opinion available.
+NOT_APPLICABLE = "not_applicable"
 
 
 @dataclass
@@ -212,6 +237,11 @@ class IndexView:
 class Report:
     dist: str
     version: str
+    # The index that was actually asked. The `pypi_*` names below are historical
+    # — this script predates `--index-url` and renaming them would break every
+    # consumer of `--format json` to rephrase a field nobody misreads while the
+    # index is right there next to them.
+    index_url: str = PYPI_SIMPLE
     pypi_version: str | None = None
     # ok | unreachable | not_published | skipped | unconfirmed
     pypi_status: str = "ok"
@@ -300,22 +330,94 @@ def release_tags(root: Path) -> list[str] | None:
     return tags
 
 
+class _SimpleHTMLParser(HTMLParser):
+    """PEP 503 project page — the anchor list, with PEP 592's yank attribute.
+
+    Only ``<a>`` is of interest: its text is the filename, and ``data-yanked``
+    marks a withdrawn file. The attribute's PRESENCE is the yank; its value is
+    an optional reason, so an empty ``data-yanked=""`` is still yanked. Reading
+    it as a truthy value would call every reasonless yank healthy — the same
+    class of mistake as trusting the JSON API's lagging flag.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.files: list[dict[str, Any]] = []
+        self._current: dict[str, Any] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        attributes = dict(attrs)
+        yanked: Any = False
+        if "data-yanked" in attributes:
+            yanked = attributes.get("data-yanked") or True
+        self._current = {"filename": "", "url": attributes.get("href") or "", "yanked": yanked}
+
+    def handle_data(self, data: str) -> None:
+        if self._current is not None:
+            self._current["filename"] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or self._current is None:
+            return
+        entry = self._current
+        self._current = None
+        entry["filename"] = entry["filename"].strip()
+        if not entry["filename"]:
+            # Some indexes leave the anchor empty and carry the name in href.
+            entry["filename"] = urlsplit(str(entry["url"])).path.rsplit("/", 1)[-1]
+        if entry["filename"]:
+            self.files.append(entry)
+
+
+def _parse_simple_html(body: str) -> dict[str, Any]:
+    """A PEP 503 page, in the same shape PEP 691 would have handed us.
+
+    Deliberately no ``versions`` key: PEP 700 added that to the JSON flavour and
+    HTML has no equivalent. Leaving it out makes ``fetch_simple`` derive the
+    version list from the filenames instead of trusting an empty one, which
+    would read as "this project has no releases".
+    """
+    parser = _SimpleHTMLParser()
+    parser.feed(body)
+    parser.close()
+    return {"files": parser.files}
+
+
 def _get(url: str, timeout: float, accept: str | None = None) -> tuple[Any, str, str]:
-    """(payload, status, detail). Never raises — the caller reports the status."""
+    """(payload, status, detail). Never raises — the caller reports the status.
+
+    Answers in the PEP 691 shape whichever flavour the index served, so nothing
+    downstream has to care which one it was. HTML is only ever produced by a
+    Simple endpoint; the JSON API has no HTML representation to be confused with.
+    """
     request = urllib.request.Request(url)
     if accept:
         request.add_header("Accept", accept)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
-            return json.loads(resp.read().decode("utf-8")), "ok", ""
+            raw = resp.read().decode("utf-8", errors="replace")
+            content_type = (resp.headers.get("Content-Type") or "").lower()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            return None, "not_published", "not on PyPI (HTTP 404)"
-        return None, "unreachable", f"PyPI returned HTTP {exc.code}"
+            return None, "not_published", "not on the index (HTTP 404)"
+        return None, "unreachable", f"the index returned HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        return None, "unreachable", f"PyPI unreachable: {exc}"
-    except (ValueError, KeyError) as exc:
-        return None, "unreachable", f"PyPI response unparseable: {exc}"
+        return None, "unreachable", f"index unreachable: {exc}"
+
+    if "html" in content_type:
+        return _parse_simple_html(raw), "ok", ""
+    try:
+        return json.loads(raw), "ok", ""
+    except ValueError as exc:
+        # An index that mislabels its content type is common enough to be worth
+        # one more attempt before giving up — but only when the body actually
+        # looks like a project page, never as a way to turn an error page into
+        # an empty-but-successful answer.
+        if "<a" in raw.lower():
+            return _parse_simple_html(raw), "ok", ""
+        return None, "unreachable", f"index response unparseable: {exc}"
 
 
 def is_prerelease(version: str) -> bool:
@@ -383,15 +485,42 @@ def _summarise(view: IndexView) -> IndexView:
     return view
 
 
-def fetch_simple(dist: str, timeout: float) -> IndexView:
+def is_pypi(index_url: str) -> bool:
+    """Is this index PyPI itself — the only index with a JSON API to compare to?
+
+    Host-based, not a prefix match on the URL: ``https://pypi.org/simple`` and
+    ``https://pypi.org/simple/`` are the same index, while a mirror at
+    ``https://mirror.local/pypi.org/simple`` is emphatically not one.
+    """
+    host = urlsplit(index_url).hostname or ""
+    return host == "pypi.org" or host.endswith(".pypi.org")
+
+
+def simple_url(dist: str, index_url: str = PYPI_SIMPLE) -> str:
+    """The project page on a PEP 503 index.
+
+    The name is normalised (PEP 503 §normalized-names) rather than passed
+    through: an index is only required to serve the normalised spelling, and
+    ``Foo.Bar_Baz`` would 404 on one that does — which this probe would then
+    report as "never published".
+    """
+    normalised = re.sub(r"[-_.]+", "-", dist).lower()
+    return f"{index_url.rstrip('/')}/{quote(normalised)}/"
+
+
+def fetch_simple(dist: str, timeout: float, index_url: str = PYPI_SIMPLE) -> IndexView:
     """The Simple API — the surface ``pip`` installs from, and the primary here.
+
+    ``index_url`` is the same value ``pip --index-url`` takes, so a target that
+    publishes to a private index can be audited against the index it actually
+    publishes to.
 
     The URL carries a cache-buster. The divergence this function exists for is a
     caching artefact, and asking through the same cache that is lagging would
     reproduce it faithfully rather than see past it.
     """
     view = IndexView(source="simple")
-    url = PYPI_SIMPLE.format(dist=dist) + f"?_cb={int(time.time())}"
+    url = simple_url(dist, index_url) + f"?_cb={int(time.time())}"
     payload, view.status, view.detail = _get(url, timeout, SIMPLE_ACCEPT)
     if payload is None:
         return view
@@ -501,7 +630,13 @@ def reconcile(report: Report, simple: IndexView, json_view: IndexView) -> None:
     elif simple.readable:
         report.pypi_version = simple.latest_installable or simple.latest
         report.pypi_status = simple.status
-        if not json_view.readable:
+        if json_view.status == NOT_APPLICABLE:
+            # Not a degraded run — a correctly narrower one. Said out loud all
+            # the same: every UNCONFIRMED outcome in this script depends on
+            # having two opinions, and here there is exactly one, so the
+            # cross-check that would catch a mid-propagation index is not armed.
+            report.pypi_detail = json_view.detail
+        elif not json_view.readable:
             report.pypi_detail = (
                 f"the JSON API was not readable ({json_view.detail}); the Simple "
                 "API answered and is the source that decides what pip installs"
@@ -514,14 +649,22 @@ def reconcile(report: Report, simple: IndexView, json_view: IndexView) -> None:
             "the JSON API, which is the second-best source and not the one pip reads"
         )
     else:
-        # Both failed. "Not on PyPI" is a real answer and outranks a transport
-        # failure — one of the two knowing the package is absent is enough.
-        if "not_published" in (simple.status, json_view.status):
+        # Neither answered. "Not on the index" is a real answer and outranks a
+        # transport failure — one of the two knowing the package is absent is
+        # enough. NOT_APPLICABLE is neither: it is the absence of a second
+        # opinion, not a second opinion of absence.
+        statuses = [simple.status, json_view.status]
+        if "not_published" in statuses:
             report.pypi_status = "not_published"
-            report.pypi_detail = f"{report.dist} is not on PyPI (HTTP 404)"
+            report.pypi_detail = f"{report.dist} is not on {report.index_url} (HTTP 404)"
         else:
             report.pypi_status = "unreachable"
             report.pypi_detail = simple.detail or json_view.detail
+            if json_view.status == NOT_APPLICABLE:
+                report.pypi_detail += (
+                    f" — and {report.index_url} is not PyPI, so there was no JSON "
+                    "API to fall back to"
+                )
 
     # ---- which releases are withdrawn --------------------------------------
     if simple.readable and json_view.readable:
@@ -636,18 +779,39 @@ def probe(
     offline: bool,
     timeout: float,
     now: datetime | None = None,
+    index_url: str = PYPI_SIMPLE,
 ) -> Report:
     project = read_project(target)
     dist = project.get("name", target.name)
     version = project.get("version", "(dynamic)")
-    report = Report(dist=dist, version=version)
+    report = Report(dist=dist, version=version, index_url=index_url)
 
     if offline:
         report.pypi_status = "skipped"
         report.pypi_detail = "--offline: the published artifact was not consulted"
         report.yank_source = "skipped"
     else:
-        reconcile(report, fetch_simple(dist, timeout), fetch_json(dist, timeout))
+        # Primary first, so the order of the requests matches the order of
+        # authority and a reader tracing the network sees the same precedence
+        # the docstring claims.
+        simple_view = fetch_simple(dist, timeout, index_url)
+        # The JSON API is asked ONLY when the index is PyPI. Querying pypi.org
+        # about a distribution that lives on a private index is not a weaker
+        # second opinion, it is a different package: same name, unrelated
+        # contents, and any agreement or disagreement between them is noise.
+        if is_pypi(index_url):
+            json_view = fetch_json(dist, timeout)
+        else:
+            json_view = IndexView(
+                source="json",
+                status=NOT_APPLICABLE,
+                detail=(
+                    f"{index_url} is not PyPI, which is the only index with a JSON "
+                    "API — so the Simple API's answer stands alone and the "
+                    "cross-check that would catch a mid-propagation index did not run"
+                ),
+            )
+        reconcile(report, simple_view, json_view)
 
     report.tags = release_tags(target)
     latest_tag = report.tags[0] if report.tags else None
@@ -707,7 +871,7 @@ def probe(
                 code="RELEASE_YANKED",
                 severity="high",
                 detail=(
-                    f"{dist} {current} is on PyPI and YANKED"
+                    f"{dist} {current} is on {report.index_url} and YANKED"
                     + (f" — {reason}" if reason else " with no reason given")
                     + f"{source_note}. The release exists, the tag matches and CI is "
                     "green, so every other check here reads healthy; installs "
@@ -817,7 +981,7 @@ def render(report: Report) -> str:
     if report.yanked:
         shown = sorted(report.yanked, key=lambda v: release_key(v) or ())
         out.append(
-            f"NOTE       {len(shown)} yanked release(s) on PyPI: {', '.join(shown)}. "
+            f"NOTE       {len(shown)} yanked release(s) on the index: {', '.join(shown)}. "
             "Older withdrawn releases are history, not a finding — only the release "
             "this repository treats as current is one."
         )
@@ -835,8 +999,10 @@ def render(report: Report) -> str:
         latest = report.tags[0] if report.tags else "—"
         out.append(
             f"release OK ({report.dist}: pyproject {report.version}, "
-            f"PyPI {report.pypi_version}, latest tag {latest}; "
-            f"{len(report.unreleased_commits)} unreleased commit(s))"
+            f"index {report.pypi_version}, latest tag {latest}; "
+            f"{len(report.unreleased_commits)} unreleased commit(s)"
+            + (f"; {report.index_url}" if report.index_url != PYPI_SIMPLE else "")
+            + ")"
         )
     return "\n".join(out)
 
@@ -845,6 +1011,11 @@ def to_json(report: Report) -> dict[str, Any]:
     return {
         "dist": report.dist,
         "version": report.version,
+        # The `pypi_*` keys below are historical names for "the index that was
+        # asked", which is this one. Kept rather than renamed: breaking every
+        # consumer of this output to rephrase a field is not worth it while the
+        # index it refers to sits next to them.
+        "index_url": report.index_url,
         "pypi_version": report.pypi_version,
         "pypi_status": report.pypi_status,
         "pypi_detail": report.pypi_detail,
@@ -890,7 +1061,16 @@ def main() -> int:
         action="store_true",
         help="skip the PyPI query; git-only, and the report says so",
     )
-    ap.add_argument("--timeout", type=float, default=15.0, help="PyPI request timeout in seconds")
+    ap.add_argument(
+        "--index-url",
+        default=PYPI_SIMPLE,
+        help=(
+            "PEP 503 index to compare against, as pip takes it "
+            f"(default: {PYPI_SIMPLE}). Against anything but PyPI the JSON API "
+            "cross-check does not run — there is no JSON API to run it against"
+        ),
+    )
+    ap.add_argument("--timeout", type=float, default=15.0, help="index request timeout in seconds")
     ap.add_argument("--format", choices=("text", "json"), default="text")
     args = ap.parse_args()
 
@@ -899,7 +1079,9 @@ def main() -> int:
         print(f"{target}: no pyproject.toml — not a Python MCP server repo", file=sys.stderr)
         return 2
 
-    report = probe(target, args.max_age_days, args.offline, args.timeout)
+    report = probe(
+        target, args.max_age_days, args.offline, args.timeout, index_url=args.index_url
+    )
 
     if args.format == "json":
         print(json.dumps(to_json(report), indent=2, ensure_ascii=False))

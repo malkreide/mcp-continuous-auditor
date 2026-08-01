@@ -18,6 +18,7 @@ Run:
 python scripts/release_gap.py --target <path-to-server-repo>
 python scripts/release_gap.py --target <path> --max-age-days 14
 python scripts/release_gap.py --target <path> --offline    # git-only, says so
+python scripts/release_gap.py --target <path> --index-url https://pypi.example.com/simple
 ```
 
 Exit `0` clean, `1` findings **or an unreachable index**, `2` not a Python MCP
@@ -53,6 +54,20 @@ Run against a reconstruction of that state, the probe reports
 | `NOTE` | Informational — `--offline`, not on PyPI, or tags unavailable. |
 
 ## Which PyPI API is believed
+
+Both response flavours are read: PEP 691's JSON where the index serves it, and
+PEP 503 HTML otherwise — the JSON flavour is optional and HTML is the only
+format an index must serve, so a JSON-only reader could not audit a private
+index at all.
+
+`--index-url` takes any PEP 503 index, the way `pip` does. **Against anything
+but PyPI the JSON cross-check does not run**, and the report says so. That is
+not caution, it is correctness: pypi.org would answer about a *different
+package* that happens to share the name, so agreement and disagreement are both
+noise — and a disagreement would raise `UNCONFIRMED`, or a `PUBLISH_GAP`, from
+an unrelated project. Read the resulting run knowing it has one opinion in it,
+not two: nothing here can report `UNCONFIRMED` against a private index, so a
+mid-propagation index will not be caught.
 
 The **Simple API** (`/simple/{dist}/`, PEP 503/691/700) is primary: it is the
 one `pip` and `uv` read, so it is the one that decides what a user gets, and it

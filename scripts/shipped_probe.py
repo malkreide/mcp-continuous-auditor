@@ -31,11 +31,14 @@ failed on an approval or an OIDC trust that nobody was watching. Reporting both
 as "PyPI is out of date" sends the maintainer to the wrong place.
 
 Because that distinction carries an accusation, the check behind it reads the
-SIMPLE API — the surface pip resolves against, and therefore the one this
-probe's entire claim is about. It used to ask the JSON API and then install
-from the Simple one, so the existence check and the install consulted two
-different caches of the same index. ``lookup_index`` below documents what the
-fallback is for and why a 404 is corroborated rather than believed.
+SIMPLE API at ``--index-url`` — the exact surface pip will resolve against, and
+therefore the one this probe's entire claim is about. It used to ask pypi.org's
+JSON API and then install from wherever the target publishes: two caches of one
+index in the best case, and two different hosts for anyone on a private index.
+Reading an arbitrary index means reading PEP 503 HTML, since the JSON flavour is
+optional and HTML is the only format required; both are parsed into one shape in
+``release_gap._get``. ``lookup_index`` below documents why the JSON fallback
+exists only for PyPI and why a 404 is corroborated rather than believed.
 
 THE STDIN TRAP, AGAIN — AND WORSE HERE
 --------------------------------------
@@ -314,32 +317,49 @@ def pick_tool(tools: list[dict[str, Any]], preferred: str = "") -> tuple[str, st
     return "", "the server listed no tools"
 
 
-def lookup_index(dist: str, timeout: float) -> tuple[str | None, str, str]:
+# One definition, used by both probes: "does this index have a JSON API to
+# corroborate with" is the same question here as in release_gap, and two copies
+# of a host check are two chances to answer it differently.
+is_pypi = rg.is_pypi
+
+
+def lookup_index(
+    dist: str, timeout: float, index_url: str = DEFAULT_INDEX
+) -> tuple[str | None, str, str]:
     """Does this distribution exist on the index, and at which version?
 
-    Simple API first, JSON API as the fallback — the precedence ``release_gap``
-    documents, for the reason that applies twice as hard here: the Simple API is
-    the surface ``pip`` resolves against, and this probe's whole claim is about
-    what ``pip`` does. Asking the JSON API and then installing from the Simple
-    one meant the existence check and the install could disagree.
+    Asked against the SAME index the install resolves against — ``--index-url``,
+    whatever it points at. This probe's whole claim is about what ``pip`` does,
+    and it used to ask pypi.org's JSON API and then install from wherever the
+    target actually publishes. For a private index those are different hosts, so
+    the check could answer confidently about a package it was never looking at.
 
-    The fallback is not decoration. A Simple response that cannot be read as
-    PEP 691 JSON — an index or a caching proxy that only speaks the HTML flavour
-    — is not an index that is down: ``pip`` installs from it perfectly well. A
-    bare swap would turn those setups into exit 127, trading one wrong answer
-    for another.
+    Reading an arbitrary index means reading PEP 503 HTML, which is the only
+    format such an index is required to serve — ``release_gap._get`` parses both
+    flavours into one shape, so that support lives in one place rather than two.
 
-    404 on the Simple API is checked against the JSON API rather than believed.
-    "Never published" is the one verdict here that accuses the maintainer of not
-    having a release process at all, and a first-ever publish is exactly when
-    the two APIs are most likely to be seconds apart. If either index has heard
-    of the package, this returns "published" and lets the INSTALL settle it —
-    unlike ``release_gap``, this probe has a tiebreaker and does not have to
-    report the disagreement unresolved.
+    The JSON API stays as a fallback ONLY for PyPI, because only PyPI has one. On
+    any other index a failed Simple read is the end of the road, and it is
+    reported rather than papered over: 127, not a guess.
+
+    404 is corroborated rather than believed — but again only on PyPI, where a
+    second opinion exists. "Never published" is the one verdict here that
+    accuses a maintainer of having no release process at all, and a first-ever
+    publish is exactly when two caches are most likely to be seconds apart. If
+    either index has heard of the package this returns "published" and lets the
+    INSTALL settle it: unlike ``release_gap``, this probe has a tiebreaker and
+    does not have to leave the disagreement unresolved.
     """
-    view = rg.fetch_simple(dist, timeout)
+    view = rg.fetch_simple(dist, timeout, index_url)
     if view.readable:
         return (view.latest_installable or view.latest), "ok", ""
+
+    if not is_pypi(index_url):
+        if view.status == "not_published":
+            return None, "not_published", f"{dist} is not on {index_url} (HTTP 404)"
+        return None, "unreachable", (
+            f"{view.detail} — and {index_url} is not PyPI, so there is no JSON API "
+            "to corroborate it with")
 
     fallback_version, fallback_status, fallback_detail = rg.fetch_pypi_version(dist, timeout)
     if view.status == "not_published":
@@ -592,7 +612,9 @@ def probe(dist: str, target: Path, *, tool: str = "",
     """Everything, wired. The three injectable seams are the three impure parts:
     the index lookup, the install, and the subprocess."""
     report = Report(dist=dist)
-    index_lookup = index_lookup or lookup_index
+    # The seam stays two-argument so injected fakes stay trivial; the index URL
+    # is closed over rather than threaded through it.
+    index_lookup = index_lookup or (lambda d, t: lookup_index(d, t, index_url))
     installer = installer or install_from_index
     speaker = speaker or speak_mcp
 

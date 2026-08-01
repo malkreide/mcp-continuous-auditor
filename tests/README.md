@@ -48,9 +48,11 @@ Covers:
   owns the existence check, which used to consult the JSON API while the install
   resolved against the Simple one — two caches of the same index, for a question
   whose wrong answer (`NOT_ON_INDEX`) tells a maintainer they have no release
-  process. It pins the fallback (a Simple index that only speaks HTML is not an
-  index that is down) and that a 404 is corroborated against the second API
-  before being believed.
+  process. It pins that the check asks the index `--index-url` points at (not
+  pypi.org regardless, which for a private index is a different host and can
+  answer about a package the probe was never looking at), that the JSON fallback
+  applies only to PyPI because only PyPI has one, and that a 404 is corroborated
+  against the second API before being believed.
 - `test_portfolio_scan.py` — the portfolio fan-out (`scripts/portfolio_scan.py`).
   Built around the three properties that would have caught the nested server
   left on the old SDK: `nested_manifests` flags an unclaimed manifest below the
@@ -168,10 +170,27 @@ Covers:
   yanked releases as healthy) and `PublishLagRegressionTest` (the JSON API
   still serving `0.6.0` some 90 s after `0.7.0` was published, which the probe
   used to report as a high-severity `PUBLISH_GAP` against a release that had
-  just succeeded). `LiveDivergenceTest` re-runs the measurement against the
-  real index and is skipped unless `RELEASE_GAP_LIVE=1` — it asserts only that
-  both APIs answered, and prints what they said. Needs `git`; no network in the
-  default run.
+  just succeeded). `SimpleHtmlTest` owns the PEP 503 HTML flavour, which is the
+  only format an arbitrary index is required to serve and therefore what
+  honouring `--index-url` rests on: that `data-yanked` is a yank by its
+  *presence* (an empty value is still a yank), that a missing PEP 700 `versions`
+  key means deriving versions from filenames rather than reporting none, and
+  that a body which is neither JSON nor a project page stays `unreachable`
+  instead of becoming an empty success. `LiveDivergenceTest` re-runs the
+  measurement against the real index and is skipped unless `RELEASE_GAP_LIVE=1`
+  — it asserts that both APIs answered and prints what they said, and fetches
+  PyPI's own project page in both flavours to check the HTML parser against real
+  markup. `CustomIndexTest` owns `--index-url`, and its sharpest assertion is a
+  negative one: pypi.org must appear **nowhere** in the requests made for a
+  private-index target, since it would be answering about a different package
+  that happens to share the name. A tool that must not be called cannot be
+  tested for by its answer, so the stub records which APIs were reached and the
+  test asserts on that list. The rest pins that the missing cross-check is
+  stated rather than silently skipped, that `UNCONFIRMED` is unreachable with
+  only one opinion available, and one end-to-end case proving the pieces
+  compose: PEP 503 HTML, no `versions` key, no JSON API, through to a
+  `RELEASE_YANKED` naming the release installs fall back to. Needs `git`; no
+  network in the default run.
 
 `test_smoke_target.py`, `test_transport_boot_probe.FastMCPBootTest` and
 `test_rebind_probe.FastMCPRebindTest` self-**skip** here — all three need
