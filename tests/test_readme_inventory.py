@@ -27,16 +27,19 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-README = ROOT / "README.md"
+# Both language versions. The German one drifted further than the English —
+# it had never carried the probe bullets at all — so checking only one would
+# guard the file that was already the more accurate of the two.
+READMES = (ROOT / "README.md", ROOT / "README.de.md")
 
 
 class SkillInventoryTest(unittest.TestCase):
     """The `skills/` line in Project Structure, against `skills/` itself."""
 
-    def _listed(self) -> set[str]:
-        text = README.read_text(encoding="utf-8")
+    def _listed(self, readme: Path) -> set[str]:
+        text = readme.read_text(encoding="utf-8")
         block = re.search(r"^skills/\s+(.*?)(?=^\S)", text, re.M | re.S)
-        self.assertIsNotNone(block, "no `skills/` entry in the Project Structure block")
+        self.assertIsNotNone(block, f"{readme.name}: no `skills/` entry in Project Structure")
         # Parentheticals are prose, not inventory ("(x absorbed the former y)").
         body = re.sub(r"\([^)]*\)", "", block.group(1))
         return {name.strip() for name in body.replace("\n", " ").split(",") if name.strip()}
@@ -45,13 +48,19 @@ class SkillInventoryTest(unittest.TestCase):
         return {p.name for p in (ROOT / "skills").iterdir() if p.is_dir()}
 
     def test_every_skill_on_disk_is_listed(self):
-        missing = self._on_disk() - self._listed()
-        self.assertEqual(missing, set(), f"skills exist but the README omits them: {missing}")
+        for readme in READMES:
+            with self.subTest(readme=readme.name):
+                missing = self._on_disk() - self._listed(readme)
+                self.assertEqual(missing, set(),
+                                 f"{readme.name} omits skills that exist: {missing}")
 
     def test_every_listed_skill_exists(self):
         """The direction that sends a reader to a path that is not there."""
-        phantom = self._listed() - self._on_disk()
-        self.assertEqual(phantom, set(), f"README lists skills that are gone: {phantom}")
+        for readme in READMES:
+            with self.subTest(readme=readme.name):
+                phantom = self._listed(readme) - self._on_disk()
+                self.assertEqual(phantom, set(),
+                                 f"{readme.name} lists skills that are gone: {phantom}")
 
 
 class ScriptPathTest(unittest.TestCase):
@@ -62,11 +71,14 @@ class ScriptPathTest(unittest.TestCase):
     """
 
     def test_named_scripts_exist(self):
-        text = README.read_text(encoding="utf-8")
-        named = set(re.findall(r"(scripts/[a-z_0-9]+\.py)", text))
-        self.assertTrue(named, "the README names no scripts — did the format change?")
-        missing = sorted(n for n in named if not (ROOT / n).exists())
-        self.assertEqual(missing, [], f"README points at scripts that do not exist: {missing}")
+        for readme in READMES:
+            with self.subTest(readme=readme.name):
+                named = set(re.findall(r"(scripts/[a-z_0-9]+\.py)",
+                                       readme.read_text(encoding="utf-8")))
+                self.assertTrue(named, f"{readme.name} names no scripts — format changed?")
+                missing = sorted(n for n in named if not (ROOT / n).exists())
+                self.assertEqual(missing, [],
+                                 f"{readme.name} points at scripts that do not exist: {missing}")
 
 
 if __name__ == "__main__":

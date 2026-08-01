@@ -17,6 +17,10 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 
 - **Read-only zuerst** — der Agent berichtet, bevor er je schreibt.
 - **Deterministische Wahrheitsinstanz** — promptfoo-YAML-Asserts + JSON-Schema-Drift-Checks in der CI.
+- **Recall-Untergrenzen, nicht nur Schema** — eine eingebrochene Ergebnismenge behält ihre JSON-Form, ein struktureller Diff sieht sie also nicht. Probes tragen `min_count`-Untergrenzen, und eine zweite wöchentliche Probe ruft die *eigenen Tools* des Servers live auf: die Raw-URL-Probe verifiziert den Endpunkt, der Canary die ganze Kette.
+- **Identity-Probe** — ein Server, dessen User-Agent eine handgepflegte Version trägt, driftet lautlos: nichts bricht, kein Test schlägt fehl, und er stellt sich jedem Upstream weiter als ein Release vor, das er nicht mehr ist. Ein Portfolio-Sweep fand 12 von 30 Servern mit falscher Version, 4 davon mit falschem *Major*. `scripts/identity_probe.py` prüft die Quelle und, mit `--installed`, das ausgelieferte Artefakt — der einzige Nachweis, der eine veraltete Editable-Installation überlebt.
+- **Shipped-Probe** — die Identity-Probe fragt, ob die gemeldete Version *korrekt* ist; diese fragt, ob sie *aktuell* ist, und dann, ob sie *läuft*. Ein Repository kann grün, auditiert und vollständig repariert sein, während jedes `pip install` weiterhin den kaputten Release ausliefert, denn die CI testet den Branch und nicht das Artefakt. `meteoswiss-mcp` lieferte drei Tage lang jedem frischen Install einen Import-Fehler aus, während `main` längst korrigiert war — aufgefallen ist es erst durch einen externen Bug-Report. `scripts/shipped_probe.py` läuft in zwei Tiefen: `--metadata-only` vergleicht Index-Version, Yank-Status, Release-Tags und unveröffentlichte Commits für zwei HTTP-Requests und gewichtet ein `fix:` anders als ein `docs:`; die Standardtiefe installiert die Distribution danach in ein frisches venv und spricht echtes MCP mit ihr. Sie liest die **Simple-API** unter `--index-url` — die Oberfläche, von der `pip` installiert, in beiden Varianten (PEP 691 JSON und PEP 503 HTML, da nur HTML garantiert ist) — weil PyPIs JSON-API nachweislich um Minuten hinterherhinkte, sowohl bei der neuesten Version als auch beim `yanked`-Flag; auf PyPI wird die JSON-API als Zweitmeinung gelesen, und wo beide sich widersprechen, lautet die Antwort `UNCONFIRMED` statt geraten. Das schliesst zugleich einen blinden Fleck, den die Versionsnummer allein nicht sieht: ein *zurückgezogener* Release sieht aus wie ein gesunder — die Version existiert, das Tag passt, die CI ist grün — während jedes `pip install` still auf etwas Älteres auflöst. Ein unerreichbarer Index gilt als Harness-Fehler, nie als «in sync». Die Metadaten-Tiefe war früher ein eigenes `scripts/release_gap.py`; dieser Name lebt als **veralteter Shim** weiter, der an `--metadata-only` weiterleitet und Exit-Codes sowie `--format json`-Schlüssel in den alten Vertrag zurückübersetzt, damit Aufrufer ausserhalb dieses Repos unverändert funktionieren. Er enthält keine Probe-Logik und ist löschbar, sobald ihn nichts mehr aufruft.
+- **Published-Probe** — die Identity-Probe liest ein Repository und die Metadaten-Tiefe der Shipped-Probe vergleicht Versions*nummern*; keine von beiden öffnet das Artefakt. `swiss-efv-mcp` besteht beide (PyPI 0.3.0, `main` 0.3.0, `src/` sauber), während das Paket, das jeder Nutzer installiert, `Mozilla/5.0 … Chrome/124.0` sendet — es gibt sich Upstreams gegenüber als Browser aus. `scripts/published_probe.py` installiert die Distribution in ein Wegwerf-venv und liest den User-Agent, den der ausgelieferte Code tatsächlich auf die Leitung legt: 16 von 33 Portfolio-Paketen meldeten eine Version, die sie nicht waren; der Fix ist in allen gemergt. Wo sie einen Wert nicht auflösen kann, meldet sie `UNVERIFIED`, nie «sauber» — eine frühere Fassung, die «nichts gefunden» mit «da ist nichts» verwechselte, nannte 24 Pakete unauffällig, von denen 16 drifteten.
 - **Unabhängiger Grader** — LLM-bewertete Checks nutzen eine echt andere Modell-*Familie* als der Schreiber (Schreiber ist Anthropic → Grader defaultet auf `openai:gpt-4o-mini` oder ein lokales Ollama-Modell), damit ein korrelierter blinder Fleck nicht seinen eigenen Output durchwinkt.
 - **Kontinuierliches Red-Teaming** — OWASP LLM Top 10 (Prompt Injection, PII-Leak) gegen die MCP-Oberfläche.
 - **Mensch als Merge-Gate** — der Agent öffnet nur PRs, pusht nie auf `main`.
@@ -37,7 +41,7 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 git clone https://github.com/malkreide/mcp-continuous-auditor.git
 cd mcp-continuous-auditor
 cp .env.example .env        # Tokens eintragen
-npm i -g openclaw promptfoo
+npm i -g openclaw promptfoo # oder npx verwenden
 ```
 
 ## Verwendung / Schnellstart
@@ -68,6 +72,9 @@ promptfoo eval -c promptfoo/promptfooconfig.yaml
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot-Token von @BotFather |
 | `TELEGRAM_ALLOW_FROM` | Deine numerische Telegram-User-ID (Gating) |
+| `TELEGRAM_ANNOUNCE_TO` | Optional — Ziel für die gateway-unabhängige Meldung (`scripts/telegram_notify.py`); fällt auf die erste ID aus `TELEGRAM_ALLOW_FROM` zurück |
+| `TELEGRAM_NOTIFY` | Optional — `1` setzen, damit `scripts/nightly-audit.sh` den Report ohne OpenClaw nach Telegram schiebt (Default aus; siehe [Doku](docs/telegram/standalone-notify.md)) |
+| `TELEGRAM_GITHUB_TOKEN` | Optional — PAT (issues: read/write) für den gateway-freien eingehenden Intake (`scripts/telegram_intake.py`); fällt auf den Workflow-Token zurück (siehe [Doku](docs/telegram/standalone-intake.md)) |
 | `ANTHROPIC_API_KEY` | Schreiber / Tool-Provider-Familie |
 | `OPENAI_API_KEY` | Unabhängiger Grader (Default `openai:gpt-4o-mini`; andere Familie als der Schreiber) |
 | `GRADER_PROVIDER` | Optionaler Grader-Override, z.B. `ollama:chat:llama3.1` (lokal, kein Cloud-Key) |
@@ -81,30 +88,61 @@ OpenClaw-Orchestrator. Da dieser Prozess das GitHub-PAT + den Anthropic-Key häl
 und Shell-Tools startet, ist die **empfohlene Betriebsart** ein dediziertes,
 netz-isoliertes Gerät statt deines Arbeits-PCs.
 
-**Empfohlen: ein dedizierter Raspberry Pi 5 (8 GB).** Die Last ist leicht
-(Orchestrierung + API-Calls, kein lokales Modell), und ein separates Gerät fügt
-eine echte Hardware-/Netzwerk-Isolationsschicht über die bestehende Docker-Sandbox
-und den fein-granularen PAT hinzu. Vollständige Anleitung (OS-Setup, ARM64-Checks,
-Egress-Allowlist, systemd-Härtung):
-**[docs/deployment/raspberry-pi.md](docs/deployment/raspberry-pi.md)**.
+**Fang bei Tier 0 an** — der ganze Auditor auf einer Linux-Kiste mit OpenClaws
+Docker-Sandbox + den deterministischen Gates, **ohne** microVM / TensorZero. Der
+Sicherheitskern (read-only, nur PRs, Schreiber≠Prüfer, deterministische Wahrheit,
+Hard-Fail-Disziplin) ist damit schon da; die schwereren Isolationsstufen sind
+optional und werden einzeln übernommen. Die Stufentabelle steht in
+**[docs/deployment/tier-0.md](docs/deployment/tier-0.md)**.
 
-Gleichwertige **Alternativen** bleiben unterstützt: eine lokale Linux-VM in
-eigenem Subnetz oder ein günstiger VPS. Die Trade-offs stehen in derselben Anleitung.
+**Empfohlener Host: ein dedizierter Raspberry Pi 5 (8 GB)** (weiterhin Tier 0 —
+eine *Host*-Entscheidung). Die Last ist leicht (Orchestrierung + API-Calls, kein
+lokales Modell), und ein separates Gerät fügt eine echte Hardware-/Netzwerk-
+Isolationsschicht über die bestehende Docker-Sandbox und den fein-granularen PAT
+hinzu. Vollständige Anleitung (OS-Setup, ARM64-Checks, Egress-Allowlist,
+systemd-Härtung): **[docs/deployment/raspberry-pi.md](docs/deployment/raspberry-pi.md)**.
+Gleichwertige Alternativen: eine lokale Linux-VM in eigenem Subnetz oder ein
+günstiger VPS. Die Trade-offs stehen in derselben Anleitung.
+
+Optionale Härtungsstufen: Host-Egress-Allowlist + Forward-Proxy → microVM-
+Broker/Worker-Trennung → TensorZero-Cost-Cap (siehe Stufentabelle).
 
 ## Projektstruktur
 
 ```
 openclaw/         OpenClaw-Gateway-Config + Policy-as-Code (SOUL/AGENTS/TOOLS)
 openclaw/cron/    nightly-audit Cron-Job-Spec + Installer (taeglich 03:00 → Telegram)
-skills/           python-auditor, fastmcp-testing, promptfoo-eval
-promptfoo/        deterministische Asserts, Schema-Drift, Red-Team
-scripts/          Audit-Harness, Live-Probe + nightly-audit-Cron-Kern + Budget-Guard
+skills/           python-auditor, fastmcp-testing, promptfoo-eval,
+                  identity-probe, published-probe, shipped-probe
+                  (shipped-probe hat den frueheren release-gap-Skill aufgenommen)
+schemas/          generierte Tool-Output-JSON-Schemas = der Drift-Detektor
+promptfoo/        deterministische Asserts, Schema-Drift, Red-Team + Fixtures
+scripts/          Audit-Harness, Live-Probe, nightly-audit-Cron-Kern, Budget-Guard,
+                  deterministisches Findings→Issue-Routing, gepinnter
+                  promptfoo-Installer, gateway-unabhaengige Telegram-Meldung +
+                  Intake (telegram_notify.py, telegram_intake.py)
+                  portfolio_scan.py = die Faecherung: EIN billiges Praedikat ueber
+                  JEDEN Server als Matrix (targets.example.yaml), fuer die Frage,
+                  die ein Ein-Ziel-Nightly nicht beantworten kann — welches Repo
+                  aus der Reihe faellt
+                  release_gap.py = NUR ein veralteter Shim: leitet an
+                  shipped_probe.py --metadata-only weiter und uebersetzt die
+                  Exit-Codes und --format json-Schluessel in den Vertrag zurueck,
+                  den er vor der Zusammenlegung hatte. Keine Probe-Logik hier
+targets.example.yaml  Formatreferenz fuer die Ziel-Liste der Faecherung; die echte
+                  targets.yaml ist gitignored (Inventar, kein Quellcode)
+relay/            optionaler Cloudflare-Worker fuer Telegram-Push-Intake in Echtzeit
 tensorzero/       Phase 5: LLM-Gateway-Config + Stack (Cost-Caps, A/B, Audit-Trail)
-tests/            stdlib-Unit-Tests (Budget-Guard)
-.github/          CI = die Wahrheitsinstanz (Template fuer das Ziel-Repo)
+tests/            stdlib-Unit-Tests (502 in 26 Dateien) — laufen via
+                  .github/workflows/tests.yml
+.github/          tests.yml = die eigene Suite des Auditors;
+                  *.yml.template = CI fuer das Ziel-Repo
 docs/plans/       der v2-Bauplan
 docs/cron/        der taegliche nightly-audit-Cron (Ablauf, Modell-Hard-Fail, Install)
-docs/deployment/  Raspberry-Pi (empfohlener Host) + Phase-5 forkd/microVM-Isolation
+docs/deployment/  Raspberry-Pi (empfohlener Host), Phase-5 forkd/microVM-Isolation,
+                  worker-broker-rollout.md = beide Seiten in der richtigen
+                  REIHENFOLGE aktualisieren (Broker zuerst — ein alter Broker
+                  meldet die Findings eines neuen Workers als gruen)
 docs/budget/      Phase-5 Budget-Leitplanken (Token-Ceiling, Circuit Breaker)
 docs/observability/ Phase-5 TensorZero-Gateway (Cost-Caps, A/B, Audit-Trail)
 ```
@@ -112,6 +150,15 @@ docs/observability/ Phase-5 TensorZero-Gateway (Cost-Caps, A/B, Audit-Trail)
 ## Roadmap
 
 Phase 0 Baseline → 1 Read-only-Auditor → 2 promptfoo-CI-Gate → 3 PR-only-Worker → 4 Cron + Red-Team → 5 Härtung (forkd, TensorZero). Siehe [docs/plans](docs/plans).
+
+> **Stand Phase 3 — der Pfad Finding → Fix → PR ist agenten-unterstützt und
+> menschlich ausgelöst, keine automatisierte Pipeline.** Er ist end-to-end
+> vorgeführt in [`examples/worker-tdd-demo/`](examples/worker-tdd-demo/)
+> (RED-Test → Fix → GREEN → PR) und durch die TDD-Invarianten in
+> `openclaw/workspace/AGENTS.md` geregelt. Ein Worker schneidet einen
+> `fix/<slug>`-PR aber erst nach deinem ausdrücklichen Telegram-OK, pro Finding —
+> es gibt keine eingecheckte Automatik, die aus einem Finding von selbst einen PR
+> macht.
 
 ## Changelog
 
