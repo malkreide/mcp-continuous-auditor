@@ -98,11 +98,16 @@ class stub_index:
 
     def __init__(self, simple: dict | None = None, json_api: dict | None = None):
         self._simple, self._json = simple, json_api
+        # Which APIs were actually reached. An API that must not be consulted
+        # cannot be tested for by its answer — only by its absence from here.
+        self.seen: list[str] = []
 
     def _get(self, url: str, timeout: float, accept: str | None = None):
-        served = self._simple if "/simple/" in url else self._json
+        which = "json" if "/pypi/" in url and url.endswith("/json") else "simple"
+        self.seen.append(which)
+        served = self._simple if which == "simple" else self._json
         if served is None:
-            return None, "unreachable", "PyPI unreachable: simulated"
+            return None, "unreachable", "index unreachable: simulated"
         return served, "ok", ""
 
     def __enter__(self):
@@ -333,7 +338,7 @@ class ConvergedIndexTest(unittest.TestCase):
             sorted(report.yanked), ["0.2.0", "0.3.0", "0.3.3", "0.4.0", "0.5.0", "0.5.1"]
         )
         self.assertNotIn("RELEASE_YANKED", {f.code for f in report.findings})
-        self.assertIn("yanked release(s) on PyPI", rg.render(report))
+        self.assertIn("yanked release(s) on the index", rg.render(report))
 
     def test_a_yanked_current_release_is_a_high_finding(self):
         """The gap in words: "published and healthy" vs "published and pulled".
@@ -597,6 +602,119 @@ class SimpleHtmlTest(unittest.TestCase):
         view = self._view("upstream connect error", content_type="text/plain")
         self.assertFalse(view.readable)
         self.assertIn("unparseable", view.detail)
+
+
+class CustomIndexTest(unittest.TestCase):
+    """`--index-url`, and the cross-check that must NOT run against it.
+
+    Querying pypi.org about a distribution that lives on a private index is not
+    a weaker second opinion — it is a different package that happens to share a
+    name. Agreement and disagreement are both noise, and the second is worse:
+    it would raise UNCONFIRMED, or a PUBLISH_GAP, from an unrelated project.
+    """
+
+    PRIVATE = "https://pypi.example.com/simple"
+
+    # `None` is a meaningful value for a served payload — it is how the stub
+    # spells "unreachable" — so the default cannot also be None.
+    DEFAULT = object()
+
+    def _probe(self, index_url, simple=DEFAULT, json_api=None, tag="v0.7.0"):
+        with tempfile.TemporaryDirectory() as d:
+            repo = make_repo(Path(d), version="0.7.0")
+            if tag:
+                run(repo, "git", "tag", tag)
+            served = payload("zurich_simple_converged") if simple is self.DEFAULT else simple
+            with stub_index(served, json_api) as stub:
+                report = rg.probe(repo, 7, False, 1, index_url=index_url)
+        return report, stub
+
+    def test_pypi_org_is_never_asked_about_a_private_index_package(self):
+        report, stub = self._probe(self.PRIVATE, json_api=payload("zurich_json_converged"))
+        self.assertEqual(stub.seen, ["simple"], "the JSON API must not be consulted")
+        self.assertEqual(report.json_view.status, rg.NOT_APPLICABLE)
+
+    def test_the_missing_cross_check_is_stated_not_silently_skipped(self):
+        """A run with one opinion must not look like a run with two that agreed."""
+        report, _ = self._probe(self.PRIVATE)
+        self.assertEqual(report.pypi_status, "ok")
+        text = rg.render(report)
+        self.assertIn("not PyPI", text)
+        self.assertIn("did not run", text)
+        self.assertIn(self.PRIVATE, text)
+
+    def test_the_simple_answer_still_stands_on_its_own(self):
+        report, _ = self._probe(self.PRIVATE)
+        self.assertEqual(report.pypi_version, "0.7.0")
+        self.assertEqual(report.yank_source, "simple")
+        self.assertIn("0.5.1", report.yanked)
+        self.assertEqual([f.code for f in report.findings], [])
+
+    def test_unconfirmed_cannot_be_reached_without_a_second_opinion(self):
+        """The status that exists to describe a disagreement needs two parties."""
+        report, _ = self._probe(self.PRIVATE)
+        self.assertNotEqual(report.pypi_status, "unconfirmed")
+        self.assertNotEqual(report.yank_source, "unconfirmed")
+
+    def test_an_unreachable_private_index_says_there_was_no_fallback(self):
+        report, _ = self._probe(self.PRIVATE, simple=None)
+        self.assertEqual(report.pypi_status, "unreachable")
+        self.assertFalse(report.ok)
+        self.assertIn("no JSON API to fall back to", report.pypi_detail)
+
+    def test_the_default_index_still_cross_checks(self):
+        """The narrowing is conditional on the index, not a general retreat."""
+        report, stub = self._probe(
+            rg.PYPI_SIMPLE, json_api=payload("zurich_json_publish_lag"))
+        self.assertEqual(stub.seen, ["simple", "json"])
+        self.assertEqual(report.pypi_status, "unconfirmed")
+
+    def test_the_index_url_reaches_the_json_output(self):
+        report, _ = self._probe(self.PRIVATE)
+        self.assertEqual(json.loads(json.dumps(rg.to_json(report)))["index_url"], self.PRIVATE)
+
+    def test_a_private_html_index_all_the_way_to_a_finding(self):
+        """The whole chain on the shape a private index actually has: PEP 503
+        HTML, no PEP 700 `versions`, a yank with a reason and one without, and
+        no JSON API anywhere. The individual pieces are tested above; this is
+        the one case that proves they compose."""
+        html = (
+            '<!DOCTYPE html><html><body>'
+            '<a href="/f/demo_mcp-0.5.0.tar.gz">demo_mcp-0.5.0.tar.gz</a>'
+            '<a href="/f/demo_mcp-0.6.0-py3-none-any.whl" data-yanked="bad build">'
+            'demo_mcp-0.6.0-py3-none-any.whl</a>'
+            '<a href="/f/demo_mcp-0.6.0.tar.gz" data-yanked="">demo_mcp-0.6.0.tar.gz</a>'
+            "</body></html>"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            repo = make_repo(Path(d), version="0.6.0")
+            run(repo, "git", "tag", "v0.6.0")
+            orig = rg._get
+            rg._get = lambda url, timeout, accept=None: (  # type: ignore[assignment]
+                rg._parse_simple_html(html), "ok", ""
+            )
+            try:
+                report = rg.probe(repo, 7, False, 1, index_url="http://localhost:8099")
+            finally:
+                rg._get = orig  # type: ignore[assignment]
+
+        codes = {f.code: f for f in report.findings}
+        self.assertIn("RELEASE_YANKED", codes)
+        self.assertIn("bad build", codes["RELEASE_YANKED"].detail)
+        self.assertIn("localhost:8099", codes["RELEASE_YANKED"].detail)
+        # The whole point of the yank: installs land on the previous release.
+        self.assertIn("0.5.0", codes["RELEASE_YANKED"].detail)
+        self.assertNotIn("PyPI and YANKED", rg.render(report))
+
+
+class IsPypiTest(unittest.TestCase):
+    def test_matches_on_host_not_on_prefix(self):
+        for url in ("https://pypi.org/simple", "https://pypi.org/simple/"):
+            self.assertTrue(rg.is_pypi(url), url)
+        for url in ("https://pypi.example.com/simple",
+                    "https://mirror.local/pypi.org/simple",
+                    "http://localhost:8080/simple"):
+            self.assertFalse(rg.is_pypi(url), url)
 
 
 class SimpleUrlTest(unittest.TestCase):

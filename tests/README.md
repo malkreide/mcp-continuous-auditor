@@ -180,7 +180,17 @@ Covers:
   measurement against the real index and is skipped unless `RELEASE_GAP_LIVE=1`
   — it asserts that both APIs answered and prints what they said, and fetches
   PyPI's own project page in both flavours to check the HTML parser against real
-  markup. Needs `git`; no network in the default run.
+  markup. `CustomIndexTest` owns `--index-url`, and its sharpest assertion is a
+  negative one: pypi.org must appear **nowhere** in the requests made for a
+  private-index target, since it would be answering about a different package
+  that happens to share the name. A tool that must not be called cannot be
+  tested for by its answer, so the stub records which APIs were reached and the
+  test asserts on that list. The rest pins that the missing cross-check is
+  stated rather than silently skipped, that `UNCONFIRMED` is unreachable with
+  only one opinion available, and one end-to-end case proving the pieces
+  compose: PEP 503 HTML, no `versions` key, no JSON API, through to a
+  `RELEASE_YANKED` naming the release installs fall back to. Needs `git`; no
+  network in the default run.
 
 `test_smoke_target.py`, `test_transport_boot_probe.FastMCPBootTest` and
 `test_rebind_probe.FastMCPRebindTest` self-**skip** here — all three need

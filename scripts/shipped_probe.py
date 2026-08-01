@@ -88,7 +88,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable
-from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -318,15 +317,10 @@ def pick_tool(tools: list[dict[str, Any]], preferred: str = "") -> tuple[str, st
     return "", "the server listed no tools"
 
 
-def is_pypi(index_url: str) -> bool:
-    """Is this index PyPI itself — the only index with a JSON API to fall back to?
-
-    Host-based, not a prefix match on the URL: ``https://pypi.org/simple`` and
-    ``https://pypi.org/simple/`` are the same index, and a mirror at
-    ``https://pypi.example.com/simple`` is emphatically not.
-    """
-    host = urlsplit(index_url).hostname or ""
-    return host == "pypi.org" or host.endswith(".pypi.org")
+# One definition, used by both probes: "does this index have a JSON API to
+# corroborate with" is the same question here as in release_gap, and two copies
+# of a host check are two chances to answer it differently.
+is_pypi = rg.is_pypi
 
 
 def lookup_index(
