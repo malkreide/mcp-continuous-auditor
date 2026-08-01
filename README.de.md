@@ -52,10 +52,10 @@ openclaw start --config openclaw/openclaw.json
 
 # 2. Auf Telegram dem Bot schreiben:
 #    audit
-#    -> liefert einen ruff/mypy/pytest-Report, read-only, ohne Code-Aenderung
+#    -> liefert einen ruff/mypy/pytest-Report, read-only, ohne Code-Änderung
 
-# 3. Deterministische Verifikation lokal ausfuehren
-#    key-loses Profil (kein Modell-Key noetig):
+# 3. Deterministische Verifikation lokal ausführen
+#    key-loses Profil (kein Modell-Key nötig):
 promptfoo eval -c promptfoo/promptfooconfig.determ.yaml
 #    volles graded-Profil (llm-rubric + Red-Team; braucht Grader-Key):
 promptfoo eval -c promptfoo/promptfooconfig.yaml
@@ -111,38 +111,38 @@ Broker/Worker-Trennung → TensorZero-Cost-Cap (siehe Stufentabelle).
 
 ```
 openclaw/         OpenClaw-Gateway-Config + Policy-as-Code (SOUL/AGENTS/TOOLS)
-openclaw/cron/    nightly-audit Cron-Job-Spec + Installer (taeglich 03:00 → Telegram)
+openclaw/cron/    nightly-audit Cron-Job-Spec + Installer (täglich 03:00 → Telegram)
 skills/           python-auditor, fastmcp-testing, promptfoo-eval,
                   identity-probe, published-probe, shipped-probe
-                  (shipped-probe hat den frueheren release-gap-Skill aufgenommen)
+                  (shipped-probe hat den früheren release-gap-Skill aufgenommen)
 schemas/          generierte Tool-Output-JSON-Schemas = der Drift-Detektor
 promptfoo/        deterministische Asserts, Schema-Drift, Red-Team + Fixtures
 scripts/          Audit-Harness, Live-Probe, nightly-audit-Cron-Kern, Budget-Guard,
                   deterministisches Findings→Issue-Routing, gepinnter
-                  promptfoo-Installer, gateway-unabhaengige Telegram-Meldung +
+                  promptfoo-Installer, gateway-unabhängige Telegram-Meldung +
                   Intake (telegram_notify.py, telegram_intake.py)
-                  portfolio_scan.py = die Faecherung: EIN billiges Praedikat ueber
-                  JEDEN Server als Matrix (targets.example.yaml), fuer die Frage,
+                  portfolio_scan.py = die Fächerung: EIN billiges Prädikat über
+                  JEDEN Server als Matrix (targets.example.yaml), für die Frage,
                   die ein Ein-Ziel-Nightly nicht beantworten kann — welches Repo
-                  aus der Reihe faellt
+                  aus der Reihe fällt
                   release_gap.py = NUR ein veralteter Shim: leitet an
-                  shipped_probe.py --metadata-only weiter und uebersetzt die
-                  Exit-Codes und --format json-Schluessel in den Vertrag zurueck,
+                  shipped_probe.py --metadata-only weiter und übersetzt die
+                  Exit-Codes und --format json-Schlüssel in den Vertrag zurück,
                   den er vor der Zusammenlegung hatte. Keine Probe-Logik hier
-targets.example.yaml  Formatreferenz fuer die Ziel-Liste der Faecherung; die echte
+targets.example.yaml  Formatreferenz für die Ziel-Liste der Fächerung; die echte
                   targets.yaml ist gitignored (Inventar, kein Quellcode)
-relay/            optionaler Cloudflare-Worker fuer Telegram-Push-Intake in Echtzeit
+relay/            optionaler Cloudflare-Worker für Telegram-Push-Intake in Echtzeit
 tensorzero/       Phase 5: LLM-Gateway-Config + Stack (Cost-Caps, A/B, Audit-Trail)
 tests/            stdlib-Unit-Tests (502 in 26 Dateien) — laufen via
                   .github/workflows/tests.yml
 .github/          tests.yml = die eigene Suite des Auditors;
-                  *.yml.template = CI fuer das Ziel-Repo
+                  *.yml.template = CI für das Ziel-Repo
 docs/plans/       der v2-Bauplan
-docs/cron/        der taegliche nightly-audit-Cron (Ablauf, Modell-Hard-Fail, Install)
+docs/cron/        der tägliche nightly-audit-Cron (Ablauf, Modell-Hard-Fail, Install)
 docs/deployment/  Raspberry-Pi (empfohlener Host), Phase-5 forkd/microVM-Isolation,
                   worker-broker-rollout.md = beide Seiten in der richtigen
                   REIHENFOLGE aktualisieren (Broker zuerst — ein alter Broker
-                  meldet die Findings eines neuen Workers als gruen)
+                  meldet die Findings eines neuen Workers als grün)
 docs/budget/      Phase-5 Budget-Leitplanken (Token-Ceiling, Circuit Breaker)
 docs/observability/ Phase-5 TensorZero-Gateway (Cost-Caps, A/B, Audit-Trail)
 ```
