@@ -7,6 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `yank_probe.py`: a known-broken release that is still installable
+
+The auditor knew what a yank *is* — `shipped_probe.py` parses PEP 592 flags off
+the Simple API and raises `RELEASE_YANKED` when the version users install has
+been withdrawn. It had no idea a yank could be **missing**. Nothing anywhere
+asked the inverse question, and the inverse is the one the portfolio actually
+got wrong:
+
+> Does a known-unusable, **not**-yanked release still exist, with a healthy
+> successor beside it?
+
+**The case.** `zurich-opendata-mcp` 0.5.1 declared `mcp[cli]>=1.28.1` with no
+upper bound. `mcp` 2.0.0 removed `mcp.server.fastmcp`, so every fresh install
+died on import. 0.6.0 fixed it with `mcp[cli]>=2.0.0,<3` — and superseding was
+not enough. The broken release stayed selectable for any resolver constrained
+away from 0.6.0: an old lockfile, a colliding pin, a `==0.5.1` in somebody's
+Dockerfile. It had to be yanked, and it was.
+
+**Two details that decided the design.**
+
+*All six predecessors were affected* — 0.2.0, 0.3.0, 0.3.3, 0.4.0, 0.5.0 and
+0.5.1 each carried an uncapped `mcp` range. A probe checking `latest-1` would
+have found 0.5.1, reported it, and left five installable broken releases behind
+while reading green. So this walks **every** version, and groups the answer by
+the dependency boundary rather than by release — because the fix is a list, and
+what matters is that the list has six entries and not one. A test asserts the
+membership of that list against the real captured metadata of all eight
+releases.
+
+*A yank is not a deletion.* After the yank, `pip install
+'zurich-opendata-mcp==0.5.1'` still resolves, with a warning. That is PEP 592
+working as designed: existing lockfiles do not break. So the finding never says
+"delete" — it says "yank", and it says what a yank does and does not do. Tested.
+
+**What the finding is allowed to claim.** "Known-unusable" is a strong word and
+metadata alone rarely earns it, so `UNYANKED_BROKEN_RELEASE` needs four
+conditions together: the release is unyanked and not a pre-release; its range on
+the dependency has no upper bound; the healthy successor declares the same
+dependency and its requirement **excludes the older release's own floor**; and
+the newest non-pre-release past that boundary is actually published and actually
+admitted. The third is the one that licenses the accusation — the maintainer's
+own later release has already declared the crossing breaking — and the fourth is
+what keeps it from being theoretical. Each condition has a test that removes it
+and asserts silence. Without the third, every uncapped dependency on the
+internet is a finding and the gate gets muted; `httpx`, `pydantic`, `sqlparse`,
+`uvicorn` and `defusedxml` are uncapped in the same six releases and correctly
+produce nothing.
+
+**A missing yank reason is its own, lower finding.** `YANK_REASON_MISSING`,
+severity `low`. The reason travels through the Simple API and `pip` prints it
+verbatim; measured against the live index, all six yanks carry none, so anyone
+an old lockfile drops onto them sees `Reason for being yanked: <none given>` and
+cannot tell a security withdrawal from a bad build. Cheap to fix, and not in the
+same class as a broken release still being installable — hence separate, lower,
+and reported second.
+
+**It recommends; it does not act.** There is no `--yank`, no credential is read,
+and every request is a GET. Yanking needs a PyPI token with upload scope, it
+changes what every resolver on the internet sees, and whether a release was
+really unusable is the maintainer's judgement. `ReadOnlyTest` pins all three
+properties, because the difference between this probe and a credential-holding
+one is exactly one flag and nothing else in the file would fail if somebody
+added it.
+
+**Why a separate script and not a third depth of `shipped_probe.py`.**
+`--metadata-only` promises two HTTP requests, and `nightly-audit.sh` leans on
+that promise — the metadata pre-run documented below exists so the release
+verdict survives the full gate hanging, and it only survives because it is
+cheap. Answering this question costs O(versions + dependencies) requests, since
+the evidence lives in each release's `Requires-Dist`. Folding it into the
+metadata depth would break the exact property the pre-run was added for; folding
+it into the full depth would hide a catalogue question behind a venv build. It
+imports `shipped_probe`'s index primitives rather than copying them — the same
+relationship `shipped_probe` has with `transport_boot_probe`.
+
+Reading `Requires-Dist` does **not** download wheels: PEP 658's `core-metadata`
+sidecar is fetched from the Simple API, which is also what makes the walk
+affordable at all. PyPI's per-version JSON API is the fallback, and only when
+the index *is* PyPI — the same precedence `shipped_probe.reconcile` documents.
+
+**One bug found in the writing, worth recording because it is invisible.** PyPI
+inlines the whole MIT licence as a *folded* `License:` header, and the blank
+lines inside the licence arrive as whitespace-only continuation lines. The first
+draft's parser tested "is this line blank" before "is this line a continuation",
+ended the header block on the second line of the licence, and read six
+dependencies as **zero** — which the probe then reports as a clean catalogue.
+Nothing about that failure looks like a failure. It is now a regression test
+against the real captured bytes, which is the only way to catch it.
+
+Not wired into `_GATE_NAMES`. That list is fail-closed by design — a name added
+there hard-fails every Worker still running the previous `nightly-audit.sh` — so
+turning this into a nightly gate is a Worker/Broker rollout step and an
+operational decision, not part of adding the probe.
+
+New: `scripts/yank_probe.py`, `skills/yank-probe/SKILL.md`,
+`tests/test_yank_probe.py` (40 tests, offline, asserted so under a blocked
+socket), and three captured fixtures under `tests/fixtures/pypi/`.
+
 ### Fixed — `release_gap.py` is back as a shim, because deleting it broke callers
 
 The merge deleted `scripts/release_gap.py` and folded its question into

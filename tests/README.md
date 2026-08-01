@@ -66,6 +66,33 @@ Covers:
   the pre-merge behaviour: both APIs are now read on PyPI rather than the JSON
   one being a pure fallback, because the release-gap cross-check came with the
   merge and needs the second opinion every time.
+- `test_yank_probe.py` — the yank probe (`scripts/yank_probe.py`), which asks the
+  inverse of the shipped gate's yank question: not *is the version users install
+  withdrawn*, but *is a known-broken release still installable*. Four network
+  seams are injected — the project page, a release's PEP 658 core metadata, the
+  JSON fallback and a dependency's version list. Stubbing the **fallback** is not
+  optional and has its own comment: the index under test is pypi.org, so an
+  unreadable release falls through to it, and the two "unreadable metadata" tests
+  reached the real network and passed for the wrong reason until it was stubbed.
+  The whole suite is asserted offline by re-running it with `socket.connect`
+  raising. What is injected is captured, not invented: the real Simple API file
+  list, the real `Requires-Dist` header block of all eight `zurich-opendata-mcp`
+  releases and the real dependency version lists, with exactly one derived
+  scenario — the six predecessors before they were yanked, six flags flipped and
+  nothing else. `TheIncidentTest` pins the property the probe exists for, that
+  **all six** are named and not just `latest-1`. `ConservatismTest` removes each
+  of the four conditions in turn and asserts silence, because a gate that fires
+  on every uncapped dependency range gets turned off — `httpx`, `pydantic`,
+  `sqlparse`, `uvicorn` and `defusedxml` are uncapped in the same six releases
+  and must stay quiet. `MetadataParserTest` owns a bug that is invisible when it
+  happens: PyPI inlines the MIT licence as a *folded* `License:` header whose
+  blank lines arrive as whitespace-only continuations, so testing blankness
+  before continuation ends the header block inside the licence and reads six
+  dependencies as **zero** — which the probe then reports as a clean catalogue.
+  Only the real bytes catch it. `ReadOnlyTest` pins the boundary that keeps this
+  a probe and not a credential holder: no option performs a yank (asserted
+  against the argparse surface, not a source grep), no `Authorization` header, no
+  `getenv`, and every request a GET. No network, no `git`.
 - `test_release_gap_shim.py` — the `release_gap.py` compatibility shim. The
   merge deleted a file that callers outside this repository were invoking and
   changed the exit codes underneath anyone who moved to the new one; the shim

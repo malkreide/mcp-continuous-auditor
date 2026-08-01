@@ -1,0 +1,127 @@
+{
+ "name": "zurich-opendata-mcp",
+ "versions": [
+  "0.2.0",
+  "0.3.0",
+  "0.3.3",
+  "0.4.0",
+  "0.5.0",
+  "0.5.1",
+  "0.6.0",
+  "0.7.0"
+ ],
+ "files": [
+  {
+   "filename": "zurich_opendata_mcp-0.2.0-py3-none-any.whl",
+   "url": "https://files.pythonhosted.org/packages/6a/7f/10b4d8e63a27a46a7346ecefa7c071db5f5c1a96fe685c6d7b67e3cb57c0/zurich_opendata_mcp-0.2.0-py3-none-any.whl",
+   "yanked": true,
+   "core-metadata": {
+    "sha256": "1f172ebdc349823ce0ffd69332350f91e3356ced7df8a05bd042d396c134b3e5"
+   }
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.2.0.tar.gz",
+   "url": "https://files.pythonhosted.org/packages/ef/d5/54e90978182e6ef8613a06f125a698c354de3ae8fc860b9cf349c780cfad/zurich_opendata_mcp-0.2.0.tar.gz",
+   "yanked": true,
+   "core-metadata": false
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.3.0-py3-none-any.whl",
+   "url": "https://files.pythonhosted.org/packages/ba/07/97444fccc1fc7fc6c360ba2f54d779784a286658583131c573ac9c0721d2/zurich_opendata_mcp-0.3.0-py3-none-any.whl",
+   "yanked": true,
+   "core-metadata": {
+    "sha256": "d1db71f5506d313f4d1e135ef384e0eda0855233c421182ef24902f90d26023b"
+   }
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.3.0.tar.gz",
+   "url": "https://files.pythonhosted.org/packages/a2/55/b6b73d824a6c243c7fe95ca75dfab773657228dbc2333375d6e825446cad/zurich_opendata_mcp-0.3.0.tar.gz",
+   "yanked": true,
+   "core-metadata": false
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.3.3-py3-none-any.whl",
+   "url": "https://files.pythonhosted.org/packages/ec/ec/1877c111a5593852367623934d82a72d0cd65adc0f3664a9b055e691cd68/zurich_opendata_mcp-0.3.3-py3-none-any.whl",
+   "yanked": true,
+   "core-metadata": {
+    "sha256": "8c52d8d0a2179c2555b4e6b5dbe94bcd3bd0fe654515fb5d14bf94a0bdc19db1"
+   }
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.3.3.tar.gz",
+   "url": "https://files.pythonhosted.org/packages/8c/06/5abe1e6ac8d3410bd8d7951475618aef607f570abccef78966eb0c636a18/zurich_opendata_mcp-0.3.3.tar.gz",
+   "yanked": true,
+   "core-metadata": false
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.4.0-py3-none-any.whl",
+   "url": "https://files.pythonhosted.org/packages/75/0b/f6df7983c195b507e7ce240828c3e923b80ff2f7bddfd13d4e5c2b17b199/zurich_opendata_mcp-0.4.0-py3-none-any.whl",
+   "yanked": true,
+   "core-metadata": {
+    "sha256": "712e5d36e002a93dd7d0e482b48cfe220288840972dd9612fe574eeb75629c2d"
+   }
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.4.0.tar.gz",
+   "url": "https://files.pythonhosted.org/packages/81/f3/f178decd50db4dedeb8c64d1c3fd657c640cf0a8d26cb0efa62730612621/zurich_opendata_mcp-0.4.0.tar.gz",
+   "yanked": true,
+   "core-metadata": false
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.5.0-py3-none-any.whl",
+   "url": "https://files.pythonhosted.org/packages/c9/bf/e862b65a0100216eac8cc72395f1bb778176e4e2ca092fdcc14a9580cb28/zurich_opendata_mcp-0.5.0-py3-none-any.whl",
+   "yanked": true,
+   "core-metadata": {
+    "sha256": "50b89db44dba638665ea2ebcbee8c0926ed878330fdfbc9cd5da5c7707ef7ef3"
+   }
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.5.0.tar.gz",
+   "url": "https://files.pythonhosted.org/packages/35/5c/b1131246ba5f6f5ee3295ac9667cf0416fc517dff63a549cbfc25ef825ee/zurich_opendata_mcp-0.5.0.tar.gz",
+   "yanked": true,
+   "core-metadata": false
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.5.1-py3-none-any.whl",
+   "url": "https://files.pythonhosted.org/packages/7c/7e/49b448f9d0ea84aecf4f12fdc73cd204883a4500de482c85f9ffdc8d8300/zurich_opendata_mcp-0.5.1-py3-none-any.whl",
+   "yanked": true,
+   "core-metadata": {
+    "sha256": "c4fd002150c1503f1ce22f50c3408f0eb937551a8cf863ff7ce6108991173a47"
+   }
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.5.1.tar.gz",
+   "url": "https://files.pythonhosted.org/packages/01/75/d06317b7a1773e5e8f37a4553ecaffe4e21f7c95c570d85a24330ef2ebfa/zurich_opendata_mcp-0.5.1.tar.gz",
+   "yanked": true,
+   "core-metadata": false
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.6.0-py3-none-any.whl",
+   "url": "https://files.pythonhosted.org/packages/3e/f6/dd378c0865ab61aac6cf2a91bdec5c3bd8c4126f192e3b4c1858c4b5d413/zurich_opendata_mcp-0.6.0-py3-none-any.whl",
+   "yanked": false,
+   "core-metadata": {
+    "sha256": "581c4b799cab5e0a80c47b2469614d59825ed07b2903cb3f55c78d304bccc033"
+   }
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.6.0.tar.gz",
+   "url": "https://files.pythonhosted.org/packages/94/42/efde300d5882bef5bfc8e04bde53fb8edfc0b4d9cfe84bb13e5874320d23/zurich_opendata_mcp-0.6.0.tar.gz",
+   "yanked": false,
+   "core-metadata": false
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.7.0-py3-none-any.whl",
+   "url": "https://files.pythonhosted.org/packages/c5/df/e82ae7e83883af716e3c9e69b74b4ecc304bff92ec7b94b448adaba8a78f/zurich_opendata_mcp-0.7.0-py3-none-any.whl",
+   "yanked": false,
+   "core-metadata": {
+    "sha256": "f448f5eb65f46c00e4206630a460c36d310c5d60c6683350037b3ceb1affeac6"
+   }
+  },
+  {
+   "filename": "zurich_opendata_mcp-0.7.0.tar.gz",
+   "url": "https://files.pythonhosted.org/packages/3a/a5/190c928a5402f6fc78c323220cb6ecb13c2cceacc6d2ccde3162fbaaeb75/zurich_opendata_mcp-0.7.0.tar.gz",
+   "yanked": false,
+   "core-metadata": false
+  }
+ ]
+}

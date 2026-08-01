@@ -1,11 +1,15 @@
 # PyPI index fixtures
 
-Recorded responses for `scripts/shipped_probe.py`, so the two index APIs can be
-made to disagree in a test without a live call. The default suite never touches
+Recorded responses for `scripts/shipped_probe.py` and `scripts/yank_probe.py`,
+so the two index APIs can be made to disagree — and the catalogue can be put
+back into a past state — without a live call. The default suite never touches
 the network; `RELEASE_GAP_LIVE=1` opts into the live re-measurement in
 `tests/test_release_metadata.py`.
 
-All four describe `zurich-opendata-mcp`, trimmed to the fields the probe reads.
+All of them describe `zurich-opendata-mcp`, trimmed to the fields the probes
+read.
+
+## For `shipped_probe.py` — the two APIs disagreeing
 
 | File | What it is |
 |---|---|
@@ -13,6 +17,27 @@ All four describe `zurich-opendata-mcp`, trimmed to the fields the probe reads.
 | `zurich_json_converged.json` | **Captured** from `https://pypi.org/pypi/zurich-opendata-mcp/json` in the same minute. Agrees with the Simple API on every version and on every yank flag. |
 | `zurich_json_yank_lag.json` | **Derived** from the captured JSON payload by resetting the six yank flags to `false`. |
 | `zurich_json_publish_lag.json` | **Derived** from the captured JSON payload by removing `0.7.0` and setting `info.version` back to `0.6.0`. |
+
+## For `yank_probe.py` — the catalogue before the yank
+
+| File | What it is |
+|---|---|
+| `zurich_simple_files.json` | **Captured** on 2026-08-01, same request as `zurich_simple_converged.json` but keeping `url` and `core-metadata` — the two keys the yank probe needs to reach PEP 658 metadata. |
+| `zurich_core_metadata_headers.json` | **Captured**: the `.metadata` sidecar of one wheel per release, all eight, truncated at the blank line that ends the RFC 822 header block. That block is everything the parser reads; the description below it is tens of KB of README per release. |
+| `dependency_versions.json` | **Captured** version lists for the six runtime dependencies (`mcp`, `httpx`, `pydantic`, `sqlparse`, `uvicorn`, `defusedxml`). `mcp` is the one that matters: `1.29.0`, then `2.0.0a1`…`2.0.0rc1`, then `2.0.0`. |
+
+`tests/test_yank_probe.py` derives exactly one scenario from these — the state
+on 2026-07-31, before the six predecessors were yanked — by flipping those six
+flags and changing nothing else.
+
+The header-block capture is worth keeping honest bytes for rather than
+hand-writing: PyPI inlines the whole MIT licence as a **folded** `License:`
+header, and the blank lines inside it arrive as whitespace-only continuation
+lines. A parser that tests "is this line blank" before "is this line a
+continuation" ends the header block on the second line of the licence and reads
+six dependencies as zero — which the probe would then report as a clean
+catalogue. That was a real bug in the first draft, and it is only catchable
+against the real bytes.
 
 ## Why two of them are derived and not captured
 
