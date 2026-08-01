@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the nightly shipped gate runs a fast metadata pre-run first
+
+Uses the `--metadata-only` depth the merge below created, for the shipped gate's
+most likely failure mode rather than for speed.
+
+The full gate builds a venv and does a cold `pip install` from the index: it is
+the gate most likely to sit waiting on a socket, and `GATE_TIMEOUT_SHIPPED` is
+900s. When it exhausts that budget the probe is **killed before it writes
+anything** — leaving `rc=124` and no report, on the one gate that knows whether
+users are installing a withdrawn release. "This gate hung" was the entire
+output.
+
+The pre-run answers the metadata half in two HTTP requests
+(`GATE_TIMEOUT_SHIPPED_META`, default 120s) and writes it to
+`shipped-metadata.json`, so the release/yank verdict survives a hang of the
+second pass. When the full gate does hang, the log now says so and points at
+that file rather than leaving it to be discovered.
+
+Two things it deliberately does **not** do:
+
+- **It does not decide the verdict.** `rc_shipped` still comes from the full
+  gate alone. Letting a green metadata pass lower a 124 would turn "this gate
+  hung" into "this gate is fine" — the exact substitution the classifier's
+  124/137 handling exists to prevent — and "the metadata is consistent" was
+  never the shipped-artifact gate's question. A test pins that no `rc_shipped=`
+  assignment reads the pre-run's result.
+
+- **It does not skip the full run when the package is absent from the index.**
+  That branch looks like an obvious saving and is worth nothing: `shipped_probe`
+  already returns before the venv when the index says `not-published`, so the
+  skip would save no time and add a way to be wrong.
+
+A structural test pins that the pre-run *precedes* the gate it insures against —
+a pre-run placed after it buys nothing — and the existing "every shipped_probe
+invocation is bounded" test covers the new call.
+
 ### Changed — `release_gap.py` merged into `shipped_probe.py` as its cheap depth
 
 Requested after the two probes had been made to agree on how they read an index.

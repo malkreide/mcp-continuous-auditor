@@ -200,6 +200,37 @@ class EveryGateIsBoundedTest(unittest.TestCase):
         # the very finding the count exists to catch.
         self.assertRegex(self.text, r"\*\[!0-9-\]\*\)\s*tests_collected=-1")
 
+    def test_the_shipped_metadata_pre_run_comes_first_and_is_cheap(self) -> None:
+        """The shipped gate is the one most likely to sit on a socket, and when
+        it exhausts its budget it is killed before writing a report — rc=124 and
+        nothing else, on the gate that knows whether users are installing a
+        withdrawn release. The pre-run answers the metadata half in seconds and
+        writes it separately, so that verdict survives the hang.
+
+        Order is the whole point: a pre-run that runs *after* the gate it is
+        insuring against buys nothing.
+        """
+        meta = self.text.index("--metadata-only")
+        full = self.text.index('--report "${shipped_report}"')
+        self.assertLess(meta, full, "the pre-run must precede the full gate")
+        self.assertIn("shipped-metadata.json", self.text)
+        self.assertIn("GATE_TIMEOUT_SHIPPED_META", self.text)
+
+    def test_the_pre_run_does_not_decide_the_shipped_verdict(self) -> None:
+        """`rc_shipped` must come from the full gate alone.
+
+        Letting a green metadata pass lower a 124 would turn "this gate hung"
+        into "this gate is fine", which is the exact substitution the 124/137
+        handling above exists to prevent — and "the metadata is consistent" was
+        never the shipped-artifact gate's question anyway.
+        """
+        assignments = [ln.strip() for ln in self.lines
+                       if re.match(r"\s*rc_shipped=", ln)]
+        self.assertTrue(assignments, "no rc_shipped assignment found")
+        for line in assignments:
+            self.assertNotIn("rc_shipped_meta", line,
+                             f"the pre-run must not feed the gate verdict: {line}")
+
 
 if __name__ == "__main__":
     unittest.main()
