@@ -107,7 +107,9 @@ Broker/Worker split → TensorZero cost-cap (see the tier table).
 ```
 openclaw/         OpenClaw gateway config + policy-as-code (SOUL/AGENTS/TOOLS)
 openclaw/cron/    nightly-audit cron job spec + installer (daily 03:00 → Telegram)
-skills/           python-auditor, fastmcp-testing, promptfoo-eval
+skills/           python-auditor, fastmcp-testing, promptfoo-eval,
+                  identity-probe, published-probe, shipped-probe
+                  (shipped-probe absorbed the former release-gap skill)
 schemas/          generated tool-output JSON-Schemas = the drift detector
 promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures
 scripts/          audit harness, live-probe, nightly-audit core, budget guard,
@@ -126,7 +128,7 @@ targets.example.yaml  format reference for the fan-out target list; the real
                   targets.yaml is gitignored (inventory, not source)
 relay/            optional Cloudflare Worker for real-time Telegram push intake
 tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
-tests/            stdlib unit tests (164) — run by .github/workflows/tests.yml
+tests/            stdlib unit tests (502 in 26 files) — run by .github/workflows/tests.yml
 .github/          tests.yml = the auditor's own suite; *.yml.template = CI for the target repo
 docs/plans/       the v2 build plan
 docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)
