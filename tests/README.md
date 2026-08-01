@@ -33,8 +33,9 @@ Covers:
 - `test_shipped_probe.py` — the shipped-artifact gate
   (`scripts/shipped_probe.py`), which installs the target's package from PyPI and
   makes *that* prove it runs. The network half is not deterministically testable,
-  so the module keeps it in three named seams — the index lookup, the install and
-  the subprocess — and everything that decides anything lives outside them: these
+  so the module keeps it in three named seams — `_get` (the one network door),
+  the install and the subprocess — and everything that decides anything lives
+  outside them: these
   tests own the version comparison, the publication states (absent ≠ stale ≠ index
   ahead), the tool-result classification and the finding set, with the seams
   injected. The one thing **not** faked is the stdio conversation: it runs against
@@ -44,15 +45,18 @@ Covers:
   sides — an error that reads like the sandbox's egress raises nothing, while an
   empty content list (the incident's own shape) is never excused as one. A last
   pair asserts the Worker's proxy allowlist still permits the index and that the
-  credential-holding Broker's has *not* been widened to match. `LookupIndexTest`
+  credential-holding Broker's has *not* been widened to match. `ReadIndexTest`
   owns the existence check, which used to consult the JSON API while the install
   resolved against the Simple one — two caches of the same index, for a question
   whose wrong answer (`NOT_ON_INDEX`) tells a maintainer they have no release
   process. It pins that the check asks the index `--index-url` points at (not
   pypi.org regardless, which for a private index is a different host and can
-  answer about a package the probe was never looking at), that the JSON fallback
-  applies only to PyPI because only PyPI has one, and that a 404 is corroborated
-  against the second API before being believed.
+  answer about a package the probe was never looking at), that the JSON API is
+  consulted only on PyPI because only PyPI has one, and that a 404 there is
+  corroborated before being believed. One test records a deliberate change from
+  the pre-merge behaviour: both APIs are now read on PyPI rather than the JSON
+  one being a pure fallback, because the release-gap cross-check came with the
+  merge and needs the second opinion every time.
 - `test_portfolio_scan.py` — the portfolio fan-out (`scripts/portfolio_scan.py`).
   Built around the three properties that would have caught the nested server
   left on the old SDK: `nested_manifests` flags an unclaimed manifest below the
@@ -153,7 +157,8 @@ Covers:
   means it tried and died and stays a finding. One test pins that a guessed flag
   which makes argparse exit non-zero cannot vote on the verdict — otherwise the
   fix would swap one false finding for another.
-- `test_release_gap.py` — the release-gap probe (`scripts/release_gap.py`).
+- `test_release_metadata.py` — the metadata depth of the shipped probe
+  (`scripts/shipped_probe.py --metadata-only`), formerly `release_gap.py`.
   Hardest on the three properties whose failure would turn it into noise or
   into a lie: an unreachable PyPI must not read as "in sync"; a missing tag set
   (a `--depth 1` clone fetches none) must not read as "never released"; and two
@@ -163,7 +168,7 @@ Covers:
   Index responses are recorded, in `tests/fixtures/pypi/` — two captured from
   the live index and two reconstructed from them, with that README explaining
   which is which and why the divergence could not be captured directly. They
-  are injected at `release_gap._get`, the one point that touches the network,
+  are injected at `shipped_probe._get`, the one point that touches the network,
   so the parsing, the yank attribution and the reconciliation all still run.
   Two classes pin the divergences measured on 2026-07-31 against
   `zurich-opendata-mcp`: `YankLagRegressionTest` (the JSON API reporting six

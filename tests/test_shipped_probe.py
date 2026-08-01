@@ -31,7 +31,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import release_gap as rg  # noqa: E402
 import shipped_probe as sp  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -216,21 +215,30 @@ class PickToolTest(unittest.TestCase):
 # the probe, with the three impure seams injected
 # ---------------------------------------------------------------------------
 
-class LookupIndexTest(unittest.TestCase):
+class ReadIndexTest(unittest.TestCase):
     """The existence check, which used to ask a different cache than pip resolves.
 
-    Patched at ``release_gap._get`` — the single point either fetcher uses to
-    reach the network — so the parsing and the precedence run for real. The
-    payload shapes are the ones ``tests/test_release_gap.py`` records from the
-    live index.
+    Patched at ``_get`` — the single point either fetcher uses to reach the
+    network — so the parsing and the precedence run for real. The payload shapes
+    are the ones ``tests/test_release_metadata.py`` records from the live index.
+
+    These assertions were written against a ``lookup_index()`` helper that the
+    merge removed: it answered the same question phase 1 already answers, so
+    keeping it meant two index reads per run. The properties did not change, only
+    where they live — ``read_index`` + ``reconcile`` now carry them.
     """
 
+    def _read(self, index_url=sp.DEFAULT_INDEX):
+        report = sp.Report(dist="demo-mcp", index_url=index_url)
+        sp.read_index(report, Path("."), 5.0, offline=False)
+        return report
+
     def setUp(self) -> None:
-        self._orig = rg._get
+        self._orig = sp._get
         self.calls: list[str] = []
 
     def tearDown(self) -> None:
-        rg._get = self._orig  # type: ignore[assignment]
+        sp._get = self._orig  # type: ignore[assignment]
 
     def _serve(self, simple, json_api) -> None:
         def fake(url: str, timeout: float, accept: str | None = None):
@@ -243,7 +251,7 @@ class LookupIndexTest(unittest.TestCase):
                 return None, "not_published", "not on PyPI (HTTP 404)"
             return served, "ok", ""
 
-        rg._get = fake  # type: ignore[assignment]
+        sp._get = fake  # type: ignore[assignment]
 
     def _simple(self, versions, yanked=()):
         return {
@@ -261,47 +269,66 @@ class LookupIndexTest(unittest.TestCase):
                          for v in versions},
         }
 
-    def test_the_simple_api_answers_and_the_json_api_is_never_asked(self) -> None:
+    def test_both_apis_are_read_on_pypi_and_the_simple_one_decides(self) -> None:
+        """A deliberate change from the pre-merge behaviour, not a slip.
+
+        The old `lookup_index` stopped as soon as the Simple API answered — the
+        JSON API was purely a fallback. Merging brought the release-gap
+        cross-check with it, and that needs the second opinion every time: it is
+        what turns a mid-propagation index into UNCONFIRMED instead of a false
+        finding. The price is one extra HTTP request against PyPI; the Simple
+        API still decides the answer.
+        """
         self._serve(self._simple(["0.5.0", "0.6.0"]), self._json(["0.5.0", "0.6.0"]))
-        version, status, _ = sp.lookup_index("demo-mcp", 5.0)
-        self.assertEqual((version, status), ("0.6.0", "ok"))
-        self.assertEqual(self.calls, ["simple"], "the fallback is a fallback, not a second call")
+        report = self._read()
+        self.assertEqual((report.index_version, report.index_status), ("0.6.0", "ok"))
+        self.assertEqual(self.calls, ["simple", "json"])
+        self.assertEqual(report.yank_source, "simple")
+
+    def test_a_disagreement_between_the_two_reaches_the_shipped_gate_too(self) -> None:
+        """The cross-check was release_gap's; after the merge it guards this
+        gate as well, which is the point of having one probe."""
+        self._serve(self._simple(["0.5.0", "0.6.0"]), self._json(["0.5.0"], latest="0.5.0"))
+        report = self._read()
+        self.assertEqual(report.index_status, "unconfirmed")
 
     def test_a_yanked_newest_release_resolves_to_what_pip_would_install(self) -> None:
         """pip skips a yanked release; so must the version this reports."""
         self._serve(self._simple(["0.5.0", "0.6.0"], yanked=["0.6.0"]), None)
-        version, status, _ = sp.lookup_index("demo-mcp", 5.0)
-        self.assertEqual((version, status), ("0.5.0", "ok"))
+        report = self._read()
+        self.assertEqual((report.index_version, report.index_status), ("0.5.0", "ok"))
 
     def test_an_html_only_simple_index_falls_back_instead_of_failing(self) -> None:
         """A Simple index that does not speak PEP 691 JSON is not an index that
         is down — pip installs from it. A bare swap would have made those
         setups exit 127, trading one wrong answer for another."""
         self._serve(None, self._json(["0.6.0"]))
-        version, status, _ = sp.lookup_index("demo-mcp", 5.0)
-        self.assertEqual((version, status), ("0.6.0", "ok"))
+        report = self._read()
+        self.assertEqual((report.index_version, report.index_status), ("0.6.0", "ok"))
         self.assertEqual(self.calls, ["simple", "json"])
 
     def test_both_indexes_unreachable_stays_unreachable(self) -> None:
         self._serve(None, None)
-        _, status, detail = sp.lookup_index("demo-mcp", 5.0)
-        self.assertEqual(status, "unreachable")
-        self.assertIn("unreachable", detail)
+        report = self._read()
+        self.assertEqual(report.index_status, "unreachable")
+        self.assertIn("unreachable", report.index_detail)
 
     def test_a_404_is_corroborated_before_accusing_a_maintainer(self) -> None:
         """NOT_ON_INDEX says "you have no release process". A first-ever publish
         is exactly when the two APIs are most likely to be seconds apart, so one
         404 is not enough — and here the install can settle it."""
         self._serve(404, self._json(["0.1.0"]))
-        version, status, _ = sp.lookup_index("demo-mcp", 5.0)
-        self.assertEqual((version, status), ("0.1.0", "ok"))
+        report = self._read()
+        self.assertEqual((report.index_version, report.index_status), ("0.1.0", "ok"))
         self.assertEqual(self.calls, ["simple", "json"])
 
     def test_a_404_both_indexes_agree_on_is_not_published(self) -> None:
         self._serve(404, 404)
-        version, status, detail = sp.lookup_index("ghost-mcp", 5.0)
-        self.assertEqual((version, status), (None, "not_published"))
-        self.assertIn("ghost-mcp", detail)
+        report = sp.Report(dist="ghost-mcp")
+        sp.read_index(report, Path("."), 5.0, offline=False)
+        self.assertEqual((report.index_version, report.index_status),
+                         (None, "not_published"))
+        self.assertIn("ghost-mcp", report.index_detail)
 
     def test_the_index_url_is_the_one_asked(self) -> None:
         """The check must consult the index the install will resolve against."""
@@ -311,8 +338,8 @@ class LookupIndexTest(unittest.TestCase):
             asked.append(url)
             return self._simple(["0.6.0"]), "ok", ""
 
-        rg._get = fake  # type: ignore[assignment]
-        sp.lookup_index("demo-mcp", 5.0, "https://pypi.example.com/simple")
+        sp._get = fake  # type: ignore[assignment]
+        self._read("https://pypi.example.com/simple")
         self.assertEqual(len(asked), 1)
         self.assertTrue(
             asked[0].startswith("https://pypi.example.com/simple/demo-mcp/"), asked[0])
@@ -325,18 +352,17 @@ class LookupIndexTest(unittest.TestCase):
         finds an unrelated public package of the same name and calls it found.
         """
         self._serve(None, self._json(["9.9.9"]))
-        version, status, detail = sp.lookup_index(
-            "demo-mcp", 5.0, "https://pypi.example.com/simple")
-        self.assertEqual((version, status), (None, "unreachable"))
+        report = self._read("https://pypi.example.com/simple")
+        self.assertEqual(report.index_status, "unreachable")
         self.assertEqual(self.calls, ["simple"], "pypi.org must not be consulted")
-        self.assertIn("not PyPI", detail)
+        self.assertIn("no JSON API to fall back to", report.index_detail)
 
     def test_a_private_index_404_is_believed(self) -> None:
         self._serve(404, None)
-        version, status, detail = sp.lookup_index(
-            "demo-mcp", 5.0, "https://pypi.example.com/simple")
-        self.assertEqual((version, status), (None, "not_published"))
-        self.assertIn("pypi.example.com", detail)
+        report = self._read("https://pypi.example.com/simple")
+        self.assertEqual((report.index_version, report.index_status),
+                         (None, "not_published"))
+        self.assertIn("pypi.example.com", report.index_detail)
 
     def test_is_pypi_matches_on_host_not_on_prefix(self) -> None:
         for url in ("https://pypi.org/simple", "https://pypi.org/simple/"):
@@ -360,8 +386,32 @@ class ProbeWiringTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def _serve_index(self, index):
+        """Stub the ONE network door, `_get`, for the duration of a probe.
+
+        Before the merge this injected an `index_lookup` seam. That seam is gone:
+        it answered the same question phase 1 already answers, which meant two
+        index reads per run and two chances for them to disagree. Stubbing `_get`
+        keeps the parsing, the yank attribution and the PyPI-only fallback in
+        play rather than mocking past them.
+        """
+        version, status, _detail = index
+        def fake(url: str, timeout: float, accept: str | None = None):
+            if status == "unreachable":
+                return None, "unreachable", "index unreachable: simulated"
+            if status == "not_published":
+                return None, "not_published", "not on the index (HTTP 404)"
+            if "/simple/" in url:
+                return {"meta": {"api-version": "1.4"}, "versions": [version],
+                        "files": [{"filename": f"demo_mcp-{version}.tar.gz",
+                                   "yanked": False}]}, "ok", ""
+            return {"info": {"version": version},
+                    "releases": {version: [{"filename": f"demo_mcp-{version}.tar.gz",
+                                            "yanked": False}]}}, "ok", ""
+        return fake
+
     def _probe(self, *, index=("0.5.0", "ok", ""), installed=None, spoke=None,
-               tool="") -> sp.Report:
+               tool="", dist="demo-mcp") -> sp.Report:
         installed = installed or sp.Installed(True, version="0.5.0",
                                               entrypoint="/venv/bin/demo-mcp")
         spoke = spoke if spoke is not None else {
@@ -369,11 +419,15 @@ class ProbeWiringTest(unittest.TestCase):
             "call": {"result": {"content": [{"type": "text", "text": "ok"}]}},
             "error": "",
         }
-        return sp.probe(
-            "demo-mcp", self.target, tool=tool,
-            index_lookup=lambda d, t: index,
-            installer=lambda *a, **k: installed,
-            speaker=lambda *a, **k: spoke)
+        original = sp._get
+        sp._get = self._serve_index(index)
+        try:
+            return sp.probe(
+                dist, self.target, tool=tool,
+                installer=lambda *a, **k: installed,
+                speaker=lambda *a, **k: spoke)
+        finally:
+            sp._get = original
 
     def test_a_stale_index_is_a_finding_with_the_versions_carried(self) -> None:
         r = self._probe()
@@ -405,21 +459,27 @@ class ProbeWiringTest(unittest.TestCase):
             calls.append("installed")
             return sp.Installed(False)
 
-        r = sp.probe("ghost-mcp", self.target,
-                     index_lookup=lambda d, t: (None, "not_published", "404"),
-                     installer=installer, speaker=lambda *a, **k: {})
+        r = self._probe(dist="ghost-mcp", index=(None, "not_published", "404"),
+                        installed=sp.Installed(False), spoke={})
         self.assertEqual(codes(r.findings), ["NOT_ON_INDEX"])
         self.assertEqual(calls, [], "nothing to install — do not try")
 
-    def test_an_uninjected_probe_uses_lookup_index(self) -> None:
-        """The seam's default must be the surface the install resolves against.
+    def test_an_uninjected_probe_reads_the_index_url_it_was_given(self) -> None:
+        """Phase 1 must consult the index the install will resolve against.
 
-        Every other test here injects the lookup, so nothing else would notice
-        the default pointing at a different cache of the index than pip uses.
+        Every other test here stubs `_get`, so nothing else would notice the
+        default reaching for a different host than `--index-url` names.
         """
-        seen: list[tuple[str, str]] = []
-        original = sp.lookup_index
-        sp.lookup_index = lambda d, t, u: (seen.append((d, u)), ("0.6.0", "ok", ""))[1]
+        asked: list[str] = []
+        original = sp._get
+
+        def fake(url: str, timeout: float, accept: str | None = None):
+            asked.append(url)
+            return {"meta": {"api-version": "1.4"}, "versions": ["0.6.0"],
+                    "files": [{"filename": "demo_mcp-0.6.0.tar.gz",
+                               "yanked": False}]}, "ok", ""
+
+        sp._get = fake
         try:
             r = sp.probe(
                 "demo-mcp", self.target, index_url="https://pypi.example.com/simple",
@@ -427,9 +487,10 @@ class ProbeWiringTest(unittest.TestCase):
                     True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"),
                 speaker=lambda *a, **k: {"tools": [], "call": {}, "error": ""})
         finally:
-            sp.lookup_index = original
-        # The URL the INSTALL uses must be the URL the existence check asked.
-        self.assertEqual(seen, [("demo-mcp", "https://pypi.example.com/simple")])
+            sp._get = original
+        self.assertEqual(len(asked), 1, "a private index has no JSON API to also ask")
+        self.assertTrue(asked[0].startswith("https://pypi.example.com/simple/demo-mcp/"),
+                        asked[0])
         self.assertEqual(r.versions.installed, "0.6.0")
 
     def test_an_install_failure_carries_pips_own_words(self) -> None:
@@ -464,7 +525,7 @@ class ProbeWiringTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("git"), "git missing")
     def test_the_latest_tag_is_used_not_the_oldest(self) -> None:
-        # release_gap.release_tags sorts NEWEST FIRST. Taking [-1] compares the
+        # `release_tags` sorts NEWEST FIRST. Taking [-1] compares the
         # index against the oldest release the repo ever cut, which is always
         # behind and therefore always "a finding" — a gate that is right by
         # accident on every repository. This pins the direction.
