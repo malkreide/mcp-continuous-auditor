@@ -18,8 +18,20 @@
 
 schema: 1
 
+# How many servers this file is SUPPOSED to declare. The scan compares it to the
+# list below and refuses an overall verdict when they disagree — during one
+# campaign three servers dropped out of the tracking for half a day and it was
+# noticed only because 26 + 4 did not come to 33. Nothing was red; the targets
+# were simply not in the runs. Remove the line and the list below becomes its own
+# expectation, which still catches a narrowed run but not a shortened file.
+expect_targets: 4
+
 defaults:
-  ref: main
+  # NO `ref:` HERE, on purpose. Leaving it unset makes the scan ask each remote
+  # for its default branch (`git ls-remote --symref`) instead of assuming one.
+  # Three repositories in this portfolio run on `master`; a scan that assumes
+  # `main` clones nothing there and reports a row of errors against a healthy
+  # repository. Set `ref:` per target only to pin a NON-default branch.
 
   # Which predicates to evaluate. See `scripts/portfolio_scan.py --list-predicates`.
   predicates: [manifest, sdk_major, settings_write, host_allowlist_knob, nested_manifests]
@@ -44,7 +56,6 @@ targets:
                  nested_manifests, boot]
 
   - repo: malkreide/parlament-mcp
-    ref: main
     server_import: parlament_mcp.server:mcp
     # Manifests below the root that are NOT separate servers — acknowledge them
     # once here and `nested_manifests` stops reporting them. Anything found and

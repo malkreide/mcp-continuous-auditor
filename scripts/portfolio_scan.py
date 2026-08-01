@@ -44,13 +44,35 @@ still produce their matrix. What an incomplete sweep must never do is report
 "no findings": exit 1 covers that case, because "we did not look" and "we looked
 and found nothing" are different claims.
 
+A SWEEP MUST CLAIM ITS COVERAGE OUT LOUD
+----------------------------------------
+The row-of-errors rule above covers targets that failed. It does not cover the
+failure that actually happened: during one campaign three servers dropped out of
+the tracking for half a day, and it was noticed only because 26 + 4 did not come
+to 33. Nothing was red. Nothing was even reported — the targets were simply not
+in the runs, and every run that did happen said "no findings" about the servers
+it had looked at, which reads exactly like "no findings".
+
+So every run now counts. ``coverage`` compares what the targets file declares
+against what was actually scanned, NAMES whatever was left out, and — when the
+two do not agree — the sweep refuses to give an overall verdict at all rather
+than give one about a subset. ``expect_targets:`` in the targets file is the
+second anchor, against the file itself quietly losing an entry: a run of 30
+targets from a file that is supposed to declare 33 is not a green portfolio, it
+is a green 30.
+
+``--partial`` is how a deliberately narrow run (``--only``) says so. It keeps
+the verdict, and the report still names every target that was not covered — an
+acknowledged gap is still a gap.
+
 EXIT CODES
 ----------
-  0  every cell ok/note/na — the sweep completed and found nothing
+  0  every cell ok/note/na, and the sweep covered every declared target
   2  at least one flag: a real finding about at least one target
-  1  the sweep is INCOMPLETE (any error cell) or the harness itself failed. An
-     incomplete sweep cannot be summarised as "no findings", so this outranks 2
-     — the report still lists every flag it did find.
+  1  the sweep is INCOMPLETE (any error cell, or coverage short of what the
+     targets file declares) or the harness itself failed. An incomplete sweep
+     cannot be summarised as "no findings", so this outranks 2 — the report
+     still lists every flag it did find.
 
 COSTS — read scripts/budget_guard.py and docs/budget/guardrails.md
 ------------------------------------------------------------------
@@ -269,7 +291,10 @@ def parse_targets_yaml(text: str) -> dict[str, Any]:
 @dataclass
 class Target:
     repo: str
-    ref: str = "main"
+    # EMPTY MEANS "ASK THE REMOTE", and that is the default on purpose. Three
+    # repositories in this portfolio run on `master`; a tool that assumes `main`
+    # clones nothing there and checks nothing. See `default_branch`.
+    ref: str = ""
     path: str = ""                       # local checkout instead of a clone
     server_import: str = ""
     predicates: list[str] = field(default_factory=list)
@@ -279,6 +304,10 @@ class Target:
     @property
     def name(self) -> str:
         return self.repo or self.path
+
+    @property
+    def ref_label(self) -> str:
+        return self.ref or "(remote default)"
 
 
 def _as_list(value: Any, where: str) -> list[str]:
@@ -306,6 +335,9 @@ def load_targets(path: Path) -> tuple[list[Target], dict[str, Any]]:
     raw_targets = data.get("targets")
     if not isinstance(raw_targets, list) or not raw_targets:
         raise TargetsError("`targets` must be a non-empty list")
+    expect = data.get("expect_targets")
+    if expect is not None and not isinstance(expect, int):
+        raise TargetsError("`expect_targets` must be an integer count of servers")
 
     out: list[Target] = []
     seen: set[str] = set()
@@ -327,7 +359,10 @@ def load_targets(path: Path) -> tuple[list[Target], dict[str, Any]]:
         out.append(Target(
             repo=repo,
             path=local,
-            ref=str(entry.get("ref") or defaults.get("ref") or "main"),
+            # No fallback to "main". An unset ref stays unset and is resolved
+            # against the remote at clone time; inventing a branch name here is
+            # what made three `master` repositories unscannable.
+            ref=str(entry.get("ref") or defaults.get("ref") or ""),
             server_import=str(entry.get("server_import")
                               or defaults.get("server_import") or ""),
             predicates=_as_list(entry.get("predicates") or defaults.get("predicates"),
@@ -606,31 +641,93 @@ _EXPENSIVE = {"boot"}
 # checkout
 # --------------------------------------------------------------------------
 
-def checkout(target: Target, workdir: Path, timeout: float) -> tuple[Path | None, str]:
-    """A shallow checkout of one target, or (None, reason).
+_SYMREF = re.compile(r"^ref:\s*refs/heads/(?P<branch>\S+)\s+HEAD\s*$", re.MULTILINE)
 
-    Read-only against the target, like every other provisioning path here. The
-    reason string is what lands in the row's error cells — a whole row of
-    "could not run" is a legitimate result, and the sweep continues.
+
+def default_branch(url: str, timeout: float) -> tuple[str, str]:
+    """The remote's real default branch, asked of the remote. (branch, reason).
+
+    ``git ls-remote --symref`` and NOT ``git remote show origin``. The latter
+    reads ``refs/remotes/origin/HEAD`` out of the local clone, which is written
+    once at clone time and never refreshed — it answered wrongly for four
+    repositories in one sitting, including every one whose default had been
+    renamed after the clone. ``ls-remote`` opens a connection and asks; there is
+    nothing cached for it to be wrong about.
+
+    Three repositories in this portfolio are on ``master``. Every assumption of
+    ``main`` clones nothing there, and a row of error cells for a healthy
+    repository is the most expensive kind of false finding: it looks like the
+    target's fault.
     """
-    if target.path:
-        root = Path(target.path).expanduser().resolve()
-        if not root.is_dir():
-            return None, f"local path {root} does not exist"
-        return root, ""
-    dest = workdir / target.repo.replace("/", "__")
-    url = f"https://github.com/{target.repo}.git"
-    cmd = ["git", "clone", "--quiet", "--depth", "1", "--branch", target.ref, url, str(dest)]
+    cmd = ["git", "ls-remote", "--symref", url, "HEAD"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
-        return None, f"clone timed out after {timeout:.0f}s"
+        return "", f"ls-remote timed out after {timeout:.0f}s"
     except OSError as exc:
-        return None, f"could not run git: {type(exc).__name__}: {exc}"
+        return "", f"could not run git: {type(exc).__name__}: {exc}"
     if proc.returncode != 0:
-        return None, f"clone failed (rc {proc.returncode}): {(proc.stderr or '').strip()[:200]}"
-    return dest, ""
+        return "", f"ls-remote failed (rc {proc.returncode}): {(proc.stderr or '').strip()[:200]}"
+    m = _SYMREF.search(proc.stdout or "")
+    if not m:
+        return "", "the remote advertised no symref for HEAD"
+    return m.group("branch"), ""
+
+
+def checkout(target: Target, workdir: Path, timeout: float,
+             resolver: Callable[[str, float], tuple[str, str]] | None = None
+             ) -> tuple[Path | None, str, str]:
+    """A shallow checkout of one target, or (None, reason, ref).
+
+    Read-only against the target, like every other provisioning path here. The
+    reason string is what lands in the row's error cells — a whole row of
+    "could not run" is a legitimate result, and the sweep continues. The third
+    element is the ref actually checked out, so the matrix can report the branch
+    it measured rather than the branch somebody assumed.
+
+    A target that names no ref gets the remote's default, asked live. If that
+    cannot be asked, the clone proceeds with no ``--branch`` at all — git then
+    takes the remote's HEAD, which is the same answer by a different route — and
+    the ref is reported as unresolved rather than as a name nobody verified.
+    """
+    if target.path:
+        root = Path(target.path).expanduser().resolve()
+        if not root.is_dir():
+            return None, f"local path {root} does not exist", target.ref or "(local)"
+        return root, "", target.ref or "(local)"
+    dest = workdir / target.repo.replace("/", "__")
+    url = f"https://github.com/{target.repo}.git"
+
+    ref, note = target.ref, ""
+    if not ref:
+        resolve = resolver or default_branch
+        ref, note = resolve(url, timeout)
+
+    cmd = ["git", "clone", "--quiet", "--depth", "1"]
+    if ref:
+        cmd += ["--branch", ref]
+    cmd += [url, str(dest)]
+    label = ref or f"(remote HEAD; {note})"
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return None, f"clone timed out after {timeout:.0f}s", label
+    except OSError as exc:
+        return None, f"could not run git: {type(exc).__name__}: {exc}", label
+    if proc.returncode != 0:
+        return (None,
+                f"clone failed (rc {proc.returncode}): {(proc.stderr or '').strip()[:200]}",
+                label)
+    if not ref:
+        # Clone succeeded without a branch; name what it landed on so the report
+        # is about a measured branch rather than an unnamed one.
+        got = subprocess.run(["git", "-C", str(dest), "rev-parse", "--abbrev-ref", "HEAD"],
+                             capture_output=True, text=True, check=False)
+        if got.returncode == 0 and got.stdout.strip():
+            label = got.stdout.strip()
+    return dest, "", label
 
 
 # --------------------------------------------------------------------------
@@ -642,18 +739,24 @@ class Row:
     target: Target
     cells: dict[str, Cell] = field(default_factory=dict)
     error: str = ""
+    # The ref actually checked out, which is not always the ref anybody asked
+    # for: an unset ref is resolved against the remote at clone time.
+    ref: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {"target": self.target.name, "ref": self.target.ref,
+        return {"target": self.target.name,
+                "ref": self.ref or self.target.ref_label,
+                "requested_ref": self.target.ref,
                 "error": self.error,
                 "cells": {k: v.as_dict() for k, v in self.cells.items()}}
 
 
 def scan_target(target: Target, workdir: Path, predicates: list[str],
                 clone_timeout: float, predicate_timeout: float,
-                boot_timeout: float) -> Row:
+                boot_timeout: float,
+                resolver: Callable[[str, float], tuple[str, str]] | None = None) -> Row:
     row = Row(target=target)
-    root, reason = checkout(target, workdir, clone_timeout)
+    root, reason, row.ref = checkout(target, workdir, clone_timeout, resolver)
     if root is None:
         # THE PARTIAL-RESULT RULE: one unreachable target is a row of error
         # cells, never the end of the sweep.
@@ -701,9 +804,80 @@ def outliers(rows: list[Row], predicates: list[str]) -> list[dict[str, Any]]:
     return out
 
 
-def classify(rows: list[Row]) -> tuple[str, int]:
+@dataclass
+class Coverage:
+    """What the run was supposed to cover, against what it did cover.
+
+    ``expected`` is the count the targets file declares via ``expect_targets:``
+    (or ``--expect-targets``). When it is absent, the file's own target list is
+    the expectation — which still catches the incident, because the loss there
+    was between the file and the runs, not inside the file.
+
+    ``acknowledged`` is ``--partial``: a deliberately narrow run says so and
+    keeps its verdict. It does not stop the report naming what was left out.
+    """
+
+    declared: int = 0
+    scanned: int = 0
+    expected: int | None = None
+    skipped: list[str] = field(default_factory=list)
+    acknowledged: bool = False
+    detail: str = ""
+
+    @property
+    def complete(self) -> bool:
+        if self.expected is not None and self.expected != self.declared:
+            return False
+        return not self.skipped
+
+    @property
+    def claimable(self) -> bool:
+        """May this run give a verdict about the portfolio at all?"""
+        return self.complete or self.acknowledged
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"declared": self.declared, "scanned": self.scanned,
+                "expected": self.expected, "skipped": sorted(self.skipped),
+                "acknowledged": self.acknowledged, "complete": self.complete,
+                "detail": self.detail}
+
+
+def assess_coverage(declared: list[Target], scanned: list[Target],
+                    expected: int | None, acknowledged: bool) -> Coverage:
+    """Name what was left out. Pure — this is the part the tests own.
+
+    Skipped targets are listed BY NAME, not counted. A count is what the
+    campaign already had: 26 and 4 are both counts, and neither of them said
+    which three servers were missing.
+    """
+    scanned_names = {t.name for t in scanned}
+    cov = Coverage(
+        declared=len(declared), scanned=len(scanned), expected=expected,
+        skipped=sorted(t.name for t in declared if t.name not in scanned_names),
+        acknowledged=acknowledged)
+    notes: list[str] = []
+    if expected is not None and expected != len(declared):
+        notes.append(
+            f"the targets file declares {len(declared)} target(s) and {expected} "
+            "were expected — the file itself is short, so no selection of it can "
+            "be complete")
+    if cov.skipped:
+        notes.append(
+            f"{len(cov.skipped)} declared target(s) were not scanned: "
+            + ", ".join(cov.skipped))
+    cov.detail = "; ".join(notes)
+    return cov
+
+
+def classify(rows: list[Row], coverage: Coverage | None = None) -> tuple[str, int]:
     flags = any(c.status == FLAG for r in rows for c in r.cells.values())
     errors = any(c.status == ERROR for r in rows for c in r.cells.values())
+    # Coverage outranks both, for the same reason an error cell does: a sweep
+    # that did not cover the portfolio has not measured the portfolio, and the
+    # only honest thing it can say about the servers it never looked at is that
+    # it never looked at them.
+    if coverage is not None and not coverage.claimable:
+        return "incomplete", EXIT_INCOMPLETE
     if errors:
         # Outranks findings on purpose: "we did not look" and "we looked and
         # found nothing" are different claims, and only one of them is a sweep.
@@ -714,25 +888,45 @@ def classify(rows: list[Row]) -> tuple[str, int]:
 
 
 def render(rows: list[Row], predicates: list[str], outs: list[dict[str, Any]],
-           outcome: str) -> str:
+           outcome: str, coverage: Coverage | None = None) -> str:
     head = {
         "green": "✅ No findings across the portfolio.",
         "findings": "🚨 Findings — see the flagged cells.",
         "incomplete": "⛔ The sweep is INCOMPLETE — some cells could not be "
                       "evaluated. Findings below are real; absence of others is not.",
     }[outcome]
+    if coverage is not None and not coverage.claimable:
+        # No overall verdict at all. Not "green for the ones we saw" — that is
+        # the sentence three servers spent half a day hiding behind.
+        head = ("⛔ NO OVERALL VERDICT — this sweep did not cover the portfolio. "
+                + coverage.detail
+                + ". Findings below are real; the absence of any other finding says "
+                  "nothing about the targets that were not scanned.")
     lines = ["# Portfolio scan", "", head, "",
              f"{len(rows)} target(s) × {len(predicates)} predicate(s)", ""]
+    if coverage is not None:
+        expected = coverage.expected if coverage.expected is not None else coverage.declared
+        state = ("complete" if coverage.complete
+                 else "PARTIAL (acknowledged with --partial)" if coverage.acknowledged
+                 else "INCOMPLETE")
+        lines += [f"coverage: {coverage.scanned}/{expected} declared target(s) — {state}"]
+        if coverage.skipped:
+            lines += ["not scanned: " + ", ".join(f"`{n}`" for n in coverage.skipped)]
+        lines += [""]
 
-    lines.append("| target | " + " | ".join(predicates) + " |")
-    lines.append("|---" * (len(predicates) + 1) + "|")
+    lines.append("| target | ref | " + " | ".join(predicates) + " |")
+    lines.append("|---" * (len(predicates) + 2) + "|")
     for r in rows:
         cells = []
         for name in predicates:
             c = r.cells.get(name)
             cells.append("–" if c is None
                          else f"{_ICON.get(c.status, '?')} {c.value or c.status}")
-        lines.append(f"| `{r.target.name}` | " + " | ".join(cells) + " |")
+        # The ref is a column because it is a measurement: three of these
+        # repositories are on `master`, and a report that does not say which
+        # branch it read cannot be checked.
+        ref = r.ref or r.target.ref_label
+        lines.append(f"| `{r.target.name}` | `{ref}` | " + " | ".join(cells) + " |")
 
     if outs:
         lines += ["", "## Out of line", "",
@@ -802,6 +996,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--predicates", default="",
                    help="comma-separated override for every target")
     p.add_argument("--only", default="", help="comma-separated repo/path substrings")
+    p.add_argument("--expect-targets", type=int, default=None,
+                   help="how many servers the targets file is SUPPOSED to declare. "
+                        "Overrides `expect_targets:` in the file. A mismatch means "
+                        "no selection of that file can be a complete sweep")
+    p.add_argument("--partial", action="store_true",
+                   help="acknowledge a deliberately narrow run (usually with --only): "
+                        "keeps the overall verdict. What was left out is still named")
     p.add_argument("--report", default="", help="write the machine-readable matrix here")
     p.add_argument("--workdir", default="", help="checkout dir (default: a temp dir)")
     p.add_argument("--clone-timeout", type=float, default=DEFAULT_CLONE_TIMEOUT)
@@ -824,10 +1025,19 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_GREEN
 
     try:
-        targets, _ = load_targets(Path(args.targets))
+        targets, defaults = load_targets(Path(args.targets))
     except TargetsError as exc:
         print(f"portfolio: {exc}", file=sys.stderr)
         return EXIT_INCOMPLETE
+
+    declared = list(targets)
+    expected = args.expect_targets
+    if expected is None:
+        try:
+            raw = parse_targets_yaml(Path(args.targets).read_text(encoding="utf-8"))
+            expected = raw.get("expect_targets")
+        except (TargetsError, OSError):
+            expected = None
 
     if args.only:
         wanted = [s.strip() for s in args.only.split(",") if s.strip()]
@@ -869,24 +1079,31 @@ def main(argv: list[str] | None = None) -> int:
     try:
         rows: list[Row] = []
         for t in targets:
-            print(f"==> {t.name} @ {t.ref}", file=sys.stderr)
-            rows.append(scan_target(t, workdir, t.predicates, args.clone_timeout,
-                                    args.predicate_timeout, args.boot_timeout))
+            print(f"==> {t.name} @ {t.ref_label}", file=sys.stderr)
+            row = scan_target(t, workdir, t.predicates, args.clone_timeout,
+                              args.predicate_timeout, args.boot_timeout)
+            if not t.ref:
+                print(f"    ref resolved to {row.ref}", file=sys.stderr)
+            rows.append(row)
         columns: list[str] = []
         for t in targets:
             for n in t.predicates:
                 if n not in columns:
                     columns.append(n)
 
+        coverage = assess_coverage(declared, targets, expected, args.partial)
         outs = outliers(rows, columns)
-        outcome, exit_code = classify(rows)
-        print(render(rows, columns, outs, outcome))
+        outcome, exit_code = classify(rows, coverage)
+        print(render(rows, columns, outs, outcome, coverage))
 
         if args.report:
             try:
                 Path(args.report).write_text(json.dumps({
-                    "schema": 1, "outcome": outcome, "exit_code": exit_code,
+                    # Bumped from 1: the report gained `coverage`, and every row
+                    # now carries the ref it was actually measured on.
+                    "schema": 2, "outcome": outcome, "exit_code": exit_code,
                     "predicates": columns, "outliers": outs,
+                    "coverage": coverage.as_dict(),
                     "targets": [r.as_dict() for r in rows],
                 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             except OSError as exc:

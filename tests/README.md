@@ -107,6 +107,20 @@ Covers:
   reader parses the committed `targets.example.yaml` identically — the Worker has
   no PyYAML, and a targets file that parses differently there drops a server
   from the sweep, which is this module's own failure mode turned on itself.
+  `CoverageTest` and the `--only` end-to-end cases own the property added after
+  three servers dropped out of the tracking for half a day: a run compares what
+  the targets file declares against what it scanned, names every gap **by name**
+  (a count is what that campaign already had — 26 and 4, neither of which said
+  which three were missing), and gives **no overall verdict at all** when the
+  two disagree, which outranks both `findings` and a clean matrix. `--partial`
+  is the acknowledgement for a deliberately narrow run and keeps the verdict
+  while still naming the gap. `DefaultBranchTest` builds real `master`- and
+  `main`-headed repositories and asserts the branch is resolved with
+  `git ls-remote --symref` rather than assumed: three of this portfolio's repos
+  are on `master`, and a `--branch main` clone against them fails, which reads
+  as the target's fault. One test proves an explicit `ref:` is never resolved
+  away, and one that an unresolvable default clones the remote HEAD with no
+  `--branch` at all rather than falling back to `main`.
   Offline: targets carry a local `path:` so nothing is cloned.
 - `test_gate_timeouts.py` — the time bounds in the **real**
   `scripts/nightly-audit.sh`. The committed `run_bounded` helper is lifted out of
@@ -230,8 +244,48 @@ Covers:
   stated rather than silently skipped, that `UNCONFIRMED` is unreachable with
   only one opinion available, and one end-to-end case proving the pieces
   compose: PEP 503 HTML, no `versions` key, no JSON API, through to a
-  `RELEASE_YANKED` naming the release installs fall back to. Needs `git`; no
-  network in the default run.
+  `RELEASE_YANKED` naming the release installs fall back to.
+  Three classes own the anchors added after the campaign measurement.
+  `NoTagsTest` pins all three tag states apart: a full checkout with no tags is
+  the `NO_TAGS` finding (half these checks measure against the last tag and
+  therefore measured nothing, so a green run there is a statement about how
+  little was compared), a tagged repository raises nothing, and a **real**
+  `--depth 1` clone — built by cloning a real repo, because `git tag --list`
+  succeeds with empty output there and is otherwise indistinguishable — stays
+  *unknown* and raises nothing. `CommitKindBeatsAgeTest` pins that kind beats
+  age: a `fix:` half a day old is reported where a `docs:` of the same age is
+  not, a breaking change is reported at any age in either spelling (`feat!:` and
+  a subject `BREAKING CHANGE`), and `--max-age-days-user-facing` buys back a
+  grace period so the policy stays a choice. `StaleArtifactTest` owns the
+  content comparison — the one gap a version number cannot see — including that
+  line endings alone are not a divergence, that a generated `_version.py`
+  present only in the wheel is not one either, and that a comparison which could
+  not be made is recorded as not made rather than as clean. `PinnedVersionTest`
+  covers `--pin-version`: the pin reaches the installer, a venv that comes back
+  holding another version makes **no claim at all** (127, not 0 and not 2), and
+  the default stays unpinned because a gate is asking a different question.
+  Needs `git`; no network in the default run.
+- `test_published_probe.py` — the published-artifact probe
+  (`scripts/published_probe.py`). Everything here is the half that decides what
+  a measurement *means*; the half that installs a distribution is not tested,
+  because a test that needs PyPI is a test that goes red when PyPI has a bad
+  afternoon. `ImportVerdictTest` pins the distinction the probe got wrong about
+  `bag-health-mcp`: a failure that reproduces with the package root imported
+  first is real, one that only appears when the submodule is the very first
+  import of a process is an import-order artefact and not a finding, one that
+  reproduces in neither fresh interpreter is named apart from it rather than
+  claimed to be the order, a missing **extras-only** dependency is not the
+  server being broken, and a verification that could not run at all counts as
+  real — absence of proof is not a pass. `WatchTest` drives a real subprocess
+  (`fixtures/published_smoke_server.py`) through the four shapes the smoke stage
+  has to tell apart, plus one that writes far more than a pipe buffer holds: a
+  probe that waits for exit without draining deadlocks there and reports a
+  failure that never happened. `DependencyCapTest` owns the `requires_dist`
+  upper-bound rule, including that `~=` and `==2.*` are bounds although neither
+  spells `<`, that a declared-but-never-imported dependency is not reported at
+  all, and that an unreadable index is `unknown` and never `capped`.
+  `RenderTest` asserts every layer still gets its own line when only one of them
+  can be the status. No venv, no network, no `git`.
 
 `test_smoke_target.py`, `test_transport_boot_probe.FastMCPBootTest` and
 `test_rebind_probe.FastMCPRebindTest` self-**skip** here — all three need
