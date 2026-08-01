@@ -1,0 +1,106 @@
+{
+  "info": {
+    "name": "zurich-opendata-mcp",
+    "version": "0.7.0",
+    "yanked": false,
+    "yanked_reason": null
+  },
+  "releases": {
+    "0.2.0": [
+      {
+        "filename": "zurich_opendata_mcp-0.2.0-py3-none-any.whl",
+        "yanked": true,
+        "yanked_reason": null
+      },
+      {
+        "filename": "zurich_opendata_mcp-0.2.0.tar.gz",
+        "yanked": true,
+        "yanked_reason": null
+      }
+    ],
+    "0.3.0": [
+      {
+        "filename": "zurich_opendata_mcp-0.3.0-py3-none-any.whl",
+        "yanked": true,
+        "yanked_reason": null
+      },
+      {
+        "filename": "zurich_opendata_mcp-0.3.0.tar.gz",
+        "yanked": true,
+        "yanked_reason": null
+      }
+    ],
+    "0.3.3": [
+      {
+        "filename": "zurich_opendata_mcp-0.3.3-py3-none-any.whl",
+        "yanked": true,
+        "yanked_reason": null
+      },
+      {
+        "filename": "zurich_opendata_mcp-0.3.3.tar.gz",
+        "yanked": true,
+        "yanked_reason": null
+      }
+    ],
+    "0.4.0": [
+      {
+        "filename": "zurich_opendata_mcp-0.4.0-py3-none-any.whl",
+        "yanked": true,
+        "yanked_reason": null
+      },
+      {
+        "filename": "zurich_opendata_mcp-0.4.0.tar.gz",
+        "yanked": true,
+        "yanked_reason": null
+      }
+    ],
+    "0.5.0": [
+      {
+        "filename": "zurich_opendata_mcp-0.5.0-py3-none-any.whl",
+        "yanked": true,
+        "yanked_reason": null
+      },
+      {
+        "filename": "zurich_opendata_mcp-0.5.0.tar.gz",
+        "yanked": true,
+        "yanked_reason": null
+      }
+    ],
+    "0.5.1": [
+      {
+        "filename": "zurich_opendata_mcp-0.5.1-py3-none-any.whl",
+        "yanked": true,
+        "yanked_reason": null
+      },
+      {
+        "filename": "zurich_opendata_mcp-0.5.1.tar.gz",
+        "yanked": true,
+        "yanked_reason": null
+      }
+    ],
+    "0.6.0": [
+      {
+        "filename": "zurich_opendata_mcp-0.6.0-py3-none-any.whl",
+        "yanked": false,
+        "yanked_reason": null
+      },
+      {
+        "filename": "zurich_opendata_mcp-0.6.0.tar.gz",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ],
+    "0.7.0": [
+      {
+        "filename": "zurich_opendata_mcp-0.7.0-py3-none-any.whl",
+        "yanked": false,
+        "yanked_reason": null
+      },
+      {
+        "filename": "zurich_opendata_mcp-0.7.0.tar.gz",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ]
+  }
+}

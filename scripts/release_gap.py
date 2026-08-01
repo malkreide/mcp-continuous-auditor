@@ -36,14 +36,51 @@ WHAT THIS REPORTS, AND WHY IN THAT ORDER
    because ``fix:`` sitting unreleased is a different fact from ``docs:``. In
    the incident above, every unreleased day was a user hitting a 404.
 
-3. ``UNTAGGED_VERSION`` — ``pyproject.toml`` was bumped but no tag matches it.
+3. ``RELEASE_YANKED`` — the release this repository considers current is on the
+   index and *withdrawn*. Everything else here answers "did it get published";
+   this one answers "is what got published still being handed out". A yanked
+   release looks identical to a healthy one from every other check: the version
+   exists, the tag matches, the workflow is green — and ``pip install`` quietly
+   serves something older.
+
+4. ``UNTAGGED_VERSION`` — ``pyproject.toml`` was bumped but no tag matches it.
    The usual, benign state of a prepared release; a finding only once it ages.
 
-4. ``CHANGELOG_UNRELEASED`` — a ``[Unreleased]`` section with entries in it.
+5. ``CHANGELOG_UNRELEASED`` — a ``[Unreleased]`` section with entries in it.
    Weakest signal, and deliberately last: it is prose, and prose lags.
 
-THREE DELIBERATE DECISIONS
---------------------------
+WHICH INDEX API IS BELIEVED, AND WHY
+------------------------------------
+PyPI exposes the same distribution through two APIs, and they are not one
+source with two spellings — they are two caches:
+
+* the **Simple API** (``/simple/{dist}/``, PEP 503/691/700). This is the one
+  ``pip`` and ``uv`` actually read, so it is the one that decides what a user
+  gets. It carries a per-file ``yanked`` flag (PEP 592); the JSON API's
+  equivalent has been observed lagging behind it.
+* the **JSON API** (``/pypi/{dist}/json``). Convenient — ``info.version`` hands
+  you the latest release with no work — and it is the only reason this script
+  ever used it.
+
+Measured against ``zurich-opendata-mcp`` on 2026-07-31, minutes after the
+operations in question, the two disagreed twice: six freshly yanked releases
+still read ``yanked: false`` on the JSON API while the Simple API had them all
+as yanked, and ~90 s after ``0.7.0`` was published the JSON API still said
+``0.6.0`` while the Simple API already had ``0.7.0``. Re-measured on
+2026-08-01 both had converged, so the divergence is a propagation window and
+not a permanent property of either API. That is precisely why it is dangerous:
+it is invisible except in the minutes right after a release or a yank — the
+minutes in which somebody is most likely to be running this script.
+
+So: **the Simple API is the primary source, the JSON API is a fallback**, and
+where the two disagree the answer is reported as UNCONFIRMED rather than
+picked. An auditor that raises an alarm because one of PyPI's caches is 90 s
+behind the other gets muted, and a muted auditor catches nothing — the same
+reasoning that keeps recall floors at half the observed count. Being loudly
+unsure is a supported outcome here; guessing is not.
+
+FOUR DELIBERATE DECISIONS
+-------------------------
 1. **Age is the finding, not the gap.** Every repository is ahead of PyPI for
    the minutes after a merge. A check that fires on that gets muted, and a
    muted check catches nothing — the same reasoning that keeps recall floors at
@@ -59,6 +96,14 @@ THREE DELIBERATE DECISIONS
    ``git clone --depth 1`` fetches none, so an absent tag set is reported as
    unknown. Concluding "no releases" from it would invert the finding.
 
+4. **Two disagreeing indexes are not a finding, and not a pass either.**
+   ``UNCONFIRMED`` is its own outcome: loud in the report, and it does not turn
+   the run red. Same shape as the boot gate's ``not-selected`` — the evidence
+   supports neither statement, and inventing one is how a check earns its
+   reputation for crying wolf. A real finding still outranks it: a tag ahead of
+   *both* readings is a publish gap no matter which cache you believe, and it
+   is reported as one.
+
 Version comparison is deliberately narrow: release segments only
 (``1.2.3`` → ``(1, 2, 3)``), pre-release and local segments ignored for
 ordering. Full PEP 440 would mean vendoring ``packaging`` into a stdlib-only
@@ -66,7 +111,7 @@ tool; the portfolio publishes plain release versions, and anything unparseable
 is reported as "differs" instead of being silently ordered wrong.
 
 Exit codes:
-  0  no findings
+  0  no findings (including UNCONFIRMED — read the report, not just the code)
   1  findings, or the PyPI comparison could not be made
   2  the target is not shaped as expected (no pyproject.toml)
 
@@ -82,6 +127,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -95,6 +141,11 @@ except ModuleNotFoundError:  # Python 3.10 — tomllib landed in 3.11
     tomllib = None  # type: ignore[assignment]
 
 PYPI_JSON = "https://pypi.org/pypi/{dist}/json"
+PYPI_SIMPLE = "https://pypi.org/simple/{dist}/"
+# PEP 691. Without this header the Simple API answers HTML, which carries the
+# same data behind an attribute-scraping exercise nobody should be writing.
+SIMPLE_ACCEPT = "application/vnd.pypi.simple.v1+json"
+
 TAG = re.compile(r"^v?(\d+(?:\.\d+)*.*)$")
 CHANGELOG_UNRELEASED = re.compile(r"^##\s*\[?Unreleased\]?", re.IGNORECASE)
 CHANGELOG_HEADING = re.compile(r"^##\s")
@@ -103,6 +154,16 @@ CONVENTIONAL = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?!?:")
 
 # Commit types whose delay is felt by users. Everything else is housekeeping.
 USER_FACING = frozenset({"fix", "feat", "perf", "revert"})
+
+# A release segment followed by a pre-release marker. The Simple API's `versions`
+# list includes pre-releases (measured: `pydantic` served `2.14.0a1` there while
+# the JSON API's `info.version` said `2.13.4`), so taking the last entry as "the
+# latest release" would report an alpha as what users install. `release_key`
+# cannot help — it drops everything after the release segment, so `2.14.0a1` and
+# `2.14.0` order identically. `.postN` is deliberately NOT a pre-release.
+PRERELEASE = re.compile(r"^\s*v?\d+(?:\.\d+)*[._-]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)", re.I)
+
+ARCHIVE_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".zip", ".whl", ".egg")
 
 
 @dataclass
@@ -113,12 +174,56 @@ class Finding:
 
 
 @dataclass
+class IndexView:
+    """One index API's answer about one distribution.
+
+    Both APIs are reduced to this shape so the reconciliation below compares
+    like with like instead of comparing a parsed JSON blob against a file list.
+    """
+
+    source: str  # simple | json
+    status: str = "ok"  # ok | unreachable | not_published
+    detail: str = ""
+    # Newest non-pre-release version present at all, and the newest one that is
+    # also not yanked. They differ exactly when the newest release was withdrawn.
+    latest: str | None = None
+    latest_installable: str | None = None
+    versions: list[str] = field(default_factory=list)
+    # version -> yank reason ("" when the index gave no reason). Absent = healthy.
+    yanked: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def readable(self) -> bool:
+        return self.status == "ok"
+
+    def candidates(self) -> set[str]:
+        """The versions this view would accept as "the latest release".
+
+        Two, not one, and the tolerance is deliberate: whether the JSON API's
+        ``info.version`` skips a yanked newest release is not something this
+        repository has measured. Accepting either reading keeps that unmeasured
+        detail from manufacturing an UNCONFIRMED on every package whose newest
+        release happens to be withdrawn.
+        """
+        return {v for v in (self.latest, self.latest_installable) if v}
+
+
+@dataclass
 class Report:
     dist: str
     version: str
     pypi_version: str | None = None
-    pypi_status: str = "ok"  # ok | unreachable | not_published | skipped
+    # ok | unreachable | not_published | skipped | unconfirmed
+    pypi_status: str = "ok"
     pypi_detail: str = ""
+    # What each API said, kept apart so the report can name the disagreement
+    # rather than average it away.
+    simple: IndexView | None = None
+    json_view: IndexView | None = None
+    yanked: dict[str, str] = field(default_factory=dict)
+    # simple | json-fallback | unconfirmed | unavailable | skipped
+    yank_source: str = "unavailable"
+    yank_detail: str = ""
     tags: list[str] | None = None  # None = could not be determined (shallow clone)
     unreleased_commits: list[dict[str, str]] = field(default_factory=list)
     oldest_unreleased_age_days: float | None = None
@@ -127,7 +232,19 @@ class Report:
 
     @property
     def ok(self) -> bool:
-        return not self.findings and self.pypi_status in ("ok", "not_published", "skipped")
+        """`unconfirmed` is in this list on purpose — see decision 4 above.
+
+        It is not a pass in the sense of "checked and fine"; it is a refusal to
+        turn one PyPI cache being seconds behind another into a red run. The
+        report says so in words, loudly, and exit 0 is not allowed to be the
+        only thing anyone reads.
+        """
+        return not self.findings and self.pypi_status in (
+            "ok",
+            "not_published",
+            "skipped",
+            "unconfirmed",
+        )
 
 
 # --------------------------------------------------------------------------
@@ -183,26 +300,262 @@ def release_tags(root: Path) -> list[str] | None:
     return tags
 
 
-def fetch_pypi_version(dist: str, timeout: float) -> tuple[str | None, str, str]:
-    """(version, status, detail). Never raises — the caller reports the status."""
-    url = PYPI_JSON.format(dist=dist)
+def _get(url: str, timeout: float, accept: str | None = None) -> tuple[Any, str, str]:
+    """(payload, status, detail). Never raises — the caller reports the status."""
+    request = urllib.request.Request(url)
+    if accept:
+        request.add_header("Accept", accept)
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
-            payload = json.loads(resp.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
+            return json.loads(resp.read().decode("utf-8")), "ok", ""
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            return None, "not_published", f"{dist} is not on PyPI (HTTP 404)"
+            return None, "not_published", "not on PyPI (HTTP 404)"
         return None, "unreachable", f"PyPI returned HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return None, "unreachable", f"PyPI unreachable: {exc}"
     except (ValueError, KeyError) as exc:
         return None, "unreachable", f"PyPI response unparseable: {exc}"
-    return payload.get("info", {}).get("version"), "ok", ""
+
+
+def is_prerelease(version: str) -> bool:
+    return bool(PRERELEASE.match(version or ""))
+
+
+def version_from_filename(filename: str, dist: str) -> str | None:
+    """The version a distribution filename encodes, or None.
+
+    Only needed as a fallback: PEP 700 added a ``versions`` key to the Simple
+    API response and PyPI serves it, but the yank flag is per *file*, so files
+    still have to be attributed to a version somehow.
+    """
+    stem = filename
+    for suffix in ARCHIVE_SUFFIXES:
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    else:
+        return None
+
+    # PEP 503 normalisation collapses runs of `-_.`; substituting one character
+    # for one character keeps the offsets usable for the slice below. Any name
+    # where the two disagree in length falls through to the positional split.
+    def flatten(text: str) -> str:
+        return re.sub(r"[-_.]", "_", text).lower()
+
+    prefix = flatten(dist)
+    if len(prefix) == len(dist) and flatten(stem).startswith(prefix + "_"):
+        rest = stem[len(dist) + 1 :]
+    else:
+        parts = stem.split("-")
+        if len(parts) < 2:
+            return None
+        rest = "-".join(parts[1:])
+    # A wheel carries build/python/abi/platform tags after the version; an sdist
+    # carries nothing.
+    return rest.split("-")[0] or None
+
+
+def _yank_reason(raw: Any) -> str | None:
+    """PEP 592: ``yanked`` is false, true, or a string carrying the reason."""
+    if raw is False or raw is None:
+        return None
+    if raw is True:
+        return ""
+    text = str(raw)
+    return text if text else ""
+
+
+def _summarise(view: IndexView) -> IndexView:
+    """Fill ``latest`` / ``latest_installable`` from ``versions`` + ``yanked``.
+
+    Sorting is ours because PEP 700 does not promise ``versions`` is ordered,
+    and anything ``release_key`` cannot order is left out of the ranking rather
+    than sorted wrongly — the same refusal to guess as everywhere else here.
+    """
+    ranked = sorted(
+        (v for v in view.versions if not is_prerelease(v) and release_key(v)),
+        key=lambda v: release_key(v) or (),
+    )
+    view.latest = ranked[-1] if ranked else None
+    installable = [v for v in ranked if v not in view.yanked]
+    view.latest_installable = installable[-1] if installable else None
+    return view
+
+
+def fetch_simple(dist: str, timeout: float) -> IndexView:
+    """The Simple API — the surface ``pip`` installs from, and the primary here.
+
+    The URL carries a cache-buster. The divergence this function exists for is a
+    caching artefact, and asking through the same cache that is lagging would
+    reproduce it faithfully rather than see past it.
+    """
+    view = IndexView(source="simple")
+    url = PYPI_SIMPLE.format(dist=dist) + f"?_cb={int(time.time())}"
+    payload, view.status, view.detail = _get(url, timeout, SIMPLE_ACCEPT)
+    if payload is None:
+        return view
+    if not isinstance(payload, dict):
+        view.status, view.detail = "unreachable", "Simple API answered a non-object"
+        return view
+
+    files = payload.get("files") or []
+    # Per file, because PEP 592 yanks files. A version counts as yanked when it
+    # has files and every one of them is yanked: a version with one live wheel
+    # left is still installable, and calling it withdrawn would be a false
+    # finding of exactly the kind this script must not produce.
+    per_version: dict[str, list[str | None]] = {}
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        version = version_from_filename(str(entry.get("filename", "")), dist)
+        if not version:
+            continue
+        per_version.setdefault(version, []).append(_yank_reason(entry.get("yanked", False)))
+
+    for version, reasons in per_version.items():
+        if reasons and all(r is not None for r in reasons):
+            view.yanked[version] = next((r for r in reasons if r), "")
+
+    declared = payload.get("versions")
+    view.versions = sorted(
+        {str(v) for v in declared} if isinstance(declared, list) else set(per_version)
+    )
+    return _summarise(view)
+
+
+def fetch_json(dist: str, timeout: float) -> IndexView:
+    """The JSON API — kept only as the fallback and as a second opinion."""
+    view = IndexView(source="json")
+    payload, view.status, view.detail = _get(PYPI_JSON.format(dist=dist), timeout)
+    if payload is None:
+        return view
+    if not isinstance(payload, dict):
+        view.status, view.detail = "unreachable", "JSON API answered a non-object"
+        return view
+
+    releases = payload.get("releases") or {}
+    if isinstance(releases, dict):
+        for version, files in releases.items():
+            if not isinstance(files, list) or not files:
+                continue
+            reasons = [
+                _yank_reason(f.get("yanked", False)) for f in files if isinstance(f, dict)
+            ]
+            if reasons and all(r is not None for r in reasons):
+                view.yanked[str(version)] = next((r for r in reasons if r), "")
+        view.versions = sorted(str(v) for v in releases)
+
+    _summarise(view)
+    # `info.version` is what this script used to trust wholesale. It stays the
+    # JSON view's answer for the latest release, because deriving one from
+    # `releases` would answer a different question than the API does.
+    declared = (payload.get("info") or {}).get("version")
+    if declared:
+        view.latest = str(declared)
+    return view
+
+
+def fetch_pypi_version(dist: str, timeout: float) -> tuple[str | None, str, str]:
+    """(version, status, detail) from the JSON API.
+
+    Retained as a named seam: it is the shape the rest of the portfolio and the
+    test suite reach for, and it is still exactly what the JSON API answers.
+    """
+    view = fetch_json(dist, timeout)
+    detail = f"{dist} is {view.detail}" if view.status == "not_published" else view.detail
+    return view.latest, view.status, detail
 
 
 # --------------------------------------------------------------------------
 # Comparison
 # --------------------------------------------------------------------------
+
+
+def reconcile(report: Report, simple: IndexView, json_view: IndexView) -> None:
+    """Fold both index views into the report's ``pypi_*`` and ``yank_*`` fields.
+
+    The precedence is fixed and one-directional: Simple first, JSON only when
+    Simple could not be read, and neither when they are both readable and
+    disagree. Nothing here averages, prefers the newer answer, or retries until
+    they match — all three would turn "PyPI is mid-propagation" into a
+    confident statement about the target, which is the failure being fixed.
+    """
+    report.simple, report.json_view = simple, json_view
+
+    # ---- what the index serves as "latest" ---------------------------------
+    if simple.readable and json_view.readable:
+        agreed = json_view.latest in simple.candidates() or json_view.latest is None
+        report.pypi_version = simple.latest_installable or simple.latest
+        if agreed:
+            report.pypi_status = "ok"
+        else:
+            report.pypi_status = "unconfirmed"
+            report.pypi_detail = (
+                f"the Simple API serves {simple.latest} and the JSON API says "
+                f"{json_view.latest} — PyPI's two APIs disagree about this "
+                "distribution's latest release. That is what a release or a yank "
+                "looks like from the outside while it propagates; it is not a "
+                "statement about the target, and no gap is claimed from it"
+            )
+    elif simple.readable:
+        report.pypi_version = simple.latest_installable or simple.latest
+        report.pypi_status = simple.status
+        if not json_view.readable:
+            report.pypi_detail = (
+                f"the JSON API was not readable ({json_view.detail}); the Simple "
+                "API answered and is the source that decides what pip installs"
+            )
+    elif json_view.readable:
+        report.pypi_version = json_view.latest
+        report.pypi_status = json_view.status
+        report.pypi_detail = (
+            f"the Simple API was not readable ({simple.detail}); falling back to "
+            "the JSON API, which is the second-best source and not the one pip reads"
+        )
+    else:
+        # Both failed. "Not on PyPI" is a real answer and outranks a transport
+        # failure — one of the two knowing the package is absent is enough.
+        if "not_published" in (simple.status, json_view.status):
+            report.pypi_status = "not_published"
+            report.pypi_detail = f"{report.dist} is not on PyPI (HTTP 404)"
+        else:
+            report.pypi_status = "unreachable"
+            report.pypi_detail = simple.detail or json_view.detail
+
+    # ---- which releases are withdrawn --------------------------------------
+    if simple.readable and json_view.readable:
+        # Compared over the union: a version one API has yanked and the other
+        # does not know about yet is the same disagreement in a different shape.
+        disputed = sorted(
+            v
+            for v in set(simple.versions) | set(json_view.versions)
+            if (v in simple.yanked) != (v in json_view.yanked)
+        )
+        report.yanked = dict(simple.yanked)
+        if disputed:
+            report.yank_source = "unconfirmed"
+            report.yank_detail = (
+                "the Simple API and the JSON API disagree about the yank status of "
+                + ", ".join(disputed[:6])
+                + (f" (+{len(disputed) - 6} more)" if len(disputed) > 6 else "")
+                + ". The Simple API's answer is shown below because it is the one "
+                "pip reads, but the two are still propagating and no finding is "
+                "raised from a value that is in flight"
+            )
+        else:
+            report.yank_source = "simple"
+    elif simple.readable:
+        report.yanked, report.yank_source = dict(simple.yanked), "simple"
+    elif json_view.readable:
+        report.yanked, report.yank_source = dict(json_view.yanked), "json-fallback"
+        report.yank_detail = (
+            "yank status comes from the JSON API because the Simple API could not "
+            "be read. This is the weaker source: its yank flag has been measured "
+            "lagging the Simple API's by minutes"
+        )
+    else:
+        report.yank_source = "unavailable"
 
 
 def release_key(version: str) -> tuple[int, ...] | None:
@@ -292,31 +645,80 @@ def probe(
     if offline:
         report.pypi_status = "skipped"
         report.pypi_detail = "--offline: the published artifact was not consulted"
+        report.yank_source = "skipped"
     else:
-        report.pypi_version, report.pypi_status, report.pypi_detail = fetch_pypi_version(
-            dist, timeout
-        )
+        reconcile(report, fetch_simple(dist, timeout), fetch_json(dist, timeout))
 
     report.tags = release_tags(target)
     latest_tag = report.tags[0] if report.tags else None
 
     # 1. PUBLISH_GAP — a cut release that never landed on the index.
-    if report.pypi_status == "ok" and latest_tag:
+    #
+    # Runs under `unconfirmed` as well as under `ok`, but only against the
+    # HIGHEST version either API reported. A tag ahead of both readings is a
+    # publish gap whichever cache you believe; a tag ahead of only the staler
+    # one is the false alarm this gate is not allowed to raise.
+    if report.pypi_status in ("ok", "unconfirmed") and latest_tag:
         tag_key = release_key(normalise_tag(latest_tag))
-        pypi_key = release_key(report.pypi_version or "")
+        seen = [
+            v
+            for view in (report.simple, report.json_view)
+            if view is not None and view.readable
+            for v in view.candidates()
+        ]
+        ranked = sorted((v for v in seen if release_key(v)), key=lambda v: release_key(v) or ())
+        highest = ranked[-1] if ranked else report.pypi_version
+        pypi_key = release_key(highest or "")
         if tag_key and pypi_key and tag_key > pypi_key:
             report.findings.append(
                 Finding(
                     code="PUBLISH_GAP",
                     severity="high",
                     detail=(
-                        f"tag {latest_tag} exists, PyPI latest is {report.pypi_version} — "
-                        "the release was cut but never landed. Check the publish workflow "
-                        "run for that tag; a pending environment approval looks identical "
-                        "to a failure from here."
+                        f"tag {latest_tag} exists, the newest version any PyPI API "
+                        f"reports is {highest} — the release was cut but never landed. "
+                        "Check the publish workflow run for that tag; a pending "
+                        "environment approval looks identical to a failure from here."
                     ),
                 )
             )
+
+    # 1b. RELEASE_YANKED — published, and withdrawn again.
+    #
+    # Deliberately not raised while the two APIs are still disagreeing about the
+    # yank status: the report shows the Simple API's answer either way, so the
+    # fact stays visible, but a value that is mid-propagation does not turn the
+    # run red. Visible and unsure beats invisible; both beat confidently wrong.
+    current = normalise_tag(latest_tag) if latest_tag else version
+    if report.yank_source in ("simple", "json-fallback") and current in report.yanked:
+        reason = report.yanked[current]
+        # The survivor must come from the SAME view the yank flags came from —
+        # an unreadable view is still a truthy object, and reading the version
+        # off it would answer "nothing to fall back to" for every fallback run.
+        origin = report.simple if report.yank_source == "simple" else report.json_view
+        survivor = origin.latest_installable if origin else None
+        source_note = (
+            ""
+            if report.yank_source == "simple"
+            else " (read from the JSON API fallback; the Simple API was unreadable)"
+        )
+        report.findings.append(
+            Finding(
+                code="RELEASE_YANKED",
+                severity="high",
+                detail=(
+                    f"{dist} {current} is on PyPI and YANKED"
+                    + (f" — {reason}" if reason else " with no reason given")
+                    + f"{source_note}. The release exists, the tag matches and CI is "
+                    "green, so every other check here reads healthy; installs "
+                    + (
+                        f"silently resolve to {survivor} instead."
+                        if survivor and survivor != current
+                        else "have no newer release to fall back to."
+                    )
+                ),
+            )
+        )
 
     # 2. UNRELEASED — work on main beyond the last release.
     report.unreleased_commits = commits_since(target, latest_tag)
@@ -402,6 +804,23 @@ def render(report: Report) -> str:
         out.append(f"NOTE       {report.pypi_detail}; git-only comparison.")
     elif report.pypi_status == "skipped":
         out.append(f"NOTE       {report.pypi_detail}.")
+    elif report.pypi_status == "unconfirmed":
+        out.append(f"UNCONFIRMED {report.pypi_detail}.")
+    elif report.pypi_detail:
+        out.append(f"NOTE       {report.pypi_detail}.")
+
+    if report.yank_source == "unconfirmed":
+        out.append(f"UNCONFIRMED {report.yank_detail}.")
+    elif report.yank_source == "json-fallback":
+        out.append(f"NOTE       {report.yank_detail}.")
+
+    if report.yanked:
+        shown = sorted(report.yanked, key=lambda v: release_key(v) or ())
+        out.append(
+            f"NOTE       {len(shown)} yanked release(s) on PyPI: {', '.join(shown)}. "
+            "Older withdrawn releases are history, not a finding — only the release "
+            "this repository treats as current is one."
+        )
 
     if report.tags is None:
         out.append(
@@ -429,6 +848,22 @@ def to_json(report: Report) -> dict[str, Any]:
         "pypi_version": report.pypi_version,
         "pypi_status": report.pypi_status,
         "pypi_detail": report.pypi_detail,
+        # The yank block is its own top level: a consumer that only reads
+        # `pypi_version` cannot tell "published and healthy" from "published and
+        # withdrawn", which is the gap this field closes.
+        "yanked": dict(sorted(report.yanked.items())),
+        "yank_source": report.yank_source,
+        "yank_detail": report.yank_detail,
+        "index_views": {
+            view.source: {
+                "status": view.status,
+                "latest": view.latest,
+                "latest_installable": view.latest_installable,
+                "yanked": sorted(view.yanked),
+            }
+            for view in (report.simple, report.json_view)
+            if view is not None
+        },
         "latest_tag": report.tags[0] if report.tags else None,
         "tags_available": report.tags is not None,
         "unreleased_commits": len(report.unreleased_commits),
