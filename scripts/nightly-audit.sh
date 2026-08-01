@@ -17,9 +17,11 @@
 #   3c. runs the DNS-rebinding gate (rebind_probe.py): boots the target with an
 #      inbound host allow-list configured and tries to walk past it — with and
 #      without a valid auth token;
-#   3d. runs the shipped-artifact gate (shipped_probe.py): installs the package
-#      from PyPI into a FRESH venv and makes that prove it runs — green CI is
-#      not shipped software;
+#   3d. runs the shipped-artifact gate (shipped_probe.py) in two passes: a fast
+#      --metadata-only pre-run (index + git, seconds) whose verdict survives a
+#      hang of the second, then the full gate, which installs the package from
+#      PyPI into a FRESH venv and makes that prove it runs — green CI is not
+#      shipped software;
 #   4. runs the promptfoo eval (tool-output contract + OWASP red-team), writing
 #      machine-readable JSON output;
 #   5. hands every exit code + the promptfoo JSON to
@@ -223,6 +225,11 @@ GATE_TIMEOUT_PROMPTFOO="${GATE_TIMEOUT_PROMPTFOO:-3600}"
 # Generous: a fresh venv plus a cold `pip install` from the index, then a real
 # server start and tool call.
 GATE_TIMEOUT_SHIPPED="${GATE_TIMEOUT_SHIPPED:-900}"
+# The metadata pre-run is two HTTP requests and some git — no venv, no install.
+# Short on purpose: if THIS cannot finish in two minutes the index is not
+# answering, and the point of running it first is to find that out in seconds
+# rather than after the full gate has spent its 900.
+GATE_TIMEOUT_SHIPPED_META="${GATE_TIMEOUT_SHIPPED_META:-120}"
 
 # run_bounded <seconds> <cmd...>
 # Exit 124 on timeout, 137 when the command had to be SIGKILLed after ignoring
@@ -491,12 +498,51 @@ PY
       | tee "${log_dir}/shipped.log"
     rc_shipped=127
   else
+    # 3d-i) the fast pre-run — metadata depth, seconds, no venv.
+    #
+    # This exists for ONE failure mode, and it is the gate's most likely one.
+    # The full run below builds a venv and does a cold `pip install` from the
+    # index: it is the gate most likely to sit waiting on a socket, and when it
+    # exhausts GATE_TIMEOUT_SHIPPED the probe is killed before it writes
+    # anything. Today that leaves rc=124 and NO report — "this gate hung" and
+    # nothing else, on the one gate that knows whether users are installing a
+    # withdrawn release.
+    #
+    # The pre-run answers the metadata half in two HTTP requests and writes it
+    # to its own file, so the release verdict survives a later hang. It does
+    # NOT skip the full run and does NOT change rc_shipped: a hang must keep
+    # reading as a hang (the classifier's 124/137 handling is deliberate), and
+    # "the metadata is fine" is not the shipped-artifact gate's answer.
+    #
+    # Note there is deliberately no "skip the install if it is not published"
+    # branch: shipped_probe already returns before the venv in that case, so
+    # such a branch would save nothing and add a way to be wrong.
+    shipped_meta_report="${log_dir}/shipped-metadata.json"
+    rm -f "${shipped_meta_report}"
+    run_bounded "${GATE_TIMEOUT_SHIPPED_META}" python3 "${HERE}/shipped_probe.py" \
+        --dist "${shipped_dist}" --target "${src_dir}" --metadata-only \
+        --report "${shipped_meta_report}" \
+      >"${log_dir}/shipped-metadata.log" 2>&1
+    rc_shipped_meta=$?
+    echo "    metadata pre-run: rc=${rc_shipped_meta} (release/yank verdict in" \
+         "$(basename "${shipped_meta_report}"))"
+
     run_bounded "${GATE_TIMEOUT_SHIPPED}" python3 "${HERE}/shipped_probe.py" \
         --dist "${shipped_dist}" --target "${src_dir}" \
         --report "${shipped_report}" \
         ${SHIPPED_TOOL:+--tool "${SHIPPED_TOOL}"} \
       >"${log_dir}/shipped.log" 2>&1
     rc_shipped=$?
+
+    # The case the pre-run was added for. Say it where the operator is already
+    # looking, rather than leaving a second report file to be discovered.
+    if [ "${rc_shipped}" = "124" ] || [ "${rc_shipped}" = "137" ]; then
+      echo "    the full gate HUNG (rc=${rc_shipped}) and wrote no report — the" \
+           "metadata pre-run (rc=${rc_shipped_meta}) did, in" \
+           "$(basename "${shipped_meta_report}"). The release/yank verdict is" \
+           "there; whether the artifact RUNS is still unknown." \
+        | tee -a "${log_dir}/shipped.log"
+    fi
   fi
 fi
 
@@ -568,6 +614,7 @@ python3 "${HERE}/nightly_audit_report.py" \
   --ruff "${rc_ruff}" --mypy "${rc_mypy}" --pytest "${rc_pytest}" \
   --schema-drift "${rc_schema}" --transport-boot "${rc_boot}" \
   --host-allowlist "${rc_rebind}" --shipped-artifact "${rc_shipped}" \
+  --shipped-metadata-json "${shipped_meta_report:-}" \
   --tests-collected "${tests_collected}" \
   --promptfoo-rc "${rc_pf}" --promptfoo-json "${pf_json}" \
   --promptfoo-profile "${PROMPTFOO_PROFILE}" \

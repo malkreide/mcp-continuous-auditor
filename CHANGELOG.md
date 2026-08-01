@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the shipped gate's metadata pre-run reaches the nightly summary
+
+The pre-run below wrote `shipped-metadata.json` and nothing read it, so its
+verdict lived in the Worker's log directory — which is exactly where it is *not*
+read when the full gate hangs and the summary says only "this gate hung".
+
+`nightly_audit_report.py` now takes `--shipped-metadata-json`, carries the
+parsed verdict in the summary as `shipped_metadata`, and renders it as a
+sub-line under the shipped gate: what the index serves, how many releases are
+yanked, whether the two index APIs disagreed, and any metadata finding codes.
+
+**It is evidence, not a gate**, and that distinction is load-bearing here.
+`_GATE_NAMES` is fail-closed — a name in it that an evidence file does not carry
+reads as 127 and hard-fails the run. That is correct for a gate an older Worker
+genuinely did not run, and wrong for a supplementary report: adding the pre-run
+there would have hard-failed every Worker image that predates it. So it is
+outside that list, and a missing file is simply `present: false`.
+
+Three properties, all tested:
+
+- **An absent or unparseable report reads as *unknown*, never as clean.** A
+  Worker image predating the pre-run reaches this code, and so does one whose
+  pre-run was itself killed; neither has shown the release to be healthy.
+
+- **It never moves the outcome.** A `RELEASE_YANKED` from the pre-run does not
+  turn a green shipped gate into `findings`. The gate's own exit code is the
+  verdict — letting a second probe override it is the same substitution the
+  124/137 handling exists to prevent, from the other direction.
+
+- **A hung gate stays a hang**, and the report gains what the pre-run *did*
+  establish. With findings, that goes under `Findings`; with none, the nuance
+  goes on the gate's own line instead, because "nothing is wrong" does not
+  belong under a 🚨 heading. The line then says which half is still open:
+
+```
+- shipped-artifact gate (install from PyPI + run it): ⏱ HUNG — killed by the gate timeout (exit 124)
+  - release metadata pre-run: index serves `0.7.0` · 6 yanked release(s): 0.2.0 … 0.5.1 ·
+    no metadata findings · the gate itself returned no verdict, so what is still UNKNOWN
+    is whether the installed artifact starts and answers
+```
+
+### Added — the nightly shipped gate runs a fast metadata pre-run first
+
+Uses the `--metadata-only` depth the merge below created, for the shipped gate's
+most likely failure mode rather than for speed.
+
+The full gate builds a venv and does a cold `pip install` from the index: it is
+the gate most likely to sit waiting on a socket, and `GATE_TIMEOUT_SHIPPED` is
+900s. When it exhausts that budget the probe is **killed before it writes
+anything** — leaving `rc=124` and no report, on the one gate that knows whether
+users are installing a withdrawn release. "This gate hung" was the entire
+output.
+
+The pre-run answers the metadata half in two HTTP requests
+(`GATE_TIMEOUT_SHIPPED_META`, default 120s) and writes it to
+`shipped-metadata.json`, so the release/yank verdict survives a hang of the
+second pass. When the full gate does hang, the log now says so and points at
+that file rather than leaving it to be discovered.
+
+Two things it deliberately does **not** do:
+
+- **It does not decide the verdict.** `rc_shipped` still comes from the full
+  gate alone. Letting a green metadata pass lower a 124 would turn "this gate
+  hung" into "this gate is fine" — the exact substitution the classifier's
+  124/137 handling exists to prevent — and "the metadata is consistent" was
+  never the shipped-artifact gate's question. A test pins that no `rc_shipped=`
+  assignment reads the pre-run's result.
+
+- **It does not skip the full run when the package is absent from the index.**
+  That branch looks like an obvious saving and is worth nothing: `shipped_probe`
+  already returns before the venv when the index says `not-published`, so the
+  skip would save no time and add a way to be wrong.
+
+A structural test pins that the pre-run *precedes* the gate it insures against —
+a pre-run placed after it buys nothing — and the existing "every shipped_probe
+invocation is bounded" test covers the new call.
+
 ### Changed — `release_gap.py` merged into `shipped_probe.py` as its cheap depth
 
 Requested after the two probes had been made to agree on how they read an index.
