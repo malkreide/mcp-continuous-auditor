@@ -116,6 +116,47 @@ def _load_promptfoo(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def summarise_shipped_metadata(path: Path | None) -> dict[str, Any]:
+    """The shipped gate's fast pre-run, reduced to what belongs in a summary.
+
+    This is EVIDENCE, not a gate — deliberately absent from ``_GATE_NAMES``. That
+    list is fail-closed: a name in it that an evidence file does not carry reads
+    as 127 and hard-fails the run, which is right for a gate an older Worker
+    genuinely did not run, and wrong for a supplementary report. A Worker image
+    without the pre-run must classify exactly as it did before.
+
+    So an absent or unparseable file is ``present: False`` and nothing else. It
+    never becomes "no findings" — the same refusal as the test count, where an
+    unreadable log reads as unknown rather than as zero.
+    """
+    out: dict[str, Any] = {"present": False}
+    if path is None or not path.exists():
+        return out
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return out
+    if not isinstance(data, dict):
+        return out
+    findings = data.get("findings")
+    yanked = data.get("yanked")
+    out.update({
+        "present": True,
+        "exit_code": data.get("exit_code"),
+        "publication": data.get("publication"),
+        "index_url": data.get("index_url"),
+        "index_version": data.get("index_version"),
+        "index_status": data.get("index_status"),
+        "yank_source": data.get("yank_source"),
+        "yanked": sorted(yanked) if isinstance(yanked, dict) else [],
+        "findings": [
+            {"code": f.get("code"), "severity": f.get("severity", "high")}
+            for f in findings if isinstance(f, dict)
+        ] if isinstance(findings, list) else [],
+    })
+    return out
+
+
 # Gate exit codes carried in a Worker evidence file (see nightly-audit.sh). The
 # Worker ships raw evidence; the trusted Broker re-classifies from it, so a
 # compromised Worker cannot forge a green verdict (Analysis S2).
@@ -345,6 +386,8 @@ def _rebind_status(rc: int) -> str:
 def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     pf = _load_promptfoo(Path(args.promptfoo_json)) if args.promptfoo_json else None
     pfc = classify_promptfoo(pf, args.promptfoo_rc)
+    shipped_metadata = summarise_shipped_metadata(
+        Path(args.shipped_metadata_json) if args.shipped_metadata_json else None)
 
     # Validate the Worker-controlled metadata (S-D): a target/sha that is neither a
     # known sentinel nor pattern-matching is treated as tampering -> 'invalid' +
@@ -527,6 +570,11 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         "host_allowlist_fail": host_allowlist_fail,
         "host_allowlist_unconfigured": host_allowlist_unconfigured,
         "shipped_artifact_fail": shipped_artifact_fail,
+        # Reported, never decisive: `outcome` above is unchanged by this block.
+        # The pre-run is a second probe, not the shipped gate's verdict, and
+        # letting it move the outcome would be the "a hung gate became a
+        # finding" substitution from the other direction.
+        "shipped_metadata": shipped_metadata,
         "hung": hung,
         "hung_gates": hung_gates,
         "no_tests_executed": no_tests_executed,
@@ -544,6 +592,46 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         },
         "promptfoo": pfc,
     }
+
+
+def _shipped_metadata_line(s: dict[str, Any]) -> str:
+    """One line for the pre-run, and it has to survive the gate above it hanging.
+
+    That is the whole reason the pre-run exists: the full gate is killed before
+    it writes anything when it exhausts its budget, leaving `rc=124` and no
+    report on the one gate that knows whether users are installing a withdrawn
+    release. This line is where that verdict becomes visible to someone reading
+    the report rather than the Worker's log directory.
+    """
+    m = s.get("shipped_metadata") or {}
+    if not m.get("present"):
+        # Not "clean" — unknown. A Worker image predating the pre-run reaches
+        # here, and so does one whose pre-run was itself killed.
+        return "no report (not run, or it did not finish) — **unknown**, not clean"
+
+    bits: list[str] = []
+    version = m.get("index_version")
+    bits.append(f"index serves `{version}`" if version else "no version from the index")
+    if m.get("index_status") == "unconfirmed":
+        bits.append("index APIs **disagree** (UNCONFIRMED — not a finding, read the log)")
+    if m.get("yanked"):
+        bits.append(f"{len(m['yanked'])} yanked release(s): {', '.join(m['yanked'])}")
+
+    codes = [f["code"] for f in m.get("findings", []) if f.get("code")]
+    if codes:
+        bits.append(f"🚨 **{', '.join(codes)}**")
+    else:
+        bits.append("no metadata findings")
+
+    # When the gate above produced nothing, name precisely which half of the
+    # question survived. "The release is fine" and "the artifact runs" are two
+    # claims, and only the first one was earned here.
+    if (s["gates"]["shipped_artifact_gate"] not in (0, 2)
+            or _hung(s["gates"]["shipped_artifact_gate"])):
+        bits.append(
+            "the gate itself returned no verdict, so what is still UNKNOWN is "
+            "whether the installed artifact starts and answers")
+    return " · ".join(bits)
 
 
 def render_report(s: dict[str, Any]) -> str:
@@ -588,6 +676,7 @@ def render_report(s: dict[str, Any]) -> str:
         f"{_rebind_status(s['gates']['host_allowlist_gate'])}",
         f"- shipped-artifact gate (install from PyPI + run it): "
         f"{_status(s['gates']['shipped_artifact_gate'])}",
+        f"  - release metadata pre-run: {_shipped_metadata_line(s)}",
         f"- promptfoo (contract + red-team): {_status(s['gates']['promptfoo_rc'])}",
         f"- promptfoo profile: **{s.get('promptfoo_profile', 'unknown')}**",
     ]
@@ -694,6 +783,26 @@ def render_report(s: dict[str, Any]) -> str:
             "attacking page holds one). See the Worker's `rebind.log` / `rebind.json` for "
             "which probe and which pass."
         )
+    # The pre-run's reason for existing, said where it is read. When the shipped
+    # gate produced no verdict at all — hung, or could not run — the metadata
+    # half may still have completed, and that half is the one that knows about a
+    # withdrawn release. Surfaced as its own line rather than folded into
+    # `findings`: the outcome stays whatever the gate's own exit code made it.
+    _m = s.get("shipped_metadata") or {}
+    _shipped_silent = (s["gates"]["shipped_artifact_gate"] not in (0, 2)
+                       or _hung(s["gates"]["shipped_artifact_gate"]))
+    _codes = [f["code"] for f in _m.get("findings", []) if f.get("code")]
+    # Only a real finding earns a place under "Findings". A pre-run that found
+    # nothing still has something worth saying when the gate above it went
+    # silent, but saying it here would put "nothing is wrong" under a 🚨 heading
+    # — `_shipped_metadata_line` carries that case instead.
+    if _shipped_silent and _m.get("present") and _codes:
+        findings.append(
+            "**The shipped-artifact gate returned no verdict, but its metadata "
+            f"pre-run did** — and it found {', '.join(_codes)}. That part is "
+            "established: the release comparison completed."
+        )
+
     if s.get("shipped_artifact_fail"):
         findings.append(
             "**Shipped artifact diverges** — the package users actually install is not "
@@ -796,6 +905,10 @@ def main() -> int:
                         "evidence — the log itself never reaches the Broker")
     p.add_argument("--from-evidence", default="", dest="from_evidence",
                    help="read gate exit codes (+ target/sha) from a Worker evidence JSON")
+    p.add_argument("--shipped-metadata-json", default="", dest="shipped_metadata_json",
+                   help="the shipped gate's --metadata-only pre-run report. Evidence, "
+                        "not a gate: it is reported and never changes the outcome, and "
+                        "an absent file reads as unknown rather than as clean")
     p.add_argument("--promptfoo-json", default="", dest="promptfoo_json")
     p.add_argument("--promptfoo-profile", default="", dest="promptfoo_profile",
                    help="which promptfoo profile ran (determ|graded|full); stamped into the summary")

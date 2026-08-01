@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the shipped gate's metadata pre-run reaches the nightly summary
+
+The pre-run below wrote `shipped-metadata.json` and nothing read it, so its
+verdict lived in the Worker's log directory — which is exactly where it is *not*
+read when the full gate hangs and the summary says only "this gate hung".
+
+`nightly_audit_report.py` now takes `--shipped-metadata-json`, carries the
+parsed verdict in the summary as `shipped_metadata`, and renders it as a
+sub-line under the shipped gate: what the index serves, how many releases are
+yanked, whether the two index APIs disagreed, and any metadata finding codes.
+
+**It is evidence, not a gate**, and that distinction is load-bearing here.
+`_GATE_NAMES` is fail-closed — a name in it that an evidence file does not carry
+reads as 127 and hard-fails the run. That is correct for a gate an older Worker
+genuinely did not run, and wrong for a supplementary report: adding the pre-run
+there would have hard-failed every Worker image that predates it. So it is
+outside that list, and a missing file is simply `present: false`.
+
+Three properties, all tested:
+
+- **An absent or unparseable report reads as *unknown*, never as clean.** A
+  Worker image predating the pre-run reaches this code, and so does one whose
+  pre-run was itself killed; neither has shown the release to be healthy.
+
+- **It never moves the outcome.** A `RELEASE_YANKED` from the pre-run does not
+  turn a green shipped gate into `findings`. The gate's own exit code is the
+  verdict — letting a second probe override it is the same substitution the
+  124/137 handling exists to prevent, from the other direction.
+
+- **A hung gate stays a hang**, and the report gains what the pre-run *did*
+  establish. With findings, that goes under `Findings`; with none, the nuance
+  goes on the gate's own line instead, because "nothing is wrong" does not
+  belong under a 🚨 heading. The line then says which half is still open:
+
+```
+- shipped-artifact gate (install from PyPI + run it): ⏱ HUNG — killed by the gate timeout (exit 124)
+  - release metadata pre-run: index serves `0.7.0` · 6 yanked release(s): 0.2.0 … 0.5.1 ·
+    no metadata findings · the gate itself returned no verdict, so what is still UNKNOWN
+    is whether the installed artifact starts and answers
+```
+
 ### Added — the nightly shipped gate runs a fast metadata pre-run first
 
 Uses the `--metadata-only` depth the merge below created, for the shipped gate's

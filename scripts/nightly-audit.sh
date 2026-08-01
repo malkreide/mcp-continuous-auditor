@@ -614,6 +614,7 @@ python3 "${HERE}/nightly_audit_report.py" \
   --ruff "${rc_ruff}" --mypy "${rc_mypy}" --pytest "${rc_pytest}" \
   --schema-drift "${rc_schema}" --transport-boot "${rc_boot}" \
   --host-allowlist "${rc_rebind}" --shipped-artifact "${rc_shipped}" \
+  --shipped-metadata-json "${shipped_meta_report:-}" \
   --tests-collected "${tests_collected}" \
   --promptfoo-rc "${rc_pf}" --promptfoo-json "${pf_json}" \
   --promptfoo-profile "${PROMPTFOO_PROFILE}" \

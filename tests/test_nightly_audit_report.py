@@ -34,13 +34,15 @@ class ClassifierTest(unittest.TestCase):
         p.write_text(json.dumps(obj), encoding="utf-8")
         return p
 
-    def _classify(self, evidence: Path, promptfoo: Path | str = "") -> dict:
+    def _classify(self, evidence: Path, promptfoo: Path | str = "",
+                  shipped_metadata: Path | str = "") -> dict:
         """Run main() through --from-evidence exactly as the Broker handler does."""
         report = self.dir / "report.md"
         summary = self.dir / "summary.json"
         argv = [
             "--from-evidence", str(evidence),
             "--promptfoo-json", str(promptfoo),
+            "--shipped-metadata-json", str(shipped_metadata),
             "--out-report", str(report),
             "--out-summary", str(summary),
         ]
@@ -55,6 +57,7 @@ class ClassifierTest(unittest.TestCase):
             sys.argv = old
         out = json.loads(summary.read_text(encoding="utf-8"))
         out["_exit"] = rc
+        out["_report"] = report.read_text(encoding="utf-8")
         return out
 
     # --- happy path -----------------------------------------------------------
@@ -578,6 +581,122 @@ class ClassifierTest(unittest.TestCase):
         s = self._classify(ev, "")
         self.assertEqual(s["outcome"], "hard-fail")
         self.assertFalse(s["green"])
+
+
+class ShippedMetadataPreRunTest(unittest.TestCase):
+    """The shipped gate's fast pre-run, as it reaches the summary.
+
+    It is EVIDENCE, not a gate. `_GATE_NAMES` is fail-closed — a name in it that
+    an evidence file lacks reads as 127 and hard-fails — which is right for a
+    gate an older Worker genuinely did not run, and wrong for a supplementary
+    report. These tests pin both halves of that: it is reported, and it never
+    moves the outcome.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _write(self, name: str, obj: object) -> Path:
+        p = self.dir / name
+        p.write_text(json.dumps(obj), encoding="utf-8")
+        return p
+
+    def _meta(self, findings=(), yanked=(), **kw):
+        payload = {
+            "schema": 2, "depth": "metadata", "publication": "published",
+            "index_url": "https://pypi.org/simple", "index_version": "0.7.0",
+            "index_status": "ok", "yank_source": "simple",
+            "yanked": {v: "" for v in yanked},
+            "findings": [{"code": c, "detail": "d", "severity": "high"} for c in findings],
+            "exit_code": 2 if findings else 0,
+        }
+        payload.update(kw)
+        return self._write("meta.json", payload)
+
+    def _classify(self, gates, meta=""):
+        ev = self._write("ev.json", {
+            "target": "o/r", "target_sha": "abc1234", "tests_collected": 7,
+            "gates": {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
+                      "transport_boot": 0, "host_allowlist": 0, "promptfoo_rc": 0,
+                      **gates},
+        })
+        pf = self._write("pf.json", {"results": {"stats": {"errors": 0}, "results": []}})
+        report, summary = self.dir / "report.md", self.dir / "summary.json"
+        argv = ["--from-evidence", str(ev), "--promptfoo-json", str(pf),
+                "--shipped-metadata-json", str(meta),
+                "--out-report", str(report), "--out-summary", str(summary)]
+        old = sys.argv
+        sys.argv = ["nightly_audit_report.py", *argv]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                nar.main()
+        finally:
+            sys.argv = old
+        out = json.loads(summary.read_text(encoding="utf-8"))
+        out["_report"] = report.read_text(encoding="utf-8")
+        return out
+
+    def test_a_missing_report_reads_as_unknown_not_as_clean(self) -> None:
+        """A Worker image predating the pre-run reaches here, and so does one
+        whose pre-run was itself killed. Neither has shown the release to be
+        healthy, and neither may be rendered as though it had."""
+        s = self._classify({"shipped_artifact": 0}, meta="")
+        self.assertFalse(s["shipped_metadata"]["present"])
+        self.assertIn("**unknown**, not clean", s["_report"])
+
+    def test_an_unparseable_report_is_also_unknown(self) -> None:
+        bad = self.dir / "bad.json"
+        bad.write_text("{ not json", encoding="utf-8")
+        s = self._classify({"shipped_artifact": 0}, meta=bad)
+        self.assertFalse(s["shipped_metadata"]["present"])
+
+    def test_the_verdict_reaches_the_summary_and_the_report(self) -> None:
+        s = self._classify({"shipped_artifact": 0},
+                           meta=self._meta(yanked=["0.5.0", "0.6.0"]))
+        m = s["shipped_metadata"]
+        self.assertTrue(m["present"])
+        self.assertEqual(m["index_version"], "0.7.0")
+        self.assertEqual(m["yanked"], ["0.5.0", "0.6.0"])
+        self.assertIn("2 yanked release(s): 0.5.0, 0.6.0", s["_report"])
+
+    def test_it_never_moves_the_outcome(self) -> None:
+        """A pre-run finding must not turn a green gate run into `findings`.
+
+        The gate's own exit code is the verdict. Letting a second probe override
+        it is the same substitution the 124/137 handling exists to prevent, just
+        from the other direction.
+        """
+        s = self._classify({"shipped_artifact": 0},
+                           meta=self._meta(findings=["RELEASE_YANKED"]))
+        self.assertEqual(s["outcome"], "green")
+        self.assertFalse(s["shipped_artifact_fail"])
+        self.assertIn("RELEASE_YANKED", s["_report"])
+
+    def test_a_hung_gate_surfaces_what_the_pre_run_did_establish(self) -> None:
+        """The reason the pre-run exists, at the point it is read.
+
+        A hung gate is killed before writing anything — rc=124 and no report, on
+        the gate that knows whether users are installing a withdrawn release.
+        """
+        s = self._classify({"shipped_artifact": 124},
+                           meta=self._meta(findings=["RELEASE_YANKED"]))
+        self.assertEqual(s["outcome"], "hard-fail", "a hang stays a hang")
+        self.assertIn("returned no verdict, but its metadata pre-run did", s["_report"])
+        self.assertIn("RELEASE_YANKED", s["_report"])
+
+    def test_a_hung_gate_with_a_clean_pre_run_says_what_is_still_unknown(self) -> None:
+        s = self._classify({"shipped_artifact": 124}, meta=self._meta())
+        self.assertIn("still UNKNOWN is whether the installed artifact starts",
+                      s["_report"])
+
+    def test_an_unconfirmed_index_is_shown_without_being_a_finding(self) -> None:
+        s = self._classify({"shipped_artifact": 0}, meta=self._meta(index_status="unconfirmed"))
+        self.assertEqual(s["outcome"], "green")
+        self.assertIn("UNCONFIRMED", s["_report"])
 
 
 class CountTestsTest(unittest.TestCase):

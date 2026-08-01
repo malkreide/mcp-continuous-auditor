@@ -19,6 +19,15 @@ Covers:
   `CountTestsTest` pins the parser both classes rest on against the literal
   shapes pytest and unittest emit, above all that unreadable output reads as
   *unknown* and never as zero.
+  `ShippedMetadataPreRunTest` covers the shipped gate's `--metadata-only`
+  pre-run as it reaches the summary. It is evidence, not a gate — deliberately
+  absent from the fail-closed `_GATE_NAMES`, so a Worker image predating it
+  classifies exactly as before — and the tests pin both halves of that: the
+  verdict is reported, and it never moves the outcome. A pre-run finding does
+  not turn a green gate run into `findings`, and a hung gate stays a hang while
+  the report gains what the pre-run *did* establish. An absent or unparseable
+  report reads as **unknown**, never as clean — the same refusal as the test
+  count.
 - `test_sdk_dispatch.py` — which "FastMCP" a given server belongs to. Two
   different projects carry the name and cannot share an environment (`fastmcp`
   still requires `mcp` 1.x), so the three scripts that run inside a target's
