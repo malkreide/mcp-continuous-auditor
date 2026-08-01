@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -519,6 +520,100 @@ class IndexPrecedenceTest(unittest.TestCase):
         self.assertNotIn("RELEASE_YANKED", {f.code for f in report.findings})
 
 
+SIMPLE_HTML = """\
+<!DOCTYPE html>
+<html><head><title>Links for demo-mcp</title></head><body>
+<h1>Links for demo-mcp</h1>
+<a href="https://files.example.com/demo_mcp-0.5.0.tar.gz#sha256=aa"
+   data-requires-python="&gt;=3.11">demo_mcp-0.5.0.tar.gz</a><br/>
+<a href="https://files.example.com/demo_mcp-0.6.0-py3-none-any.whl#sha256=bb"
+   data-yanked="built from the wrong tag">demo_mcp-0.6.0-py3-none-any.whl</a><br/>
+<a href="https://files.example.com/demo_mcp-0.6.0.tar.gz#sha256=cc"
+   data-yanked="">demo_mcp-0.6.0.tar.gz</a><br/>
+</body></html>
+"""
+
+
+class SimpleHtmlTest(unittest.TestCase):
+    """PEP 503 HTML — the only format an arbitrary index must serve.
+
+    PEP 691's JSON is optional. A devpi, an Artifactory or a plain directory
+    listing answers HTML, so refusing to read it would mean refusing to audit
+    every private index — which is what honouring `--index-url` requires.
+    """
+
+    def _view(self, body: str, content_type: str = "text/html; charset=utf-8"):
+        orig = urllib.request.urlopen
+
+        class FakeResponse:
+            headers = {"Content-Type": content_type}
+
+            def read(self):
+                return body.encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        urllib.request.urlopen = lambda *a, **k: FakeResponse()  # type: ignore[assignment]
+        try:
+            return rg.fetch_simple("demo-mcp", timeout=1)
+        finally:
+            urllib.request.urlopen = orig  # type: ignore[assignment]
+
+    def test_versions_are_derived_when_html_offers_no_versions_key(self):
+        """PEP 700's `versions` is JSON-only. An empty list must not read as
+        "this project has no releases"."""
+        view = self._view(SIMPLE_HTML)
+        self.assertTrue(view.readable, view.detail)
+        self.assertEqual(view.versions, ["0.5.0", "0.6.0"])
+
+    def test_data_yanked_is_a_yank_even_with_no_reason(self):
+        """PEP 592: the ATTRIBUTE is the yank, its value is an optional reason.
+
+        Reading it as a truthy value would call every reasonless yank healthy —
+        the same class of mistake as trusting the JSON API's lagging flag.
+        """
+        view = self._view(SIMPLE_HTML)
+        self.assertIn("0.6.0", view.yanked)
+        self.assertEqual(view.yanked["0.6.0"], "built from the wrong tag")
+        self.assertNotIn("0.5.0", view.yanked)
+
+    def test_the_latest_installable_skips_the_yanked_release(self):
+        view = self._view(SIMPLE_HTML)
+        self.assertEqual(view.latest, "0.6.0")
+        self.assertEqual(view.latest_installable, "0.5.0")
+
+    def test_a_mislabelled_content_type_is_still_read(self):
+        """Indexes that serve HTML as text/plain are common enough to survive."""
+        view = self._view(SIMPLE_HTML, content_type="text/plain")
+        self.assertTrue(view.readable, view.detail)
+        self.assertEqual(view.versions, ["0.5.0", "0.6.0"])
+
+    def test_a_body_that_is_neither_is_unreachable_not_empty(self):
+        """An error page must never become an empty-but-successful answer."""
+        view = self._view("upstream connect error", content_type="text/plain")
+        self.assertFalse(view.readable)
+        self.assertIn("unparseable", view.detail)
+
+
+class SimpleUrlTest(unittest.TestCase):
+    def test_the_name_is_normalised(self):
+        """PEP 503: an index need only serve the normalised spelling, so passing
+        the raw name through would 404 — reported as "never published"."""
+        self.assertEqual(
+            rg.simple_url("Foo.Bar_Baz"), "https://pypi.org/simple/foo-bar-baz/"
+        )
+
+    def test_a_custom_index_is_honoured_with_or_without_a_slash(self):
+        for base in ("https://pypi.example.com/simple", "https://pypi.example.com/simple/"):
+            self.assertEqual(
+                rg.simple_url("demo-mcp", base), "https://pypi.example.com/simple/demo-mcp/"
+            )
+
+
 class VersionParsingTest(unittest.TestCase):
     def test_prerelease_detection(self):
         for version in ("2.14.0a1", "1.0.0rc2", "1.0.dev1", "0.9.0-beta", "1.0b3"):
@@ -566,6 +661,25 @@ class LiveDivergenceTest(unittest.TestCase):
             json_view.yanked
         ):
             print("DIVERGENT — the probe reports this as UNCONFIRMED.")
+
+    def test_both_simple_flavours_agree_on_the_live_index(self):
+        """The HTML parser against the same page PyPI serves as JSON.
+
+        The fixtures prove the parser handles a page; only the live index proves
+        it handles PyPI's actual markup, which is what a private-index user's
+        `--index-url` run depends on being right.
+        """
+        as_json = rg.fetch_simple(DIST, timeout=30)
+        original = rg.SIMPLE_ACCEPT
+        rg.SIMPLE_ACCEPT = "text/html"
+        try:
+            as_html = rg.fetch_simple(DIST, timeout=30)
+        finally:
+            rg.SIMPLE_ACCEPT = original
+        self.assertTrue(as_html.readable, as_html.detail)
+        self.assertEqual(as_html.versions, as_json.versions)
+        self.assertEqual(as_html.yanked, as_json.yanked)
+        self.assertEqual(as_html.latest_installable, as_json.latest_installable)
 
 
 class JsonOutputTest(unittest.TestCase):

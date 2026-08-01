@@ -54,6 +54,12 @@ Run against a reconstruction of that state, the probe reports
 
 ## Which PyPI API is believed
 
+Both response flavours are read: PEP 691's JSON where the index serves it, and
+PEP 503 HTML otherwise — the JSON flavour is optional and HTML is the only
+format an index must serve, so a JSON-only reader could not audit a private
+index at all. `shipped_probe.py` uses this against its `--index-url`;
+`release_gap.py` itself still asks pypi.org.
+
 The **Simple API** (`/simple/{dist}/`, PEP 503/691/700) is primary: it is the
 one `pip` and `uv` read, so it is the one that decides what a user gets, and it
 carries the per-file `yanked` flag. The **JSON API** (`/pypi/{dist}/json`) is a

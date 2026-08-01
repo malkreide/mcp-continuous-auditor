@@ -303,6 +303,49 @@ class LookupIndexTest(unittest.TestCase):
         self.assertEqual((version, status), (None, "not_published"))
         self.assertIn("ghost-mcp", detail)
 
+    def test_the_index_url_is_the_one_asked(self) -> None:
+        """The check must consult the index the install will resolve against."""
+        asked: list[str] = []
+
+        def fake(url: str, timeout: float, accept: str | None = None):
+            asked.append(url)
+            return self._simple(["0.6.0"]), "ok", ""
+
+        rg._get = fake  # type: ignore[assignment]
+        sp.lookup_index("demo-mcp", 5.0, "https://pypi.example.com/simple")
+        self.assertEqual(len(asked), 1)
+        self.assertTrue(
+            asked[0].startswith("https://pypi.example.com/simple/demo-mcp/"), asked[0])
+
+    def test_a_private_index_gets_no_pypi_fallback(self) -> None:
+        """Falling back to pypi.org would answer about a different package.
+
+        The JSON API exists only on PyPI. Querying it for a distribution that
+        lives on a private index either 404s (a false NOT_ON_INDEX) or, worse,
+        finds an unrelated public package of the same name and calls it found.
+        """
+        self._serve(None, self._json(["9.9.9"]))
+        version, status, detail = sp.lookup_index(
+            "demo-mcp", 5.0, "https://pypi.example.com/simple")
+        self.assertEqual((version, status), (None, "unreachable"))
+        self.assertEqual(self.calls, ["simple"], "pypi.org must not be consulted")
+        self.assertIn("not PyPI", detail)
+
+    def test_a_private_index_404_is_believed(self) -> None:
+        self._serve(404, None)
+        version, status, detail = sp.lookup_index(
+            "demo-mcp", 5.0, "https://pypi.example.com/simple")
+        self.assertEqual((version, status), (None, "not_published"))
+        self.assertIn("pypi.example.com", detail)
+
+    def test_is_pypi_matches_on_host_not_on_prefix(self) -> None:
+        for url in ("https://pypi.org/simple", "https://pypi.org/simple/"):
+            self.assertTrue(sp.is_pypi(url), url)
+        for url in ("https://pypi.example.com/simple",
+                    "https://mirror.local/pypi.org/simple",
+                    "http://localhost:8080/simple"):
+            self.assertFalse(sp.is_pypi(url), url)
+
 
 class ProbeWiringTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -374,18 +417,19 @@ class ProbeWiringTest(unittest.TestCase):
         Every other test here injects the lookup, so nothing else would notice
         the default pointing at a different cache of the index than pip uses.
         """
-        seen: list[str] = []
+        seen: list[tuple[str, str]] = []
         original = sp.lookup_index
-        sp.lookup_index = lambda d, t: (seen.append(d), ("0.6.0", "ok", ""))[1]
+        sp.lookup_index = lambda d, t, u: (seen.append((d, u)), ("0.6.0", "ok", ""))[1]
         try:
             r = sp.probe(
-                "demo-mcp", self.target,
+                "demo-mcp", self.target, index_url="https://pypi.example.com/simple",
                 installer=lambda *a, **k: sp.Installed(
                     True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"),
                 speaker=lambda *a, **k: {"tools": [], "call": {}, "error": ""})
         finally:
             sp.lookup_index = original
-        self.assertEqual(seen, ["demo-mcp"])
+        # The URL the INSTALL uses must be the URL the existence check asked.
+        self.assertEqual(seen, [("demo-mcp", "https://pypi.example.com/simple")])
         self.assertEqual(r.versions.installed, "0.6.0")
 
     def test_an_install_failure_carries_pips_own_words(self) -> None:

@@ -130,6 +130,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from html.parser import HTMLParser
+from urllib.parse import quote, urlsplit
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -141,10 +143,13 @@ except ModuleNotFoundError:  # Python 3.10 — tomllib landed in 3.11
     tomllib = None  # type: ignore[assignment]
 
 PYPI_JSON = "https://pypi.org/pypi/{dist}/json"
-PYPI_SIMPLE = "https://pypi.org/simple/{dist}/"
-# PEP 691. Without this header the Simple API answers HTML, which carries the
-# same data behind an attribute-scraping exercise nobody should be writing.
-SIMPLE_ACCEPT = "application/vnd.pypi.simple.v1+json"
+PYPI_SIMPLE = "https://pypi.org/simple"
+# PEP 691 first, HTML second, and the HTML is not a formality: the JSON flavour
+# is OPTIONAL, and the only response format a PEP 503 index is required to serve
+# is HTML. PyPI content-negotiates to JSON; a devpi, an Artifactory or a plain
+# directory listing answers HTML, and refusing to read it would mean refusing to
+# audit every private index. Both are parsed into the same shape below.
+SIMPLE_ACCEPT = "application/vnd.pypi.simple.v1+json, text/html;q=0.5, */*;q=0.1"
 
 TAG = re.compile(r"^v?(\d+(?:\.\d+)*.*)$")
 CHANGELOG_UNRELEASED = re.compile(r"^##\s*\[?Unreleased\]?", re.IGNORECASE)
@@ -300,21 +305,93 @@ def release_tags(root: Path) -> list[str] | None:
     return tags
 
 
+class _SimpleHTMLParser(HTMLParser):
+    """PEP 503 project page — the anchor list, with PEP 592's yank attribute.
+
+    Only ``<a>`` is of interest: its text is the filename, and ``data-yanked``
+    marks a withdrawn file. The attribute's PRESENCE is the yank; its value is
+    an optional reason, so an empty ``data-yanked=""`` is still yanked. Reading
+    it as a truthy value would call every reasonless yank healthy — the same
+    class of mistake as trusting the JSON API's lagging flag.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.files: list[dict[str, Any]] = []
+        self._current: dict[str, Any] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        attributes = dict(attrs)
+        yanked: Any = False
+        if "data-yanked" in attributes:
+            yanked = attributes.get("data-yanked") or True
+        self._current = {"filename": "", "url": attributes.get("href") or "", "yanked": yanked}
+
+    def handle_data(self, data: str) -> None:
+        if self._current is not None:
+            self._current["filename"] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or self._current is None:
+            return
+        entry = self._current
+        self._current = None
+        entry["filename"] = entry["filename"].strip()
+        if not entry["filename"]:
+            # Some indexes leave the anchor empty and carry the name in href.
+            entry["filename"] = urlsplit(str(entry["url"])).path.rsplit("/", 1)[-1]
+        if entry["filename"]:
+            self.files.append(entry)
+
+
+def _parse_simple_html(body: str) -> dict[str, Any]:
+    """A PEP 503 page, in the same shape PEP 691 would have handed us.
+
+    Deliberately no ``versions`` key: PEP 700 added that to the JSON flavour and
+    HTML has no equivalent. Leaving it out makes ``fetch_simple`` derive the
+    version list from the filenames instead of trusting an empty one, which
+    would read as "this project has no releases".
+    """
+    parser = _SimpleHTMLParser()
+    parser.feed(body)
+    parser.close()
+    return {"files": parser.files}
+
+
 def _get(url: str, timeout: float, accept: str | None = None) -> tuple[Any, str, str]:
-    """(payload, status, detail). Never raises — the caller reports the status."""
+    """(payload, status, detail). Never raises — the caller reports the status.
+
+    Answers in the PEP 691 shape whichever flavour the index served, so nothing
+    downstream has to care which one it was. HTML is only ever produced by a
+    Simple endpoint; the JSON API has no HTML representation to be confused with.
+    """
     request = urllib.request.Request(url)
     if accept:
         request.add_header("Accept", accept)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
-            return json.loads(resp.read().decode("utf-8")), "ok", ""
+            raw = resp.read().decode("utf-8", errors="replace")
+            content_type = (resp.headers.get("Content-Type") or "").lower()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None, "not_published", "not on PyPI (HTTP 404)"
         return None, "unreachable", f"PyPI returned HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return None, "unreachable", f"PyPI unreachable: {exc}"
-    except (ValueError, KeyError) as exc:
+
+    if "html" in content_type:
+        return _parse_simple_html(raw), "ok", ""
+    try:
+        return json.loads(raw), "ok", ""
+    except ValueError as exc:
+        # An index that mislabels its content type is common enough to be worth
+        # one more attempt before giving up — but only when the body actually
+        # looks like a project page, never as a way to turn an error page into
+        # an empty-but-successful answer.
+        if "<a" in raw.lower():
+            return _parse_simple_html(raw), "ok", ""
         return None, "unreachable", f"PyPI response unparseable: {exc}"
 
 
@@ -383,15 +460,31 @@ def _summarise(view: IndexView) -> IndexView:
     return view
 
 
-def fetch_simple(dist: str, timeout: float) -> IndexView:
+def simple_url(dist: str, index_url: str = PYPI_SIMPLE) -> str:
+    """The project page on a PEP 503 index.
+
+    The name is normalised (PEP 503 §normalized-names) rather than passed
+    through: an index is only required to serve the normalised spelling, and
+    ``Foo.Bar_Baz`` would 404 on one that does — which this probe would then
+    report as "never published".
+    """
+    normalised = re.sub(r"[-_.]+", "-", dist).lower()
+    return f"{index_url.rstrip('/')}/{quote(normalised)}/"
+
+
+def fetch_simple(dist: str, timeout: float, index_url: str = PYPI_SIMPLE) -> IndexView:
     """The Simple API — the surface ``pip`` installs from, and the primary here.
+
+    ``index_url`` is the same value ``pip --index-url`` takes, so a target that
+    publishes to a private index can be audited against the index it actually
+    publishes to.
 
     The URL carries a cache-buster. The divergence this function exists for is a
     caching artefact, and asking through the same cache that is lagging would
     reproduce it faithfully rather than see past it.
     """
     view = IndexView(source="simple")
-    url = PYPI_SIMPLE.format(dist=dist) + f"?_cb={int(time.time())}"
+    url = simple_url(dist, index_url) + f"?_cb={int(time.time())}"
     payload, view.status, view.detail = _get(url, timeout, SIMPLE_ACCEPT)
     if payload is None:
         return view

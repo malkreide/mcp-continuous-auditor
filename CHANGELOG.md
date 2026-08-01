@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the existence check ignored `--index-url` and asked pypi.org regardless
+
+The item left open by the previous change, and it was worse than "inconsistent".
+`shipped_probe.py` installs from `--index-url`; the check deciding whether the
+distribution exists at all was hardcoded to pypi.org. For a target publishing to
+a private index those are **different hosts**, so the check could answer
+confidently about a package it was never looking at — and the two failure modes
+are both bad: a 404 becomes `NOT_ON_INDEX` against a package that is published
+and installable, or an unrelated public package of the same name is found and
+the check waves through a distribution nobody involved has ever seen.
+
+`lookup_index()` now asks the index the install will resolve against.
+
+**This required reading PEP 503 HTML, which is why it was flagged as a bigger
+bet.** PEP 691's JSON flavour is *optional*; the only response format a Simple
+index is required to serve is HTML. PyPI content-negotiates to JSON, but a
+devpi, an Artifactory or a plain directory listing answers HTML, so a
+JSON-only reader would have refused to audit exactly the private indexes this
+change exists for. `release_gap._get` now parses both flavours into one shape,
+so nothing downstream knows which one it got. Two details in the parser:
+
+- **`data-yanked` is a yank by its PRESENCE**, per PEP 592 — its value is an
+  optional reason, so `data-yanked=""` is still yanked. Reading it as a truthy
+  value would have called every reasonless yank healthy, which is the same
+  mistake as trusting the JSON API's lagging flag.
+- **No `versions` key is emitted.** PEP 700 added that to the JSON flavour only;
+  HTML has no equivalent, and an empty list would read as "this project has no
+  releases". The version list is derived from the filenames instead, a path that
+  already existed.
+
+Verified against the live index by fetching PyPI's *own* project page in both
+flavours and comparing: identical version list, identical yank set, identical
+latest-installable. That equivalence is pinned as an opt-in live test
+(`RELEASE_GAP_LIVE=1`) — the fixtures prove the parser handles *a* page, only
+the live index proves it handles PyPI's actual markup.
+
+The JSON API now falls back **only for PyPI**, matched on hostname rather than
+by URL prefix, because only PyPI has a JSON API. On any other index a failed
+Simple read is reported as unreachable (127) instead of being papered over with
+an answer about a different host. Distribution names are normalised per PEP 503
+before the request: an index need only serve the normalised spelling, so
+`Foo.Bar_Baz` would 404 on a strict one — and this probe would have called that
+"never published".
+
 ### Fixed — the shipped-artifact gate checked one cache of the index and installed from another
 
 Follow-up to the release-gap change below, and the narrower half of the same
