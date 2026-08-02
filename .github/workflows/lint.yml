@@ -1,0 +1,62 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Ruff pinned so an upstream release cannot change the rule set or the
+      # formatter and turn CI red on untouched code. Bump deliberately.
+      #
+      # NOTE: this version and the `rev` in .pre-commit-config.yaml must agree.
+      # The last step of this job checks that.
+      - run: pip install ruff==0.15.8
+
+      - run: ruff check .
+
+      - run: ruff format --check .
+
+      # The Ruff pin sits in two places: above, and as `rev` in
+      # .pre-commit-config.yaml. Let them drift and the hook formats to one
+      # version while this job checks against the other — the hook reports
+      # green and CI goes red. Stdlib-only, hence no install step.
+      - name: Ruff pin sync (lint.yml ↔ .pre-commit-config.yaml)
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/check_ruff_pin.py
+
+      # scripts/check_ruff_pin.py is meant to be copied between the portfolio
+      # repos, where line-length 88, 100, 110 and 120 sit side by side. The
+      # step above only checks this repo's width; `ruff format` joins an
+      # expression as soon as it fits, so a line wrapped for 88 passes here and
+      # would be joined in any 100-width repo. Hence the loop over every width
+      # in use rather than just our own. A further shared script belongs in
+      # this list.
+      - name: Format stability of the portfolio scripts
+        run: |
+          for f in scripts/check_ruff_pin.py; do
+            for ll in 88 100 110 120; do
+              if ! ruff format --check --line-length "$ll" "$f"; then
+                echo "::error file=$f::Not correctly formatted at line-length $ll. This file is copied portfolio-wide and must format identically at every width in use — rationale in the module docstring."
+                exit 1
+              fi
+            done
+          done
