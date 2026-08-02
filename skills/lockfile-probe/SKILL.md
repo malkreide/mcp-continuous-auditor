@@ -40,6 +40,12 @@ Specifiers are compared as parsed clause sets: `>=2.0.0,<3` and `<3,>=2.0.0` are
 one requirement, `<3` and `<3.0` one bound. Marker-gated requirements are
 skipped — deciding a marker without an environment is a guess.
 
+## It also runs in the nightly gate
+
+Step **1b** of `scripts/nightly-audit.sh`, before `uv sync` — because `uv sync`
+re-locks, so a gate placed after it reads a file its own harness just repaired.
+`LOCKFILE_GATE=off` to skip it. Exit 3 does not turn the run red.
+
 ## Do not "fix" it by re-locking blindly
 
 The finding says which two declarations disagree. Re-locking makes the *lock*

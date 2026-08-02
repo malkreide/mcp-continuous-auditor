@@ -111,6 +111,19 @@
 #                         BOOT_TIMEOUT     hard per-attempt deadline (default 30s)
 #                         BOOT_HTTP_HOST   non-loopback Host used for the 421 probe
 #                         BOOT_BIND_HOST   what the target is told to bind (0.0.0.0)
+#   LOCKFILE_GATE       lockfile gate policy (default on). Compares the dependency
+#                       bound in pyproject.toml against the one recorded in
+#                       uv.lock / poetry.lock — the file the deployment installs
+#                       from — and asks `uv lock --check` / `poetry check --lock`
+#                       where the tool exists. Four outcomes:
+#                         0  the lock states what pyproject states
+#                         2  FINDING: LOCK_DRIFT / LOCK_UNSATISFIED / LOCK_STALE /
+#                            LOCK_MISSING_DEP
+#                         3  NOT MEASURED: the target ships no lockfile. Neither a
+#                            pass nor a finding, and the COMMON answer across this
+#                            portfolio — 19 of 20 servers commit no lock.
+#                         4  the checkout moved during the run (probe_provenance)
+#                       Tunable: GATE_TIMEOUT_LOCKFILE.
 #   REBIND_GATE         DNS-rebinding gate policy (default on). Boots the target
 #                       with an inbound Host/Origin allow-list configured and tries
 #                       to walk past it — foreign Host, right host on the wrong
@@ -176,6 +189,11 @@ REBIND_GATE="${REBIND_GATE:-on}"
 # Shipped-artifact gate: on by default. Reads the PUBLISHED package, not the
 # checkout — the one class every other gate is blind to.
 SHIPPED_GATE="${SHIPPED_GATE:-on}"
+# Lockfile gate: on by default. Compares the bound declared in pyproject.toml
+# against the one recorded in the lockfile the deployment installs from. Owns a
+# 0/2/3/4/127 contract; 3 ("no lockfile") is NOT a finding — see the gate itself
+# for why that matters more here than anywhere else.
+LOCKFILE_GATE="${LOCKFILE_GATE:-on}"
 
 repo_name="${TARGET_REPO##*/}"
 src_dir="${AUDIT_DIR}/${repo_name}"
@@ -230,6 +248,11 @@ GATE_TIMEOUT_SHIPPED="${GATE_TIMEOUT_SHIPPED:-900}"
 # answering, and the point of running it first is to find that out in seconds
 # rather than after the full gate has spent its 900.
 GATE_TIMEOUT_SHIPPED_META="${GATE_TIMEOUT_SHIPPED_META:-120}"
+# The lockfile gate parses two files and shells out to `uv lock --check`, which
+# may consult the index. Generous enough for a cold resolver cache, short enough
+# that it cannot delay `uv sync` for long — it runs BEFORE the sync, and every
+# other gate waits behind it.
+GATE_TIMEOUT_LOCKFILE="${GATE_TIMEOUT_LOCKFILE:-300}"
 
 # run_bounded <seconds> <cmd...>
 # Exit 124 on timeout, 137 when the command had to be SIGKILLed after ignoring
@@ -325,6 +348,49 @@ if git -C "${src_dir}" rev-parse --verify --quiet "origin/${TARGET_REF}" >/dev/n
 fi
 sha="$(git -C "${src_dir}" rev-parse --short HEAD)"
 echo "==> ${TARGET_REPO} @ ${TARGET_REF} (${sha})"
+
+# --- 1b) lockfile gate — BEFORE `uv sync`, and that ordering is the gate -------
+# `pyproject.toml` states the dependency bound. This asks whether the lockfile
+# the deployment installs from states it too. swiss-procurement-mcp #37 merged
+# the upper bounds into pyproject.toml and did not regenerate uv.lock, so for six
+# hours `main` carried the fix in the file everybody reads and the old, open
+# range in the file that installs. Every gate below was green throughout.
+#
+# WHY IT SITS HERE AND NOT WITH THE OTHER GATES
+# `uv sync` re-locks. Measured, not assumed: against a checkout whose uv.lock
+# recorded `mcp[cli]>=1.28.1` while pyproject.toml said `>=2.0.0,<3`, a single
+# `uv sync --offline` rewrote the recorded specifier to the pyproject one — the
+# install then failed for want of a cached wheel, and the evidence was gone
+# anyway. Run after the sync, this gate would read a lockfile its own harness had
+# just repaired and report every target clean. That is not a gate, it is a
+# mirror. So it runs on the checkout as cloned, before anything touches it.
+#
+# It needs no target environment: the probe is stdlib-only and shells out to the
+# operator's `uv`/`poetry`, so `python3` rather than `uv run` is deliberate —
+# the target venv does not exist yet at this point in the script.
+echo "==> lockfile gate (declared bound vs. the lock that installs)"
+lockfile_report="${log_dir}/lockfile.json"
+rm -f "${lockfile_report}"
+if [ "${LOCKFILE_GATE}" = "0" ] || [ "${LOCKFILE_GATE}" = "off" ]; then
+  echo "    lockfile gate explicitly disabled (LOCKFILE_GATE=off)" \
+    | tee "${log_dir}/lockfile.log"
+  rc_lockfile=0
+else
+  run_bounded "${GATE_TIMEOUT_LOCKFILE}" python3 "${HERE}/lockfile_probe.py" \
+      --target "${src_dir}" --report "${lockfile_report}" \
+    >"${log_dir}/lockfile.log" 2>&1
+  rc_lockfile=$?
+  # Exit 3 is "the target ships no lockfile", and across this portfolio it is the
+  # COMMON answer — 19 of 20 servers commit none. It is reported as not-measured
+  # and never as a pass, and it deliberately does not turn the run red: a gate
+  # that went red on 19 of 20 targets for a defensible choice would be switched
+  # off within a day, taking the one real finding with it.
+  if [ "${rc_lockfile}" = "3" ]; then
+    echo "    no lockfile in the target — NOT MEASURED (exit 3). This run says" \
+         "nothing about where that target's bounds are in force." \
+      | tee -a "${log_dir}/lockfile.log"
+  fi
+fi
 
 echo "==> uv sync"
 ( cd "${src_dir}" && run_bounded "${GATE_TIMEOUT_SYNC}" uv sync --all-extras --dev ) \
@@ -600,6 +666,7 @@ cat > "${evidence_path}" <<EOF
     "mypy": ${rc_mypy},
     "pytest": ${rc_pytest},
     "schema_drift": ${rc_schema},
+    "lockfile": ${rc_lockfile},
     "transport_boot": ${rc_boot},
     "host_allowlist": ${rc_rebind},
     "shipped_artifact": ${rc_shipped},
@@ -612,7 +679,8 @@ EOF
 echo "==> aggregating into ${report_path}"
 python3 "${HERE}/nightly_audit_report.py" \
   --ruff "${rc_ruff}" --mypy "${rc_mypy}" --pytest "${rc_pytest}" \
-  --schema-drift "${rc_schema}" --transport-boot "${rc_boot}" \
+  --schema-drift "${rc_schema}" --lockfile "${rc_lockfile}" \
+  --transport-boot "${rc_boot}" \
   --host-allowlist "${rc_rebind}" --shipped-artifact "${rc_shipped}" \
   --shipped-metadata-json "${shipped_meta_report:-}" \
   --tests-collected "${tests_collected}" \

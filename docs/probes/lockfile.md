@@ -76,6 +76,38 @@ against. The flag is hard-coded, there is no switch to drop it, and a test
 asserts on the exact argv — the difference between this probe and one that
 quietly overwrites its own evidence is a single word.
 
+## In the nightly gate
+
+It runs as step **1b** of `scripts/nightly-audit.sh` — immediately after the
+target is cloned and **before `uv sync`**. That ordering is not housekeeping, it
+is the gate:
+
+`uv sync` re-locks. Measured, not assumed: against a checkout whose `uv.lock`
+recorded `mcp[cli]>=1.28.1` while `pyproject.toml` said `>=2.0.0,<3`, a single
+`uv sync --offline` rewrote the recorded specifier to the pyproject one before it
+failed for want of a cached wheel. Run after the sync, this gate reads a lockfile
+its own harness has just repaired and reports every target clean. That is not a
+gate, it is a mirror — and nothing else in the script would fail if somebody
+moved the block down, which is why `tests/test_gate_timeouts.py` pins the order.
+
+It is launched with `python3`, never `uv run`: the target's venv does not exist
+yet at that point, which is the whole reason the probe is stdlib-only.
+
+The classifier gives exit 3 its own line and its own block in the report, and it
+does **not** turn the run red. 19 of the 20 servers in this portfolio ship no
+lockfile; a gate that went red on all of them would be switched off within a day
+and take the one real finding with it. Exit 4 (`MOVED_DURING_RUN`) and 126/127
+are hard failures, not findings — a run that read two different trees, or none,
+has not established anything about the target.
+
+`LOCKFILE_GATE=off` disables it; `GATE_TIMEOUT_LOCKFILE` bounds it (default 300s,
+because `uv lock --check` may consult the index).
+
+Adding this gate is a **rollout step**: an evidence file without a `lockfile`
+entry reads as 127 and hard-fails, which is correct for a Worker image that
+genuinely did not run it. Roll the Worker and the Broker together — see
+[docs/deployment/worker-broker-rollout.md](../deployment/worker-broker-rollout.md).
+
 ## Running it
 
 ```bash
