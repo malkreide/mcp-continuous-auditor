@@ -10,6 +10,7 @@ test the comparison while assuming away the part that has to work.
 Stdlib-only. Skips when git is not on PATH — an environment-driven skip, the
 kind ``tests.yml`` deliberately still tolerates.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -28,10 +29,20 @@ HAS_GIT = shutil.which("git") is not None
 
 def git(root: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-C", str(root),
-         "-c", "user.email=probe@audit.invalid", "-c", "user.name=probe",
-         *args],
-        check=True, capture_output=True, text=True)
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.email=probe@audit.invalid",
+            "-c",
+            "user.name=probe",
+            *args,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def new_repo(root: Path) -> None:
@@ -140,8 +151,16 @@ class CaptureTest(unittest.TestCase):
         prov = pv.capture(self.root).recheck()
         data = prov.as_dict()
         self.assertEqual(data["head"], data["head_after"])
-        for key in ("status", "head", "head_after", "started", "finished",
-                    "worktree_digest", "decisive", "blocking"):
+        for key in (
+            "status",
+            "head",
+            "head_after",
+            "started",
+            "finished",
+            "worktree_digest",
+            "decisive",
+            "blocking",
+        ):
             self.assertIn(key, data)
 
 

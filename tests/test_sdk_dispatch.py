@@ -21,6 +21,7 @@ silently regresses, and it is decidable with fake objects and no SDK installed
 at all. The real client construction is covered by ``test_smoke_target.py``,
 which drives the (b) path end to end.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -44,12 +45,13 @@ def _load_private(path: Path, name: str) -> types.ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)          # deliberately not registered
+    spec.loader.exec_module(module)  # deliberately not registered
     return module
 
 
-gs = _load_private(REPO / "schemas" / "generate_schemas.py",
-                   "_generate_schemas_under_test")
+gs = _load_private(
+    REPO / "schemas" / "generate_schemas.py", "_generate_schemas_under_test"
+)
 
 
 def _server_from(module_name: str, class_name: str) -> object:
@@ -86,24 +88,31 @@ class DispatchOrderTest(unittest.TestCase):
         return seen
 
     def test_a_standalone_fastmcp_server_tries_fastmcp_first(self) -> None:
-        self.assertEqual(self._order(_server_from("fastmcp.server.server", "FastMCP")),
-                         ["fastmcp", "sdk"])
+        self.assertEqual(
+            self._order(_server_from("fastmcp.server.server", "FastMCP")),
+            ["fastmcp", "sdk"],
+        )
 
     def test_an_sdk_server_tries_the_sdk_first(self) -> None:
-        self.assertEqual(self._order(_server_from("mcp.server.mcpserver", "MCPServer")),
-                         ["sdk", "fastmcp"])
+        self.assertEqual(
+            self._order(_server_from("mcp.server.mcpserver", "MCPServer")),
+            ["sdk", "fastmcp"],
+        )
 
     def test_the_old_sdk_class_is_not_mistaken_for_the_standalone_package(self) -> None:
         # `mcp.server.fastmcp.FastMCP` is variant (a) under its OLD name. Its
         # module starts with `mcp`, not `fastmcp` — matching on the class name
         # would send it down the wrong branch, which is exactly the confusion
         # this whole task is about.
-        self.assertEqual(self._order(_server_from("mcp.server.fastmcp", "FastMCP")),
-                         ["sdk", "fastmcp"])
+        self.assertEqual(
+            self._order(_server_from("mcp.server.fastmcp", "FastMCP")),
+            ["sdk", "fastmcp"],
+        )
 
     def test_an_unknown_server_still_tries_both(self) -> None:
-        self.assertEqual(self._order(_server_from("something.else", "Server")),
-                         ["sdk", "fastmcp"])
+        self.assertEqual(
+            self._order(_server_from("something.else", "Server")), ["sdk", "fastmcp"]
+        )
 
     def test_the_failure_names_both_projects_and_why_they_conflict(self) -> None:
         def boom(_s: object) -> str:
@@ -135,9 +144,11 @@ class ResultShapeTest(unittest.TestCase):
     def test_the_output_schema_is_read_under_both_spellings(self) -> None:
         # mcp 2.x: output_schema. fastmcp: outputSchema.
         self.assertEqual(
-            gs.output_schema_of(types.SimpleNamespace(output_schema={"t": 1})), {"t": 1})
+            gs.output_schema_of(types.SimpleNamespace(output_schema={"t": 1})), {"t": 1}
+        )
         self.assertEqual(
-            gs.output_schema_of(types.SimpleNamespace(outputSchema={"t": 2})), {"t": 2})
+            gs.output_schema_of(types.SimpleNamespace(outputSchema={"t": 2})), {"t": 2}
+        )
         self.assertIsNone(gs.output_schema_of(types.SimpleNamespace()))
 
     def test_a_pydantic_style_getattr_raiser_does_not_blow_up(self) -> None:
@@ -145,7 +156,7 @@ class ResultShapeTest(unittest.TestCase):
         # field raises AttributeError rather than returning None. Reading with a
         # default is what keeps that from crashing the schema gate.
         class Strict:
-            output_schema = {"ok": True}
+            output_schema = {"ok": True}  # noqa: RUF012 - throwaway stub, not shared state
 
             def __getattr__(self, item: str):
                 raise AttributeError(item)
@@ -158,35 +169,48 @@ class EveryCallSiteDispatchesTest(unittest.TestCase):
     dispatch. A hard `from fastmcp import Client` anywhere is the regression —
     it is what made these three unrunnable against a 2.x target."""
 
-    SITES = ("schemas/generate_schemas.py",
-             "promptfoo/providers/call_tool.py",
-             "scripts/recall_canary.py")
+    SITES = (
+        "schemas/generate_schemas.py",
+        "promptfoo/providers/call_tool.py",
+        "scripts/recall_canary.py",
+    )
 
     def test_no_call_site_hard_imports_a_client(self) -> None:
         for rel in self.SITES:
             with self.subTest(site=rel):
                 text = (REPO / rel).read_text(encoding="utf-8")
-                self.assertIn("in_memory_client", text,
-                              f"{rel} must dispatch, not pin an SDK")
+                self.assertIn(
+                    "in_memory_client", text, f"{rel} must dispatch, not pin an SDK"
+                )
                 self.assertIn("def _fastmcp_client", text)
                 self.assertIn("def _sdk_client", text)
                 # Each client import must appear exactly once, and inside its
                 # own branch helper — a second one anywhere is a hard pin
                 # sneaking back in.
                 lines = text.splitlines()
-                for needle, owner in (("from fastmcp import Client", "def _fastmcp_client"),
-                                      ("from mcp.client.client import Client", "def _sdk_client")):
-                    idx = [i for i, ln in enumerate(lines) if ln.strip().startswith(needle)]
-                    self.assertEqual(len(idx), 1,
-                                     f"{rel}: expected exactly one `{needle}`, got {len(idx)}")
-                    preceding = "\n".join(lines[max(0, idx[0] - 4):idx[0]])
-                    self.assertIn(owner, preceding,
-                                  f"{rel}: `{needle}` must sit inside {owner}")
+                for needle, owner in (
+                    ("from fastmcp import Client", "def _fastmcp_client"),
+                    ("from mcp.client.client import Client", "def _sdk_client"),
+                ):
+                    idx = [
+                        i for i, ln in enumerate(lines) if ln.strip().startswith(needle)
+                    ]
+                    self.assertEqual(
+                        len(idx),
+                        1,
+                        f"{rel}: expected exactly one `{needle}`, got {len(idx)}",
+                    )
+                    preceding = "\n".join(lines[max(0, idx[0] - 4) : idx[0]])
+                    self.assertIn(
+                        owner, preceding, f"{rel}: `{needle}` must sit inside {owner}"
+                    )
 
     def test_the_smoke_fixture_is_still_the_standalone_package(self) -> None:
         # Deliberately variant (b): it exercises that branch of the dispatch.
         # Rewriting it to MCPServer would be the damaging search-and-replace.
-        text = (REPO / "tests" / "fixtures" / "smoke_server.py").read_text(encoding="utf-8")
+        text = (REPO / "tests" / "fixtures" / "smoke_server.py").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("from fastmcp import FastMCP", text)
         self.assertIn("NOT the renamed SDK class", text)
 

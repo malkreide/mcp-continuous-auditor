@@ -116,6 +116,7 @@ Usage:
   python scripts/shipped_probe.py --target . --offline            # git-only, says so
   python scripts/shipped_probe.py --target . --index-url https://pypi.example.com/simple
 """
+
 from __future__ import annotations
 
 import argparse
@@ -130,12 +131,13 @@ import time
 import urllib.error
 import urllib.request
 import venv
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote, urlsplit
 
 try:
@@ -186,7 +188,9 @@ USER_FACING = frozenset({"fix", "feat", "perf", "revert"})
 # latest release" would report an alpha as what users install. `release_key`
 # cannot help — it drops everything after the release segment, so `2.14.0a1` and
 # `2.14.0` order identically. `.postN` is deliberately NOT a pre-release.
-PRERELEASE = re.compile(r"^\s*v?\d+(?:\.\d+)*[._-]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)", re.I)
+PRERELEASE = re.compile(
+    r"^\s*v?\d+(?:\.\d+)*[._-]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)", re.I
+)
 
 ARCHIVE_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".zip", ".whl", ".egg")
 
@@ -257,22 +261,31 @@ class TreeDiff:
         return bool(self.differs or self.missing_in_artifact)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"checked": self.checked, "compared": self.compared,
-                "differs": self.differs, "missing_in_artifact": self.missing_in_artifact,
-                "extra_in_artifact": self.extra_in_artifact,
-                "truncated": self.truncated, "detail": self.detail}
+        return {
+            "checked": self.checked,
+            "compared": self.compared,
+            "differs": self.differs,
+            "missing_in_artifact": self.missing_in_artifact,
+            "extra_in_artifact": self.extra_in_artifact,
+            "truncated": self.truncated,
+            "detail": self.detail,
+        }
 
 
 @dataclass
 class ToolCall:
     ran: bool = False
     name: str = ""
-    status: str = "skipped"     # ok | error | empty | no-answer | skipped
+    status: str = "skipped"  # ok | error | empty | no-answer | skipped
     detail: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {"ran": self.ran, "name": self.name, "status": self.status,
-                "detail": self.detail}
+        return {
+            "ran": self.ran,
+            "name": self.name,
+            "status": self.status,
+            "detail": self.detail,
+        }
 
 
 @dataclass
@@ -321,11 +334,15 @@ class Report:
             # findings gained `severity`. Bumped to 3 for `tree`, the artifact
             # content comparison. Additive both times, but a consumer pinning the
             # shape deserves to see the number move. 4: `provenance`.
-            "schema": 4, "dist": self.dist, "publication": self.publication,
-            "depth": self.depth,
+            "schema": 4,
             "provenance": self.provenance.as_dict() if self.provenance else None,
-            "versions": self.versions.as_dict(), "entrypoint": self.entrypoint,
-            "tools": self.tools, "tool_call": self.tool_call.as_dict(),
+            "dist": self.dist,
+            "publication": self.publication,
+            "depth": self.depth,
+            "versions": self.versions.as_dict(),
+            "entrypoint": self.entrypoint,
+            "tools": self.tools,
+            "tool_call": self.tool_call.as_dict(),
             "tree": self.tree.as_dict(),
             "harness_error": self.harness_error,
             "index_url": self.index_url,
@@ -505,7 +522,11 @@ class _SimpleHTMLParser(HTMLParser):
         yanked: Any = False
         if "data-yanked" in attributes:
             yanked = attributes.get("data-yanked") or True
-        self._current = {"filename": "", "url": attributes.get("href") or "", "yanked": yanked}
+        self._current = {
+            "filename": "",
+            "url": attributes.get("href") or "",
+            "yanked": yanked,
+        }
 
     def handle_data(self, data: str) -> None:
         if self._current is not None:
@@ -661,7 +682,9 @@ def simple_url(dist: str, index_url: str = DEFAULT_INDEX) -> str:
     return f"{index_url.rstrip('/')}/{quote(normalised)}/"
 
 
-def fetch_simple(dist: str, timeout: float, index_url: str = DEFAULT_INDEX) -> IndexView:
+def fetch_simple(
+    dist: str, timeout: float, index_url: str = DEFAULT_INDEX
+) -> IndexView:
     """The Simple API — the surface ``pip`` installs from, and the primary here.
 
     ``index_url`` is the same value ``pip --index-url`` takes, so a target that
@@ -693,7 +716,9 @@ def fetch_simple(dist: str, timeout: float, index_url: str = DEFAULT_INDEX) -> I
         version = version_from_filename(str(entry.get("filename", "")), dist)
         if not version:
             continue
-        per_version.setdefault(version, []).append(_yank_reason(entry.get("yanked", False)))
+        per_version.setdefault(version, []).append(
+            _yank_reason(entry.get("yanked", False))
+        )
 
     for version, reasons in per_version.items():
         if reasons and all(r is not None for r in reasons):
@@ -722,7 +747,9 @@ def fetch_json(dist: str, timeout: float) -> IndexView:
             if not isinstance(files, list) or not files:
                 continue
             reasons = [
-                _yank_reason(f.get("yanked", False)) for f in files if isinstance(f, dict)
+                _yank_reason(f.get("yanked", False))
+                for f in files
+                if isinstance(f, dict)
             ]
             if reasons and all(r is not None for r in reasons):
                 view.yanked[str(version)] = next((r for r in reasons if r), "")
@@ -745,7 +772,9 @@ def fetch_pypi_version(dist: str, timeout: float) -> tuple[str | None, str, str]
     test suite reach for, and it is still exactly what the JSON API answers.
     """
     view = fetch_json(dist, timeout)
-    detail = f"{dist} is {view.detail}" if view.status == "not_published" else view.detail
+    detail = (
+        f"{dist} is {view.detail}" if view.status == "not_published" else view.detail
+    )
     return view.latest, view.status, detail
 
 
@@ -809,7 +838,9 @@ def reconcile(report: Report, simple: IndexView, json_view: IndexView) -> None:
         statuses = [simple.status, json_view.status]
         if "not_published" in statuses:
             report.index_status = "not_published"
-            report.index_detail = f"{report.dist} is not on {report.index_url} (HTTP 404)"
+            report.index_detail = (
+                f"{report.dist} is not on {report.index_url} (HTTP 404)"
+            )
         else:
             report.index_status = "unreachable"
             report.index_detail = simple.detail or json_view.detail
@@ -890,8 +921,9 @@ def commits_since(root: Path, ref: str | None) -> list[dict[str, str]]:
                 "date": when,
                 "subject": subject,
                 "type": m.group("type") if m else "other",
-                "breaking": "yes" if ((m and m.group("bang"))
-                                      or BREAKING_TEXT.search(subject)) else "",
+                "breaking": "yes"
+                if ((m and m.group("bang")) or BREAKING_TEXT.search(subject))
+                else "",
             }
         )
     return commits
@@ -900,8 +932,8 @@ def commits_since(root: Path, ref: str | None) -> list[dict[str, str]]:
 def age_days(iso: str, now: datetime | None = None) -> float:
     stamp = datetime.fromisoformat(iso)
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    reference = now or datetime.now(timezone.utc)
+        stamp = stamp.replace(tzinfo=UTC)
+    reference = now or datetime.now(UTC)
     return (reference - stamp).total_seconds() / 86400.0
 
 
@@ -927,6 +959,7 @@ def count_changelog_unreleased(root: Path) -> int:
 # PURE LOGIC — no network, no subprocess. This is the part the tests own.
 # --------------------------------------------------------------------------
 
+
 def compare_versions(v: Versions) -> list[Finding]:
     """Every divergence between what is installed, what the repo says, and what
     the last tag says.
@@ -943,40 +976,55 @@ def compare_versions(v: Versions) -> list[Finding]:
 
     if v.installed and v.repo and v.installed != v.repo:
         if inst_key and repo_key and inst_key < repo_key:
-            out.append(Finding(
-                "STALE_ON_INDEX",
-                f"PyPI serves {v.installed}, the repository is at {v.repo} — users "
-                f"install {v.installed}. This is the shape of the incident: the "
-                "release was never cut, so the publish workflow never ran"))
+            out.append(
+                Finding(
+                    "STALE_ON_INDEX",
+                    f"PyPI serves {v.installed}, the repository is at {v.repo} — users "
+                    f"install {v.installed}. This is the shape of the incident: the "
+                    "release was never cut, so the publish workflow never ran",
+                )
+            )
         elif inst_key and repo_key and inst_key > repo_key:
-            out.append(Finding(
-                "INDEX_AHEAD",
-                f"PyPI serves {v.installed}, ahead of the repository's {v.repo} — "
-                "something was published from a tree this checkout does not have, "
-                "or the checkout is not the branch that releases"))
+            out.append(
+                Finding(
+                    "INDEX_AHEAD",
+                    f"PyPI serves {v.installed}, ahead of the repository's {v.repo} — "
+                    "something was published from a tree this checkout does not have, "
+                    "or the checkout is not the branch that releases",
+                )
+            )
         else:
-            out.append(Finding(
-                "VERSION_DIFFERS",
-                f"PyPI serves {v.installed}, the repository says {v.repo}; neither "
-                "could be ordered against the other, so the direction is unknown"))
+            out.append(
+                Finding(
+                    "VERSION_DIFFERS",
+                    f"PyPI serves {v.installed}, the repository says {v.repo}; neither "
+                    "could be ordered against the other, so the direction is unknown",
+                )
+            )
 
     if v.installed and v.tag:
         tag_version = normalise_tag(v.tag)
         tag_key = release_key(tag_version) if tag_version else None
         if tag_version and tag_version != v.installed:
             if tag_key and inst_key and tag_key > inst_key:
-                out.append(Finding(
-                    "TAG_NOT_ON_INDEX",
-                    f"the last tag is {v.tag} but PyPI serves {v.installed} — a tag "
-                    "exists that the index does not. Somebody cut the release and "
-                    "it did not land, so the publish WORKFLOW RUN is where to look, "
-                    "not the release process"))
+                out.append(
+                    Finding(
+                        "TAG_NOT_ON_INDEX",
+                        f"the last tag is {v.tag} but PyPI serves {v.installed} — a tag "
+                        "exists that the index does not. Somebody cut the release and "
+                        "it did not land, so the publish WORKFLOW RUN is where to look, "
+                        "not the release process",
+                    )
+                )
             else:
-                out.append(Finding(
-                    "TAG_DIFFERS",
-                    f"the last tag is {v.tag} while PyPI serves {v.installed} — the "
-                    "index is not behind the tag, so the two were cut from "
-                    "different places"))
+                out.append(
+                    Finding(
+                        "TAG_DIFFERS",
+                        f"the last tag is {v.tag} while PyPI serves {v.installed} — the "
+                        "index is not behind the tag, so the two were cut from "
+                        "different places",
+                    )
+                )
     return out
 
 
@@ -1054,11 +1102,23 @@ def compare_trees(artifact: Path, repo: Path, cap: int = 800) -> TreeDiff:
 # That is the incident's own shape, it looks nothing like a blocked socket, and
 # it stays a finding.
 _EGRESS_MARKERS = (
-    "connection refused", "connection reset", "connection aborted",
-    "name or service not known", "temporary failure in name resolution",
-    "nodename nor servname", "getaddrinfo", "dns", "proxy",
-    "timed out", "timeout", "network is unreachable", "no route to host",
-    "ssl", "certificate verify failed", "403 forbidden", "tunnel connection failed",
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "nodename nor servname",
+    "getaddrinfo",
+    "dns",
+    "proxy",
+    "timed out",
+    "timeout",
+    "network is unreachable",
+    "no route to host",
+    "ssl",
+    "certificate verify failed",
+    "403 forbidden",
+    "tunnel connection failed",
 )
 
 
@@ -1075,42 +1135,62 @@ def classify_tool_result(payload: Any) -> ToolCall:
     the incident was tools that answered perfectly well with nothing in them.
     """
     if not isinstance(payload, dict):
-        return ToolCall(ran=True, status="no-answer",
-                        detail="the server returned no JSON-RPC object")
+        return ToolCall(
+            ran=True,
+            status="no-answer",
+            detail="the server returned no JSON-RPC object",
+        )
     if "error" in payload:
         err = payload.get("error") or {}
         message = str(err.get("message"))
         if looks_like_egress(message):
-            return ToolCall(ran=True, status="blocked",
-                            detail=f"unattributable — the error reads like this "
-                                   f"Worker's egress allowlist, not the artifact: "
-                                   f"{message[:160]}")
-        return ToolCall(ran=True, status="error",
-                        detail=f"JSON-RPC error {err.get('code')}: {message[:160]}")
+            return ToolCall(
+                ran=True,
+                status="blocked",
+                detail=f"unattributable — the error reads like this "
+                f"Worker's egress allowlist, not the artifact: "
+                f"{message[:160]}",
+            )
+        return ToolCall(
+            ran=True,
+            status="error",
+            detail=f"JSON-RPC error {err.get('code')}: {message[:160]}",
+        )
     result = payload.get("result")
     if not isinstance(result, dict):
-        return ToolCall(ran=True, status="no-answer",
-                        detail="the reply carried no result object")
+        return ToolCall(
+            ran=True, status="no-answer", detail="the reply carried no result object"
+        )
     if result.get("isError"):
         text = " ".join(
-            str(c.get("text", "")) for c in (result.get("content") or [])
-            if isinstance(c, dict))
+            str(c.get("text", ""))
+            for c in (result.get("content") or [])
+            if isinstance(c, dict)
+        )
         if looks_like_egress(text):
-            return ToolCall(ran=True, status="blocked",
-                            detail=f"unattributable — the tool's own error reads "
-                                   f"like this Worker's egress allowlist rather "
-                                   f"than a defect: {text[:160]}")
+            return ToolCall(
+                ran=True,
+                status="blocked",
+                detail=f"unattributable — the tool's own error reads "
+                f"like this Worker's egress allowlist rather "
+                f"than a defect: {text[:160]}",
+            )
         return ToolCall(
-            ran=True, status="error",
+            ran=True,
+            status="error",
             detail=f"the tool reported isError: {text[:160]}. If the target's "
-                   "upstream origin is not on this Worker's allowlist, add it "
-                   "before filing this against the target "
-                   "(deploy/microvm/forward-proxy/README.md)")
+            "upstream origin is not on this Worker's allowlist, add it "
+            "before filing this against the target "
+            "(deploy/microvm/forward-proxy/README.md)",
+        )
     content = result.get("content")
     if isinstance(content, list) and not content:
-        return ToolCall(ran=True, status="empty",
-                        detail="the tool returned an empty content list — it "
-                               "answered, and it answered with nothing")
+        return ToolCall(
+            ran=True,
+            status="empty",
+            detail="the tool returned an empty content list — it "
+            "answered, and it answered with nothing",
+        )
     return ToolCall(ran=True, status="ok", detail="returned content")
 
 
@@ -1126,12 +1206,16 @@ def pick_tool(tools: list[dict[str, Any]], preferred: str = "") -> tuple[str, st
             return preferred, ""
         return "", f"the requested tool {preferred!r} is not in tools/list"
     for name, spec in by_name.items():
-        schema = spec.get("inputSchema") if isinstance(spec.get("inputSchema"), dict) else {}
+        schema = (
+            spec.get("inputSchema") if isinstance(spec.get("inputSchema"), dict) else {}
+        )
         if not (schema.get("required") or []):
             return name, ""
     if by_name:
-        return "", ("every tool requires arguments; pass --tool/--tool-args to "
-                    "exercise one rather than have the probe guess values")
+        return "", (
+            "every tool requires arguments; pass --tool/--tool-args to "
+            "exercise one rather than have the probe guess values"
+        )
     return "", "the server listed no tools"
 
 
@@ -1225,14 +1309,17 @@ def metadata_findings(
     # do nothing without a tag and the run then reads as a clean bill of health
     # for comparisons that never happened.
     if report.tags == []:
-        out.append(Finding(
-            "NO_TAGS",
-            "the repository has no release tags at all. PUBLISH_GAP, TAG_NOT_ON_INDEX "
-            "and UNTAGGED_VERSION all measure against the last tag and therefore "
-            "measured nothing here, and UNRELEASED counted every commit in history "
-            "rather than the ones past a release. A green run on an untagged "
-            "repository is a statement about how little was compared",
-            severity="medium"))
+        out.append(
+            Finding(
+                "NO_TAGS",
+                "the repository has no release tags at all. PUBLISH_GAP, TAG_NOT_ON_INDEX "
+                "and UNTAGGED_VERSION all measure against the last tag and therefore "
+                "measured nothing here, and UNRELEASED counted every commit in history "
+                "rather than the ones past a release. A green run on an untagged "
+                "repository is a statement about how little was compared",
+                severity="medium",
+            )
+        )
 
     # 1. PUBLISH_GAP — a cut release that never landed on the index.
     #
@@ -1248,16 +1335,21 @@ def metadata_findings(
             if view is not None and view.readable
             for v in view.candidates()
         ]
-        ranked = sorted((v for v in seen if release_key(v)), key=lambda v: release_key(v) or ())
+        ranked = sorted(
+            (v for v in seen if release_key(v)), key=lambda v: release_key(v) or ()
+        )
         highest = ranked[-1] if ranked else report.index_version
         index_key = release_key(highest or "")
         if tag_key and index_key and tag_key > index_key:
-            out.append(Finding(
-                "PUBLISH_GAP",
-                f"tag {latest_tag} exists, the newest version any index API reports "
-                f"is {highest} — the release was cut but never landed. Check the "
-                "publish workflow run for that tag; a pending environment approval "
-                "looks identical to a failure from here."))
+            out.append(
+                Finding(
+                    "PUBLISH_GAP",
+                    f"tag {latest_tag} exists, the newest version any index API reports "
+                    f"is {highest} — the release was cut but never landed. Check the "
+                    "publish workflow run for that tag; a pending environment approval "
+                    "looks identical to a failure from here.",
+                )
+            )
 
     # 2. RELEASE_YANKED — published, and withdrawn again.
     #
@@ -1274,17 +1366,24 @@ def metadata_findings(
         origin = report.simple if report.yank_source == "simple" else report.json_view
         survivor = origin.latest_installable if origin else None
         source_note = (
-            "" if report.yank_source == "simple"
-            else " (read from the JSON API fallback; the Simple API was unreadable)")
-        out.append(Finding(
-            "RELEASE_YANKED",
-            f"{report.dist} {current} is on {report.index_url} and YANKED"
-            + (f" — {reason}" if reason else " with no reason given")
-            + f"{source_note}. The release exists, the tag matches and CI is green, "
-            "so every other check here reads healthy; installs "
-            + (f"silently resolve to {survivor} instead."
-               if survivor and survivor != current
-               else "have no newer release to fall back to.")))
+            ""
+            if report.yank_source == "simple"
+            else " (read from the JSON API fallback; the Simple API was unreadable)"
+        )
+        out.append(
+            Finding(
+                "RELEASE_YANKED",
+                f"{report.dist} {current} is on {report.index_url} and YANKED"
+                + (f" — {reason}" if reason else " with no reason given")
+                + f"{source_note}. The release exists, the tag matches and CI is green, "
+                "so every other check here reads healthy; installs "
+                + (
+                    f"silently resolve to {survivor} instead."
+                    if survivor and survivor != current
+                    else "have no newer release to fall back to."
+                ),
+            )
+        )
 
     # 3. UNRELEASED — work on main beyond the last release.
     #
@@ -1308,52 +1407,71 @@ def metadata_findings(
         user_facing = [c for c in report.unreleased_commits if c["type"] in USER_FACING]
         breaking = [c for c in report.unreleased_commits if c.get("breaking")]
         age = report.oldest_unreleased_age_days
-        due = (bool(breaking)
-               or (bool(user_facing) and age > user_facing_age)
-               or age > max_age_days)
+        due = (
+            bool(breaking)
+            or (bool(user_facing) and age > user_facing_age)
+            or age > max_age_days
+        )
         if due:
             kinds: dict[str, int] = {}
             for c in report.unreleased_commits:
                 kinds[c["type"]] = kinds.get(c["type"], 0) + 1
             breakdown = ", ".join(f"{n}× {t}" for t, n in sorted(kinds.items()))
             if breaking:
-                why = (f" {len(breaking)} of them BREAKING "
-                       f"({breaking[0]['subject'][:60]!r}) — a breaking change that is "
-                       "not released is a change nobody can plan around, whatever its "
-                       "age.")
+                why = (
+                    f" {len(breaking)} of them BREAKING "
+                    f"({breaking[0]['subject'][:60]!r}) — a breaking change that is "
+                    "not released is a change nobody can plan around, whatever its "
+                    "age."
+                )
             elif user_facing:
-                why = (f" {len(user_facing)} of them user-facing — every day of delay "
-                       "is a day users run the old behaviour.")
+                why = (
+                    f" {len(user_facing)} of them user-facing — every day of delay "
+                    "is a day users run the old behaviour."
+                )
             else:
                 why = " None user-facing; housekeeping only."
-            out.append(Finding(
-                "UNRELEASED",
-                f"{len(report.unreleased_commits)} commit(s) beyond "
-                f"{latest_tag or 'the start of history'}, oldest "
-                f"{age:.1f} days old ({breakdown})." + why,
-                severity="high" if (breaking or user_facing) else "low"))
+            out.append(
+                Finding(
+                    "UNRELEASED",
+                    f"{len(report.unreleased_commits)} commit(s) beyond "
+                    f"{latest_tag or 'the start of history'}, oldest "
+                    f"{age:.1f} days old ({breakdown})." + why,
+                    severity="high" if (breaking or user_facing) else "low",
+                )
+            )
 
     # 4. UNTAGGED_VERSION — pyproject bumped without a matching tag.
     if report.tags is not None and repo_version not in ("(dynamic)", ""):
         tagged = {normalise_tag(t) for t in report.tags}
-        if (repo_version not in tagged
-                and report.oldest_unreleased_age_days is not None
-                and report.oldest_unreleased_age_days > max_age_days):
-            out.append(Finding(
-                "UNTAGGED_VERSION",
-                f"pyproject.toml says {repo_version}, no tag matches it. A prepared "
-                "release that was never cut looks exactly like this.",
-                severity="medium"))
+        if (
+            repo_version not in tagged
+            and report.oldest_unreleased_age_days is not None
+            and report.oldest_unreleased_age_days > max_age_days
+        ):
+            out.append(
+                Finding(
+                    "UNTAGGED_VERSION",
+                    f"pyproject.toml says {repo_version}, no tag matches it. A prepared "
+                    "release that was never cut looks exactly like this.",
+                    severity="medium",
+                )
+            )
 
     # 5. CHANGELOG_UNRELEASED — weakest signal, reported last.
-    if (report.changelog_unreleased_entries
-            and report.oldest_unreleased_age_days is not None
-            and report.oldest_unreleased_age_days > max_age_days):
-        out.append(Finding(
-            "CHANGELOG_UNRELEASED",
-            f"[Unreleased] carries {report.changelog_unreleased_entries} line(s) of "
-            "entries. Written up, not shipped.",
-            severity="low"))
+    if (
+        report.changelog_unreleased_entries
+        and report.oldest_unreleased_age_days is not None
+        and report.oldest_unreleased_age_days > max_age_days
+    ):
+        out.append(
+            Finding(
+                "CHANGELOG_UNRELEASED",
+                f"[Unreleased] carries {report.changelog_unreleased_entries} line(s) of "
+                "entries. Written up, not shipped.",
+                severity="low",
+            )
+        )
 
     return out
 
@@ -1362,17 +1480,23 @@ def build_findings(report: Report) -> list[Finding]:
     """The whole verdict, from an already-populated report. Pure."""
     out: list[Finding] = []
     if report.publication == NOT_PUBLISHED:
-        out.append(Finding(
-            "NOT_ON_INDEX",
-            f"{report.dist} does not exist on the index at all. Distinct from a "
-            "stale release: there is no publish process to repair here, there is "
-            "one to create — `pip install` has never worked for this package"))
+        out.append(
+            Finding(
+                "NOT_ON_INDEX",
+                f"{report.dist} does not exist on the index at all. Distinct from a "
+                "stale release: there is no publish process to repair here, there is "
+                "one to create — `pip install` has never worked for this package",
+            )
+        )
         return out
     if report.publication == INSTALL_FAILED:
-        out.append(Finding(
-            "INSTALL_FAILED",
-            "the distribution exists on the index but could not be installed into "
-            "a clean venv — which is what every user's first command does"))
+        out.append(
+            Finding(
+                "INSTALL_FAILED",
+                "the distribution exists on the index but could not be installed into "
+                "a clean venv — which is what every user's first command does",
+            )
+        )
         return out
 
     out.extend(compare_versions(report.versions))
@@ -1385,30 +1509,39 @@ def build_findings(report: Report) -> list[Finding]:
     if report.tree.checked and report.tree.diverged:
         shown = ", ".join((report.tree.differs + report.tree.missing_in_artifact)[:5])
         more = len(report.tree.differs) + len(report.tree.missing_in_artifact) - 5
-        out.append(Finding(
-            "STALE_ARTIFACT",
-            f"the index serves {report.versions.installed} and the checkout says the "
-            f"same, but {len(report.tree.differs)} installed source file(s) differ "
-            f"from the checkout and {len(report.tree.missing_in_artifact)} are absent "
-            f"from the artifact entirely ({shown}"
-            + (f", +{more} more" if more > 0 else "")
-            + "). One version number, two different bodies of code — a version "
-              "comparison cannot see this, which is why it went unseen. Either the "
-              "release was built from a tree nobody is reading, or the tree moved "
-              "after the release without the version moving with it"))
+        out.append(
+            Finding(
+                "STALE_ARTIFACT",
+                f"the index serves {report.versions.installed} and the checkout says the "
+                f"same, but {len(report.tree.differs)} installed source file(s) differ "
+                f"from the checkout and {len(report.tree.missing_in_artifact)} are absent "
+                f"from the artifact entirely ({shown}"
+                + (f", +{more} more" if more > 0 else "")
+                + "). One version number, two different bodies of code — a version "
+                "comparison cannot see this, which is why it went unseen. Either the "
+                "release was built from a tree nobody is reading, or the tree moved "
+                "after the release without the version moving with it",
+            )
+        )
 
     if not report.entrypoint:
-        out.append(Finding(
-            "NO_ENTRYPOINT",
-            "the installed distribution declares no console script — nothing to "
-            "start, so nobody can run what was published"))
+        out.append(
+            Finding(
+                "NO_ENTRYPOINT",
+                "the installed distribution declares no console script — nothing to "
+                "start, so nobody can run what was published",
+            )
+        )
         return out
 
     if report.tools is None:
-        out.append(Finding(
-            "DOES_NOT_RUN",
-            "the installed entrypoint did not answer initialize + tools/list. The "
-            "artifact on the index does not start, whatever the branch does"))
+        out.append(
+            Finding(
+                "DOES_NOT_RUN",
+                "the installed entrypoint did not answer initialize + tools/list. The "
+                "artifact on the index does not start, whatever the branch does",
+            )
+        )
         return out
 
     tc = report.tool_call
@@ -1429,6 +1562,7 @@ def build_findings(report: Report) -> list[Finding]:
 # tested without either.
 # --------------------------------------------------------------------------
 
+
 @dataclass
 class Installed:
     ok: bool
@@ -1440,8 +1574,9 @@ class Installed:
     tops: list[str] = field(default_factory=list)
 
 
-def install_from_index(dist: str, workdir: Path, index_url: str,
-                       timeout: float, pin_version: str = "") -> Installed:
+def install_from_index(
+    dist: str, workdir: Path, index_url: str, timeout: float, pin_version: str = ""
+) -> Installed:
     """A fresh venv and one ``pip install`` from the index.
 
     ``--no-cache-dir`` is not optional: with a warm wheel cache this measures
@@ -1463,21 +1598,42 @@ def install_from_index(dist: str, workdir: Path, index_url: str,
     try:
         venv.create(env_dir, with_pip=True, clear=True)
     except Exception as exc:  # noqa: BLE001 - harness failure, reported as such
-        return Installed(False, detail=f"venv creation failed: {type(exc).__name__}: {exc}")
-    py = env_dir / ("Scripts" if os.name == "nt" else "bin") / (
-        "python.exe" if os.name == "nt" else "python")
+        return Installed(
+            False, detail=f"venv creation failed: {type(exc).__name__}: {exc}"
+        )
+    py = (
+        env_dir
+        / ("Scripts" if os.name == "nt" else "bin")
+        / ("python.exe" if os.name == "nt" else "python")
+    )
     try:
         proc = subprocess.run(
-            [str(py), "-m", "pip", "install", "-q", "--no-cache-dir",
-             "--index-url", index_url,
-             f"{dist}=={pin_version}" if pin_version else dist],
-            capture_output=True, text=True, timeout=timeout, check=False)
+            [
+                str(py),
+                "-m",
+                "pip",
+                "install",
+                "-q",
+                "--no-cache-dir",
+                "--index-url",
+                index_url,
+                f"{dist}=={pin_version}" if pin_version else dist,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
     except subprocess.TimeoutExpired:
         return Installed(False, detail=f"pip install exceeded {timeout:.0f}s")
     except OSError as exc:
-        return Installed(False, detail=f"could not run pip: {type(exc).__name__}: {exc}")
+        return Installed(
+            False, detail=f"could not run pip: {type(exc).__name__}: {exc}"
+        )
     if proc.returncode != 0:
-        return Installed(False, detail=(proc.stderr or proc.stdout or "").strip()[-400:])
+        return Installed(
+            False, detail=(proc.stderr or proc.stdout or "").strip()[-400:]
+        )
 
     # `site` and `tops` are what the content comparison needs: where the wheel
     # unpacked to, and which top-level packages it owns there.
@@ -1505,13 +1661,20 @@ def install_from_index(dist: str, workdir: Path, index_url: str,
         "'site':sysconfig.get_paths()['purelib']}))\n"
     )
     try:
-        meta = subprocess.run([str(py), "-c", probe_src, dist],
-                              capture_output=True, text=True, timeout=60, check=False)
+        meta = subprocess.run(
+            [str(py), "-c", probe_src, dist],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
         info = json.loads((meta.stdout or "{}").strip().splitlines()[-1])
     except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as exc:
         return Installed(False, detail=f"installed metadata unreadable: {exc}")
     if info.get("error"):
-        return Installed(False, detail=f"installed metadata unreadable: {info['error']}")
+        return Installed(
+            False, detail=f"installed metadata unreadable: {info['error']}"
+        )
 
     scripts = info.get("scripts") or []
     bindir = env_dir / ("Scripts" if os.name == "nt" else "bin")
@@ -1521,10 +1684,14 @@ def install_from_index(dist: str, workdir: Path, index_url: str,
         if candidate.exists():
             entry = str(candidate)
             break
-    return Installed(True, version=str(info.get("version") or ""),
-                     entrypoint=entry, python=str(py),
-                     site=str(info.get("site") or ""),
-                     tops=[str(t) for t in (info.get("tops") or [])])
+    return Installed(
+        True,
+        version=str(info.get("version") or ""),
+        entrypoint=entry,
+        python=str(py),
+        site=str(info.get("site") or ""),
+        tops=[str(t) for t in (info.get("tops") or [])],
+    )
 
 
 def compare_content(report: Report, got: Installed, target: Path) -> None:
@@ -1544,7 +1711,8 @@ def compare_content(report: Report, got: Installed, target: Path) -> None:
         tree.detail = (
             f"the index serves {report.versions.installed} and the checkout says "
             f"{report.versions.repo} — the numbers already differ, so a content "
-            "comparison would only restate it")
+            "comparison would only restate it"
+        )
         return
     if not got.site or not got.tops:
         tree.detail = "the installed distribution owns no importable top-level package"
@@ -1560,7 +1728,8 @@ def compare_content(report: Report, got: Installed, target: Path) -> None:
         if repo_dir is None:
             merged.detail += (
                 f"{top}: no matching package in the checkout (looked in src/{top} "
-                f"and {top}/); ")
+                f"and {top}/); "
+            )
             continue
         compared_any = True
         one = compare_trees(artifact_dir, repo_dir)
@@ -1575,10 +1744,15 @@ def compare_content(report: Report, got: Installed, target: Path) -> None:
     report.tree = merged
 
 
-def speak_mcp(argv: list[str], timeout: float, cwd: Path,
-              tool: str = "", tool_args: dict[str, Any] | None = None,
-              env: dict[str, str] | None = None,
-              _close_stdin_early: bool = False) -> dict[str, Any]:
+def speak_mcp(
+    argv: list[str],
+    timeout: float,
+    cwd: Path,
+    tool: str = "",
+    tool_args: dict[str, Any] | None = None,
+    env: dict[str, str] | None = None,
+    _close_stdin_early: bool = False,
+) -> dict[str, Any]:
     """initialize -> tools/list -> tools/call, over stdio, against the INSTALLED
     entrypoint.
 
@@ -1592,16 +1766,25 @@ def speak_mcp(argv: list[str], timeout: float, cwd: Path,
     out: dict[str, Any] = {"tools": None, "listing": None, "call": None, "error": ""}
     try:
         proc = subprocess.Popen(
-            argv, cwd=str(cwd), env=run_env,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, start_new_session=True)
+            argv,
+            cwd=str(cwd),
+            env=run_env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
     except (OSError, ValueError) as exc:
-        out["error"] = f"could not start the installed entrypoint: {type(exc).__name__}: {exc}"
+        out["error"] = (
+            f"could not start the installed entrypoint: {type(exc).__name__}: {exc}"
+        )
         return out
 
-    q: "Queue[str | None]" = Queue()
+    q: Queue[str | None] = Queue()
     tbp._reader_thread(proc.stdout, q)
-    err_q: "Queue[str | None]" = Queue()
+    err_q: Queue[str | None] = Queue()
     tbp._reader_thread(proc.stderr, err_q)
     err_lines: list[str] = []
     deadline = time.monotonic() + timeout
@@ -1640,8 +1823,10 @@ def speak_mcp(argv: list[str], timeout: float, cwd: Path,
 
     try:
         if not send(tbp._rpc("initialize", 1, tbp._initialize_params())):
-            out["error"] = ("the entrypoint closed stdin before initialize; stderr: "
-                            + tbp._tail(tbp._drain(err_q, err_lines)))
+            out["error"] = (
+                "the entrypoint closed stdin before initialize; stderr: "
+                + tbp._tail(tbp._drain(err_q, err_lines))
+            )
             return out
         # THE TRAP. Production callers never set this.
         if _close_stdin_early and proc.stdin is not None:
@@ -1649,8 +1834,9 @@ def speak_mcp(argv: list[str], timeout: float, cwd: Path,
 
         init = await_id(1)
         if init is None or "error" in init:
-            out["error"] = ("initialize did not succeed; stderr: "
-                            + tbp._tail(tbp._drain(err_q, err_lines)))
+            out["error"] = "initialize did not succeed; stderr: " + tbp._tail(
+                tbp._drain(err_q, err_lines)
+            )
             return out
 
         send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
@@ -1659,17 +1845,22 @@ def speak_mcp(argv: list[str], timeout: float, cwd: Path,
             return out
         listing = await_id(2)
         if listing is None or "error" in listing:
-            out["error"] = ("tools/list did not succeed; stderr: "
-                            + tbp._tail(tbp._drain(err_q, err_lines)))
+            out["error"] = "tools/list did not succeed; stderr: " + tbp._tail(
+                tbp._drain(err_q, err_lines)
+            )
             return out
-        tools = ((listing.get("result") or {}).get("tools") or []) \
-            if isinstance(listing.get("result"), dict) else []
+        tools = (
+            ((listing.get("result") or {}).get("tools") or [])
+            if isinstance(listing.get("result"), dict)
+            else []
+        )
         out["tools"] = tools
         out["listing"] = listing
 
         if tool:
-            send(tbp._rpc("tools/call", 3,
-                          {"name": tool, "arguments": tool_args or {}}))
+            send(
+                tbp._rpc("tools/call", 3, {"name": tool, "arguments": tool_args or {}})
+            )
             out["call"] = await_id(3)
         return out
     finally:
@@ -1681,20 +1872,25 @@ def speak_mcp(argv: list[str], timeout: float, cwd: Path,
 # the probe
 # --------------------------------------------------------------------------
 
-def probe(dist: str, target: Path, *, tool: str = "",
-          tool_args: dict[str, Any] | None = None,
-          index_url: str = DEFAULT_INDEX,
-          install_timeout: float = DEFAULT_INSTALL_TIMEOUT,
-          run_timeout: float = DEFAULT_RUN_TIMEOUT,
-          metadata_only: bool = False,
-          offline: bool = False,
-          max_age_days: float = DEFAULT_MAX_AGE_DAYS,
-          user_facing_age: float = DEFAULT_USER_FACING_AGE_DAYS,
-          pin_version: str = "",
-          now: datetime | None = None,
-          installer: Callable[..., Installed] | None = None,
-          speaker: Callable[..., dict[str, Any]] | None = None,
-          ) -> Report:
+
+def probe(
+    dist: str,
+    target: Path,
+    *,
+    tool: str = "",
+    tool_args: dict[str, Any] | None = None,
+    index_url: str = DEFAULT_INDEX,
+    install_timeout: float = DEFAULT_INSTALL_TIMEOUT,
+    run_timeout: float = DEFAULT_RUN_TIMEOUT,
+    metadata_only: bool = False,
+    offline: bool = False,
+    max_age_days: float = DEFAULT_MAX_AGE_DAYS,
+    user_facing_age: float = DEFAULT_USER_FACING_AGE_DAYS,
+    pin_version: str = "",
+    now: datetime | None = None,
+    installer: Callable[..., Installed] | None = None,
+    speaker: Callable[..., dict[str, Any]] | None = None,
+) -> Report:
     """Everything, wired, in two phases.
 
     PHASE 1 always runs and costs two HTTP requests plus some git: what the
@@ -1711,8 +1907,9 @@ def probe(dist: str, target: Path, *, tool: str = "",
     The three injectable seams are the three impure parts: the index lookup,
     the install, and the subprocess.
     """
-    report = Report(dist=dist, index_url=index_url,
-                    depth="metadata" if metadata_only else "full")
+    report = Report(
+        dist=dist, index_url=index_url, depth="metadata" if metadata_only else "full"
+    )
     installer = installer or install_from_index
     speaker = speaker or speak_mcp
 
@@ -1736,13 +1933,15 @@ def probe(dist: str, target: Path, *, tool: str = "",
 
     read_index(report, target, 20.0, offline)
     report.findings = metadata_findings(
-        report, target, report.versions.repo, max_age_days, now, user_facing_age)
+        report, target, report.versions.repo, max_age_days, now, user_facing_age
+    )
 
     if report.index_status == "unreachable":
         # A comparison that did not happen is not a pass. 127, not 0 and not 2.
         report.harness_error = (
             f"the index could not be reached ({report.index_detail}) — the "
-            "published artifact was NOT compared. This is not 'in sync'")
+            "published artifact was NOT compared. This is not 'in sync'"
+        )
         return report
 
     if metadata_only or offline:
@@ -1767,8 +1966,11 @@ def probe(dist: str, target: Path, *, tool: str = "",
         got = installer(dist, Path(tmp), index_url, install_timeout, pin_version)
         if not got.ok:
             report.publication = INSTALL_FAILED
-            report.findings = dedupe(phase1 + build_findings(report)
-                                     + [Finding("INSTALL_DETAIL", got.detail)])
+            report.findings = dedupe(
+                phase1
+                + build_findings(report)
+                + [Finding("INSTALL_DETAIL", got.detail)]
+            )
             return report
 
         report.versions.installed = got.version or (index_version or "")
@@ -1779,7 +1981,8 @@ def probe(dist: str, target: Path, *, tool: str = "",
             report.harness_error = (
                 f"pinned to =={pin_version} and the venv reports "
                 f"{report.versions.installed or 'nothing'} — the artifact under test "
-                "is not the one named, so no claim is made about either")
+                "is not the one named, so no claim is made about either"
+            )
             return report
 
         compare_content(report, got, target)
@@ -1791,8 +1994,14 @@ def probe(dist: str, target: Path, *, tool: str = "",
         spoke = speaker([got.entrypoint], run_timeout, Path(tmp), tool, tool_args)
         if spoke.get("error") or spoke.get("tools") is None:
             report.findings = dedupe(
-                phase1 + build_findings(report)
-                + [Finding("RUN_DETAIL", str(spoke.get("error") or "no tools/list answer"))])
+                phase1
+                + build_findings(report)
+                + [
+                    Finding(
+                        "RUN_DETAIL", str(spoke.get("error") or "no tools/list answer")
+                    )
+                ]
+            )
             return report
 
         tools = spoke["tools"] or []
@@ -1822,7 +2031,7 @@ def render(r: Report) -> str:
     if r.provenance is not None:
         lines += [r.provenance.render(), ""]
         if r.provenance.blocking:
-            return "\n".join(lines + [r.provenance.moved_detail(), ""]) + "\n"
+            return "\n".join([*lines, r.provenance.moved_detail(), ""]) + "\n"
     if r.harness_error:
         lines += [f"⛔ {r.harness_error}", ""]
         return "\n".join(lines) + "\n"
@@ -1836,8 +2045,11 @@ def render(r: Report) -> str:
         f"- repository version:       `{r.versions.repo or '—'}`",
         f"- last git tag:             `{r.versions.tag or '—'}`",
         f"- unreleased commits:       {len(r.unreleased_commits)}"
-        + (f" (oldest {r.oldest_unreleased_age_days:.1f} d)"
-           if r.oldest_unreleased_age_days is not None else ""),
+        + (
+            f" (oldest {r.oldest_unreleased_age_days:.1f} d)"
+            if r.oldest_unreleased_age_days is not None
+            else ""
+        ),
     ]
     if r.depth == "full":
         lines += [
@@ -1854,81 +2066,128 @@ def render(r: Report) -> str:
     # either. Same reasoning as the boot gate's `not-selected`.
     if r.index_status == "unconfirmed":
         lines += ["", f"⚠️ UNCONFIRMED — {r.index_detail}."]
-    elif r.index_status == "skipped":
-        lines += ["", f"ℹ️ {r.index_detail}."]
-    elif r.index_detail:
+    elif r.index_status == "skipped" or r.index_detail:
         lines += ["", f"ℹ️ {r.index_detail}."]
     if r.yank_source == "unconfirmed":
         lines += ["", f"⚠️ UNCONFIRMED — {r.yank_detail}."]
     elif r.yank_source == "json-fallback":
         lines += ["", f"ℹ️ {r.yank_detail}."]
     if r.tags is None:
-        lines += ["", "ℹ️ tags could not be listed (a `--depth 1` clone fetches none) — "
-                      "'no releases' cannot be concluded from this."]
+        lines += [
+            "",
+            "ℹ️ tags could not be listed (a `--depth 1` clone fetches none) — "
+            "'no releases' cannot be concluded from this.",
+        ]
     if r.depth == "full":
         if r.tree.checked:
-            extra = (f", {len(r.tree.extra_in_artifact)} file(s) only in the artifact "
-                     "(a generated version module lives here)"
-                     if r.tree.extra_in_artifact else "")
-            lines += ["", f"ℹ️ content: {r.tree.compared} source file(s) compared "
-                          f"against the checkout{extra}"
-                          + (" — TRUNCATED at the cap" if r.tree.truncated else "") + "."]
+            extra = (
+                f", {len(r.tree.extra_in_artifact)} file(s) only in the artifact "
+                "(a generated version module lives here)"
+                if r.tree.extra_in_artifact
+                else ""
+            )
+            lines += [
+                "",
+                f"ℹ️ content: {r.tree.compared} source file(s) compared "
+                f"against the checkout{extra}"
+                + (" — TRUNCATED at the cap" if r.tree.truncated else "")
+                + ".",
+            ]
         elif r.tree.detail:
-            lines += ["", f"ℹ️ content comparison not made — {r.tree.detail.rstrip('; ')}."]
+            lines += [
+                "",
+                f"ℹ️ content comparison not made — {r.tree.detail.rstrip('; ')}.",
+            ]
     if r.yanked:
         shown = sorted(r.yanked, key=lambda v: release_key(v) or ())
-        lines += ["", f"ℹ️ {len(shown)} yanked release(s) on the index: "
-                      f"{', '.join(shown)}. Older withdrawn releases are history, not "
-                      "a finding — only the release this repository treats as current."]
+        lines += [
+            "",
+            f"ℹ️ {len(shown)} yanked release(s) on the index: "
+            f"{', '.join(shown)}. Older withdrawn releases are history, not "
+            "a finding — only the release this repository treats as current.",
+        ]
 
     if r.findings:
         lines += ["", "## 🚨 Findings"]
-        lines += [f"- **{f.code}** [{f.severity}] — {f.detail}"
-                  for f in sorted(r.findings, key=lambda f: _SEVERITY_RANK.get(f.severity, 3))]
+        lines += [
+            f"- **{f.code}** [{f.severity}] — {f.detail}"
+            for f in sorted(r.findings, key=lambda f: _SEVERITY_RANK.get(f.severity, 3))
+        ]
     elif r.depth == "metadata":
-        lines += ["", "The release metadata is consistent. The artifact itself was NOT "
-                      "installed or run — `--metadata-only` stops before that."]
+        lines += [
+            "",
+            "The release metadata is consistent. The artifact itself was NOT "
+            "installed or run — `--metadata-only` stops before that.",
+        ]
     else:
         lines += ["", "The artifact users install matches the repository and runs."]
     return "\n".join(lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--dist", default="", help="distribution name on the index "
-                                              "(default: the name in pyproject.toml)")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--dist",
+        default="",
+        help="distribution name on the index (default: the name in pyproject.toml)",
+    )
     p.add_argument("--target", default=".", help="the target checkout (read-only)")
-    p.add_argument("--tool", default="", help="tool to call (default: the first "
-                                              "one needing no arguments)")
+    p.add_argument(
+        "--tool",
+        default="",
+        help="tool to call (default: the first one needing no arguments)",
+    )
     p.add_argument("--tool-args", default="{}", help="JSON arguments for --tool")
-    p.add_argument("--index-url", default=DEFAULT_INDEX,
-                   help="PEP 503 index to compare against, as pip takes it "
-                        f"(default: {DEFAULT_INDEX}). Against anything but PyPI the "
-                        "JSON API cross-check does not run — there is none to run")
-    p.add_argument("--metadata-only", action="store_true",
-                   help="stop after the index and git comparison: no venv, no "
-                        "install, no tool call. Two HTTP requests instead of minutes")
-    p.add_argument("--offline", action="store_true",
-                   help="git-only, and the report says so. Implies --metadata-only")
-    p.add_argument("--max-age-days", type=float, default=DEFAULT_MAX_AGE_DAYS,
-                   help="how long unreleased HOUSEKEEPING may sit before it is a "
-                        f"finding (default: {DEFAULT_MAX_AGE_DAYS:g})")
-    p.add_argument("--max-age-days-user-facing", type=float,
-                   default=DEFAULT_USER_FACING_AGE_DAYS,
-                   help="the same clock for unreleased fix/feat/perf/revert work "
-                        f"(default: {DEFAULT_USER_FACING_AGE_DAYS:g} — reported "
-                        "immediately). A breaking change is reported at any age and "
-                        "ignores both")
-    p.add_argument("--pin-version", default="",
-                   help="install `dist==VERSION` instead of whatever the index "
-                        "resolves to. Use it for every re-check after a release: an "
-                        "unpinned install was measured serving the previous artifact "
-                        "for minutes after the new one was listed, --no-cache-dir and "
-                        "all")
+    p.add_argument(
+        "--index-url",
+        default=DEFAULT_INDEX,
+        help="PEP 503 index to compare against, as pip takes it "
+        f"(default: {DEFAULT_INDEX}). Against anything but PyPI the "
+        "JSON API cross-check does not run — there is none to run",
+    )
+    p.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help="stop after the index and git comparison: no venv, no "
+        "install, no tool call. Two HTTP requests instead of minutes",
+    )
+    p.add_argument(
+        "--offline",
+        action="store_true",
+        help="git-only, and the report says so. Implies --metadata-only",
+    )
+    p.add_argument(
+        "--max-age-days",
+        type=float,
+        default=DEFAULT_MAX_AGE_DAYS,
+        help="how long unreleased HOUSEKEEPING may sit before it is a "
+        f"finding (default: {DEFAULT_MAX_AGE_DAYS:g})",
+    )
+    p.add_argument(
+        "--max-age-days-user-facing",
+        type=float,
+        default=DEFAULT_USER_FACING_AGE_DAYS,
+        help="the same clock for unreleased fix/feat/perf/revert work "
+        f"(default: {DEFAULT_USER_FACING_AGE_DAYS:g} — reported "
+        "immediately). A breaking change is reported at any age and "
+        "ignores both",
+    )
+    p.add_argument(
+        "--pin-version",
+        default="",
+        help="install `dist==VERSION` instead of whatever the index "
+        "resolves to. Use it for every re-check after a release: an "
+        "unpinned install was measured serving the previous artifact "
+        "for minutes after the new one was listed, --no-cache-dir and "
+        "all",
+    )
     p.add_argument("--install-timeout", type=float, default=DEFAULT_INSTALL_TIMEOUT)
     p.add_argument("--run-timeout", type=float, default=DEFAULT_RUN_TIMEOUT)
-    p.add_argument("--report", default="", help="write the machine-readable report here")
+    p.add_argument(
+        "--report", default="", help="write the machine-readable report here"
+    )
     p.add_argument("--format", choices=("text", "json"), default="text")
     args = p.parse_args(argv)
 
@@ -1941,8 +2200,10 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CANNOT_RUN
 
     if not shutil.which("git"):
-        print("shipped: git not found — the tag comparison cannot be made",
-              file=sys.stderr)
+        print(
+            "shipped: git not found — the tag comparison cannot be made",
+            file=sys.stderr,
+        )
 
     target = Path(args.target).resolve()
     dist = args.dist
@@ -1955,37 +2216,50 @@ def main(argv: list[str] | None = None) -> int:
         except OSError:
             dist = ""
         if not dist:
-            print(f"shipped: no --dist and no [project] name in {target}/pyproject.toml",
-                  file=sys.stderr)
+            print(
+                f"shipped: no --dist and no [project] name in {target}/pyproject.toml",
+                file=sys.stderr,
+            )
             return EXIT_CANNOT_RUN
 
     prov = probe_provenance.capture(target)
     try:
-        report = probe(dist, target, tool=args.tool,
-                       tool_args=tool_args, index_url=args.index_url,
-                       metadata_only=args.metadata_only or args.offline,
-                       offline=args.offline,
-                       max_age_days=args.max_age_days,
-                       user_facing_age=args.max_age_days_user_facing,
-                       pin_version=args.pin_version,
-                       install_timeout=args.install_timeout,
-                       run_timeout=args.run_timeout)
+        report = probe(
+            dist,
+            target,
+            tool=args.tool,
+            tool_args=tool_args,
+            index_url=args.index_url,
+            metadata_only=args.metadata_only or args.offline,
+            offline=args.offline,
+            max_age_days=args.max_age_days,
+            user_facing_age=args.max_age_days_user_facing,
+            pin_version=args.pin_version,
+            install_timeout=args.install_timeout,
+            run_timeout=args.run_timeout,
+        )
     except Exception as exc:  # noqa: BLE001 - the harness itself failed
-        print(f"shipped: harness could not run: {type(exc).__name__}: {exc}",
-              file=sys.stderr)
+        print(
+            f"shipped: harness could not run: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         return EXIT_CANNOT_RUN
 
     report.provenance = prov.recheck()
     if report.provenance.blocking:
         print(f"shipped: {report.provenance.moved_detail()}", file=sys.stderr)
 
-    print(json.dumps(report.as_dict(), indent=2, sort_keys=True)
-          if args.format == "json" else render(report))
+    print(
+        json.dumps(report.as_dict(), indent=2, sort_keys=True)
+        if args.format == "json"
+        else render(report)
+    )
     if args.report:
         try:
             Path(args.report).write_text(
                 json.dumps(report.as_dict(), indent=2, sort_keys=True) + "\n",
-                encoding="utf-8")
+                encoding="utf-8",
+            )
         except OSError as exc:
             print(f"shipped: could not write {args.report}: {exc}", file=sys.stderr)
     return report.exit_code()

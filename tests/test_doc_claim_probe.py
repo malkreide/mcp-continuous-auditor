@@ -11,6 +11,7 @@ deliberate: the check is only useful if a red run means something, and a check
 that flags `Requires-Dist`, a PEP number or a worked example teaches its
 readers to skim past it.
 """
+
 from __future__ import annotations
 
 import sys
@@ -89,7 +90,9 @@ class NoiseTest(Case):
         self.assertEqual(self.probe().findings, [])
 
     def test_standards_citations_are_exempt(self) -> None:
-        self.doc("Metadata is read over `PEP-658`; see also `RFC-6749` and `CVE-2024-3`.\n")
+        self.doc(
+            "Metadata is read over `PEP-658`; see also `RFC-6749` and `CVE-2024-3`.\n"
+        )
         self.assertEqual(self.probe().findings, [])
 
     def test_prose_outside_backticks_is_not_a_claim(self) -> None:
@@ -107,10 +110,13 @@ class NoiseTest(Case):
             "```\n"
             "$ python scripts/gate.py\n"
             "GATE_RESULT_EXAMPLE: nothing found\n"
-            "```\n")
+            "```\n"
+        )
         self.assertEqual(self.probe().findings, [])
 
-    def test_an_identifier_beside_a_link_to_another_repo_is_reported_not_flagged(self) -> None:
+    def test_an_identifier_beside_a_link_to_another_repo_is_reported_not_flagged(
+        self,
+    ) -> None:
         """`OPS-005` belongs to another repository. Listed, never resolved.
 
         Dropping it silently would be a blind spot; flagging it would be wrong.
@@ -118,7 +124,8 @@ class NoiseTest(Case):
         """
         self.doc(
             "| after the build | [audit-skill](https://github.com/o/audit-skill) | "
-            "Its `OPS-005` (pipeline honesty) is the relevant rubric |\n")
+            "Its `OPS-005` (pipeline honesty) is the relevant rubric |\n"
+        )
         report = self.probe()
         self.assertEqual(report.findings, [])
         self.assertIn("README.md: OPS-005", report.external)
@@ -196,7 +203,9 @@ class MembershipTest(Case):
         and the check would be muted within the week.
         """
         self.code("rubrics.py", self.GREEN + 'EXIT_GREEN = "EXIT_GREEN"\n')
-        self.doc("`GREEN_RUBRICS` decides the grade; the process returns `EXIT_GREEN`.\n")
+        self.doc(
+            "`GREEN_RUBRICS` decides the grade; the process returns `EXIT_GREEN`.\n"
+        )
         self.assertEqual(self.probe().findings, [])
 
     def test_the_check_only_runs_where_the_collection_is_actually_named(self) -> None:
@@ -212,15 +221,20 @@ class MembershipTest(Case):
         """
         self.code("rubrics.py", self.GREEN)
         collections = dc.find_collections(
-            [self.root / "scripts" / "rubrics.py"], self.root)
-        self.assertEqual(collections["GREEN_RUBRICS"].members,
-                         frozenset({"ARCH-001", "ARCH-002", "ARCH-010"}))
+            [self.root / "scripts" / "rubrics.py"], self.root
+        )
+        self.assertEqual(
+            collections["GREEN_RUBRICS"].members,
+            frozenset({"ARCH-001", "ARCH-002", "ARCH-010"}),
+        )
 
     def test_frozenset_and_tuple_spellings_are_seen_through(self) -> None:
-        self.code("rubrics.py",
-                  'A = frozenset({"X-001", "X-002"})\n'
-                  'B = ("Y-001", "Y-002")\n')
-        collections = dc.find_collections([self.root / "scripts" / "rubrics.py"], self.root)
+        self.code(
+            "rubrics.py", 'A = frozenset({"X-001", "X-002"})\nB = ("Y-001", "Y-002")\n'
+        )
+        collections = dc.find_collections(
+            [self.root / "scripts" / "rubrics.py"], self.root
+        )
         self.assertIn("A", collections)
         self.assertIn("B", collections)
 
@@ -264,9 +278,11 @@ class OwnDocumentationTest(unittest.TestCase):
         report = dc.run(root)
         self.assertTrue(report.docs)
         self.assertEqual(
-            [f"{f.doc}:{f.line} {f.token} — {f.detail}" for f in report.findings], [],
+            [f"{f.doc}:{f.line} {f.token} — {f.detail}" for f in report.findings],
+            [],
             "the README cites something that no longer exists — "
-            "run `python scripts/doc_claim_probe.py --target .`")
+            "run `python scripts/doc_claim_probe.py --target .`",
+        )
 
 
 if __name__ == "__main__":

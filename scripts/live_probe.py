@@ -39,6 +39,7 @@ signalled out-of-band so the workflow decides whether to open an issue:
 
 Stdlib only (urllib) — no third-party deps, so the probe runs anywhere.
 """
+
 from __future__ import annotations
 
 import json
@@ -84,8 +85,8 @@ def structural_signature(obj: Any, path: str = "$") -> set[str]:
 # Collection keys worth counting when a probe declares `min_count` without a
 # `count_path`. Ordered: the first one that resolves to a list wins.
 _COUNT_KEYS: tuple[tuple[str, ...], ...] = (
-    ("result", "records"),   # CKAN datastore_search / _sql
-    ("features",),           # GeoJSON FeatureCollection
+    ("result", "records"),  # CKAN datastore_search / _sql
+    ("features",),  # GeoJSON FeatureCollection
     ("results",),
     ("records",),
     ("entries",),
@@ -166,8 +167,15 @@ def main() -> int:
             expected = structural_signature(_load_fixture(fixture))
             payload = _fetch(probe)
             live = structural_signature(payload)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
-            error_rows.append(f"- ⚠️ `{name}`: probe failed — `{type(exc).__name__}: {exc}`")
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            OSError,
+        ) as exc:
+            error_rows.append(
+                f"- ⚠️ `{name}`: probe failed — `{type(exc).__name__}: {exc}`"
+            )
             print(f"::warning title=live-probe::{name} failed: {exc}", file=sys.stderr)
             continue
 
@@ -182,7 +190,10 @@ def main() -> int:
                     f"- ⚠️ `{name}`: `min_count` set but no countable collection "
                     f"found ({where}) — fix `count_path` in the manifest."
                 )
-                print(f"::warning title=live-probe::{name}: uncountable payload", file=sys.stderr)
+                print(
+                    f"::warning title=live-probe::{name}: uncountable payload",
+                    file=sys.stderr,
+                )
             elif count < floor:
                 recall_rows.append(
                     f"- 📉 `{name}`: **{count}** record(s), floor is **{floor}**. "

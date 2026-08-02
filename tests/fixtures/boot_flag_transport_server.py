@@ -17,6 +17,7 @@ a traceback.
   ``crash`` raises at start whatever the argv — a genuine boot failure, which
             must still be reported as one.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,8 +40,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         pass
 
-    def _send(self, status: int, body: bytes, ctype: str = "application/json",
-              extra: dict[str, str] | None = None) -> None:
+    def _send(
+        self,
+        status: int,
+        body: bytes,
+        ctype: str = "application/json",
+        extra: dict[str, str] | None = None,
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -65,19 +71,40 @@ class Handler(BaseHTTPRequestHandler):
             self._send(202, b"")
             return
         if method == "initialize":
-            payload = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {
-                "protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
-                "serverInfo": {"name": "flag-fixture", "version": "1"}}}
-            self._send(200, json.dumps(payload).encode(), "application/json",
-                       {"Mcp-Session-Id": "flag-fixture"})
+            payload = {
+                "jsonrpc": "2.0",
+                "id": msg.get("id"),
+                "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "flag-fixture", "version": "1"},
+                },
+            }
+            self._send(
+                200,
+                json.dumps(payload).encode(),
+                "application/json",
+                {"Mcp-Session-Id": "flag-fixture"},
+            )
             return
         if method == "tools/list":
-            payload = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {"tools": TOOLS}}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": msg.get("id"),
+                "result": {"tools": TOOLS},
+            }
             self._send(200, json.dumps(payload).encode(), "application/json")
             return
-        self._send(200, json.dumps({"jsonrpc": "2.0", "id": msg.get("id"),
-                                    "error": {"code": -32601,
-                                              "message": f"unknown {method}"}}).encode())
+        self._send(
+            200,
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id"),
+                    "error": {"code": -32601, "message": f"unknown {method}"},
+                }
+            ).encode(),
+        )
 
 
 def main() -> int:
@@ -96,8 +123,9 @@ def main() -> int:
         sys.stdin.read()
         return 0
 
-    ThreadingHTTPServer((os.environ.get("HOST") or "127.0.0.1", args.port),
-                        Handler).serve_forever()
+    ThreadingHTTPServer(
+        (os.environ.get("HOST") or "127.0.0.1", args.port), Handler
+    ).serve_forever()
     return 0
 
 

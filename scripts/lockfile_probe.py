@@ -203,8 +203,8 @@ def declared_requirements(pyproject: dict[str, Any]) -> dict[str, yp.Requirement
 class LockView:
     """What one lockfile says, reduced to the two things worth comparing."""
 
-    name: str                                   # uv.lock | poetry.lock
-    kind: str                                   # uv | poetry
+    name: str  # uv.lock | poetry.lock
+    kind: str  # uv | poetry
     # The project's own requires-dist as the lock recorded it. Empty for poetry:
     # poetry.lock does not echo it, so that half of the comparison is not
     # available there and the report says so rather than reporting agreement.
@@ -245,7 +245,8 @@ def read_uv_lock(path: Path, dist: str) -> LockView:
     if not view.records_requirements:
         view.detail = (
             f"{path.name} has no [package.metadata] requires-dist for {dist} — the "
-            "specifier comparison could not be made (only the pinned versions were)")
+            "specifier comparison could not be made (only the pinned versions were)"
+        )
     return view
 
 
@@ -292,7 +293,8 @@ def read_poetry_lock(path: Path) -> LockView:
     view.detail = (
         "poetry.lock does not record the project's own requires-dist, so the "
         "specifier comparison is not available for it — the pinned versions and "
-        "`poetry check --lock` are")
+        "`poetry check --lock` are"
+    )
     return view
 
 
@@ -304,7 +306,7 @@ def read_poetry_lock(path: Path) -> LockView:
 @dataclass
 class ToolCheck:
     tool: str
-    status: str = "not_run"   # ok | stale | not_run | unavailable | error
+    status: str = "not_run"  # ok | stale | not_run | unavailable | error
     detail: str = ""
 
     def as_dict(self) -> dict[str, str]:
@@ -328,11 +330,13 @@ def run_tool_check(kind: str, target: Path, timeout: float) -> ToolCheck:
         check.detail = (
             f"{binary} is not on PATH — its freshness check did not run. That is "
             "reported, not counted as agreement: a check that did not happen is "
-            "never a pass")
+            "never a pass"
+        )
         return check
     try:
-        proc = subprocess.run(argv, cwd=str(target), capture_output=True,
-                              text=True, timeout=timeout)
+        proc = subprocess.run(
+            argv, cwd=str(target), capture_output=True, text=True, timeout=timeout
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         check.status = "error"
         check.detail = f"{type(exc).__name__}: {exc}"
@@ -350,7 +354,8 @@ def run_tool_check(kind: str, target: Path, timeout: float) -> ToolCheck:
         check.status = "error"
         check.detail = (
             f"`{check.tool}` failed for a reason that is not staleness, so the "
-            f"freshness question is unanswered: {output[:300]}")
+            f"freshness question is unanswered: {output[:300]}"
+        )
         return check
     check.status = "stale"
     check.detail = output[:400] or f"exit {proc.returncode}"
@@ -362,9 +367,18 @@ def run_tool_check(kind: str, target: Path, timeout: float) -> ToolCheck:
 # read as staleness, so a new wording produces a false finding rather than a
 # silent pass.
 _TOOL_FAILURE = (
-    "failed to fetch", "network", "offline", "connection", "timed out", "timeout",
-    "no solution found", "proxy", "certificate", "permission denied",
-    "does not exist", "not found: ",
+    "failed to fetch",
+    "network",
+    "offline",
+    "connection",
+    "timed out",
+    "timeout",
+    "no solution found",
+    "proxy",
+    "certificate",
+    "permission denied",
+    "does not exist",
+    "not found: ",
 )
 
 
@@ -386,15 +400,19 @@ class Finding:
     detail: str
 
     def as_dict(self) -> dict[str, str]:
-        return {"code": self.code, "severity": self.severity,
-                "dependency": self.dependency, "detail": self.detail}
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "dependency": self.dependency,
+            "detail": self.detail,
+        }
 
 
 @dataclass
 class Report:
     dist: str
     target: str
-    status: str = "ok"        # ok | no_lockfile | harness_error
+    status: str = "ok"  # ok | no_lockfile | harness_error
     locks: list[LockView] = field(default_factory=list)
     declared: dict[str, yp.Requirement] = field(default_factory=dict)
     tool_checks: list[ToolCheck] = field(default_factory=list)
@@ -412,9 +430,13 @@ class Report:
             "status": self.status,
             "provenance": self.provenance.as_dict() if self.provenance else None,
             "lockfiles": [
-                {"name": lock.name, "kind": lock.kind,
-                 "records_requirements": lock.records_requirements,
-                 "packages": len(lock.pinned), "detail": lock.detail}
+                {
+                    "name": lock.name,
+                    "kind": lock.kind,
+                    "records_requirements": lock.records_requirements,
+                    "packages": len(lock.pinned),
+                    "detail": lock.detail,
+                }
                 for lock in self.locks
             ],
             "declared": {
@@ -447,12 +469,18 @@ def compare(declared: dict[str, yp.Requirement], lock: LockView) -> list[Finding
 
         if lock.records_requirements:
             if recorded is None:
-                findings.append(Finding(
-                    code="LOCK_DRIFT", severity="high", dependency=name,
-                    detail=(
-                        f"pyproject.toml declares `{name}{render_clauses(requirement)}`; "
-                        f"{lock.name} recorded no requirement for it at all. The lock "
-                        "predates the declaration — re-lock before the next install")))
+                findings.append(
+                    Finding(
+                        code="LOCK_DRIFT",
+                        severity="high",
+                        dependency=name,
+                        detail=(
+                            f"pyproject.toml declares `{name}{render_clauses(requirement)}`; "
+                            f"{lock.name} recorded no requirement for it at all. The lock "
+                            "predates the declaration — re-lock before the next install"
+                        ),
+                    )
+                )
             else:
                 want, got = specifier_set(requirement), specifier_set(recorded)
                 if want != got:
@@ -462,62 +490,98 @@ def compare(declared: dict[str, yp.Requirement], lock: LockView) -> list[Finding
                         # and not where it is installed from.
                         bound_note = (
                             " — the upper bound is in pyproject.toml and NOT in the "
-                            "lock, so it is not in force where the install happens")
-                    findings.append(Finding(
-                        code="LOCK_DRIFT", severity="high", dependency=name,
-                        detail=(
-                            f"pyproject.toml says `{render_clauses(requirement)}`, "
-                            f"{lock.name} recorded `{render_clauses(recorded)}`"
-                            f"{bound_note}")))
+                            "lock, so it is not in force where the install happens"
+                        )
+                    findings.append(
+                        Finding(
+                            code="LOCK_DRIFT",
+                            severity="high",
+                            dependency=name,
+                            detail=(
+                                f"pyproject.toml says `{render_clauses(requirement)}`, "
+                                f"{lock.name} recorded `{render_clauses(recorded)}`"
+                                f"{bound_note}"
+                            ),
+                        )
+                    )
                 elif extras_of(requirement) != extras_of(recorded):
-                    findings.append(Finding(
-                        code="LOCK_DRIFT", severity="medium", dependency=name,
-                        detail=(
-                            f"same version range, different extras: pyproject.toml "
-                            f"asks for `{name}[{','.join(sorted(extras_of(requirement))) or '-'}]`, "
-                            f"{lock.name} recorded "
-                            f"`{name}[{','.join(sorted(extras_of(recorded))) or '-'}]` — "
-                            "a different set of packages gets installed")))
+                    findings.append(
+                        Finding(
+                            code="LOCK_DRIFT",
+                            severity="medium",
+                            dependency=name,
+                            detail=(
+                                f"same version range, different extras: pyproject.toml "
+                                f"asks for `{name}[{','.join(sorted(extras_of(requirement))) or '-'}]`, "
+                                f"{lock.name} recorded "
+                                f"`{name}[{','.join(sorted(extras_of(recorded))) or '-'}]` — "
+                                "a different set of packages gets installed"
+                            ),
+                        )
+                    )
 
         pinned = lock.pinned.get(name)
         if pinned is None:
-            findings.append(Finding(
-                code="LOCK_MISSING_DEP", severity="high", dependency=name,
-                detail=(
-                    f"pyproject.toml declares `{name}` and {lock.name} locks no version "
-                    "of it — an install from this lock does not get the dependency")))
+            findings.append(
+                Finding(
+                    code="LOCK_MISSING_DEP",
+                    severity="high",
+                    dependency=name,
+                    detail=(
+                        f"pyproject.toml declares `{name}` and {lock.name} locks no version "
+                        "of it — an install from this lock does not get the dependency"
+                    ),
+                )
+            )
             continue
         admits = requirement.admits(pinned)
         if admits is False:
-            findings.append(Finding(
-                code="LOCK_UNSATISFIED", severity="high", dependency=name,
-                detail=(
-                    f"{lock.name} pins `{name}=={pinned}`, which "
-                    f"`{render_clauses(requirement)}` in pyproject.toml does not admit. "
-                    "What gets installed violates what the project declares")))
+            findings.append(
+                Finding(
+                    code="LOCK_UNSATISFIED",
+                    severity="high",
+                    dependency=name,
+                    detail=(
+                        f"{lock.name} pins `{name}=={pinned}`, which "
+                        f"`{render_clauses(requirement)}` in pyproject.toml does not admit. "
+                        "What gets installed violates what the project declares"
+                    ),
+                )
+            )
         elif admits is None:
-            findings.append(Finding(
-                code="LOCK_UNDECIDABLE", severity="low", dependency=name,
-                detail=(
-                    f"{lock.name} pins `{name}=={pinned}` and this probe cannot decide "
-                    f"whether `{render_clauses(requirement)}` admits it (an epoch, a "
-                    "local version or a pre-release segment). Not reported as clean")))
+            findings.append(
+                Finding(
+                    code="LOCK_UNDECIDABLE",
+                    severity="low",
+                    dependency=name,
+                    detail=(
+                        f"{lock.name} pins `{name}=={pinned}` and this probe cannot decide "
+                        f"whether `{render_clauses(requirement)}` admits it (an epoch, a "
+                        "local version or a pre-release segment). Not reported as clean"
+                    ),
+                )
+            )
     return findings
 
 
-def run(target: Path, use_tools: bool = True,
-        timeout: float = DEFAULT_TOOL_TIMEOUT) -> Report:
+def run(
+    target: Path, use_tools: bool = True, timeout: float = DEFAULT_TOOL_TIMEOUT
+) -> Report:
     report = Report(dist="", target=str(target))
     pyproject_path = target / "pyproject.toml"
     if not pyproject_path.exists():
         report.status = "harness_error"
-        report.harness_error = f"{target}: no pyproject.toml — nothing to compare a lock against"
+        report.harness_error = (
+            f"{target}: no pyproject.toml — nothing to compare a lock against"
+        )
         return report
     try:
         pyproject = _load_toml(pyproject_path)
     except Exception as exc:  # noqa: BLE001 - unreadable input is a harness failure
         report.status = "harness_error"
-        report.harness_error = f"pyproject.toml could not be read: {type(exc).__name__}: {exc}"
+        report.harness_error = (
+            f"pyproject.toml could not be read: {type(exc).__name__}: {exc}"
+        )
         return report
 
     report.dist = str(pyproject.get("project", {}).get("name", "") or "")
@@ -530,22 +594,29 @@ def run(target: Path, use_tools: bool = True,
         report.notes.append(
             f"no {UV_LOCK} and no {POETRY_LOCK} in {target} — nothing was measured. "
             "A library that ships no lock has made a defensible choice; this run is "
-            "not evidence that its bounds are in force anywhere")
+            "not evidence that its bounds are in force anywhere"
+        )
         return report
 
     if not report.declared:
         report.notes.append(
             "pyproject.toml declares no unconditional runtime dependencies — every "
-            "comparison below is vacuous")
+            "comparison below is vacuous"
+        )
 
     for path, kind in present:
         try:
-            lock = read_uv_lock(path, report.dist) if kind == "uv" else read_poetry_lock(path)
+            lock = (
+                read_uv_lock(path, report.dist)
+                if kind == "uv"
+                else read_poetry_lock(path)
+            )
         except Exception as exc:  # noqa: BLE001
             report.status = "harness_error"
             report.harness_error = (
                 f"{path.name} could not be read: {type(exc).__name__}: {exc} — a lock "
-                "this probe cannot parse is not a lock it can call clean")
+                "this probe cannot parse is not a lock it can call clean"
+            )
             return report
         report.locks.append(lock)
         if lock.detail:
@@ -556,23 +627,32 @@ def run(target: Path, use_tools: bool = True,
             check = run_tool_check(kind, target, timeout)
             report.tool_checks.append(check)
             if check.status == "stale":
-                report.findings.append(Finding(
-                    code="LOCK_STALE", severity="high", dependency="(project)",
-                    detail=(
-                        f"`{check.tool}` reports the lock out of date with "
-                        f"pyproject.toml: {check.detail}")))
+                report.findings.append(
+                    Finding(
+                        code="LOCK_STALE",
+                        severity="high",
+                        dependency="(project)",
+                        detail=(
+                            f"`{check.tool}` reports the lock out of date with "
+                            f"pyproject.toml: {check.detail}"
+                        ),
+                    )
+                )
             elif check.status in ("unavailable", "error"):
                 report.notes.append(f"{check.tool}: {check.detail}")
         else:
             report.notes.append(
                 "--no-tools: the resolver's own freshness check did not run, so "
-                "marker evaluation and the extras closure were not checked")
+                "marker evaluation and the extras closure were not checked"
+            )
 
     return report
 
 
 def render(report: Report) -> str:
-    lines = [f"lockfile probe — {report.dist or '(unnamed project)'} in {report.target}"]
+    lines = [
+        f"lockfile probe — {report.dist or '(unnamed project)'} in {report.target}"
+    ]
     if report.provenance is not None:
         lines.append(f"  {report.provenance.render()}")
         if report.provenance.blocking:
@@ -582,12 +662,15 @@ def render(report: Report) -> str:
         lines.append(f"  HARNESS: {report.harness_error}")
         return "\n".join(lines)
     if report.status == "no_lockfile":
-        lines.append(f"  NOT MEASURED: {report.notes[0] if report.notes else 'no lockfile'}")
+        lines.append(
+            f"  NOT MEASURED: {report.notes[0] if report.notes else 'no lockfile'}"
+        )
         return "\n".join(lines)
     for lock in report.locks:
         lines.append(
             f"  {lock.name} [{lock.kind}]: {len(lock.pinned)} package(s), "
-            f"requires-dist recorded: {'yes' if lock.records_requirements else 'no'}")
+            f"requires-dist recorded: {'yes' if lock.records_requirements else 'no'}"
+        )
     for check in report.tool_checks:
         lines.append(f"  {check.tool}: {check.status}")
     for note in report.notes:
@@ -595,19 +678,25 @@ def render(report: Report) -> str:
     if not report.findings:
         lines.append(
             f"  the lock states what pyproject.toml states "
-            f"({len(report.declared)} dependency/-ies compared)")
+            f"({len(report.declared)} dependency/-ies compared)"
+        )
     for finding in report.findings:
-        lines.append(f"  {finding.code} [{finding.severity}] {finding.dependency}: "
-                     f"{finding.detail}")
+        lines.append(
+            f"  {finding.code} [{finding.severity}] {finding.dependency}: "
+            f"{finding.detail}"
+        )
     return "\n".join(lines)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--target", default=".", help="path to the target checkout")
-    parser.add_argument("--no-tools", action="store_true",
-                        help="skip `uv lock --check` / `poetry check --lock` and compare "
-                             "the files only (offline; the report says what was skipped)")
+    parser.add_argument(
+        "--no-tools",
+        action="store_true",
+        help="skip `uv lock --check` / `poetry check --lock` and compare "
+        "the files only (offline; the report says what was skipped)",
+    )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TOOL_TIMEOUT)
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--report", default="", help="also write the JSON report here")
@@ -629,7 +718,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         Path(args.report).write_text(
             json.dumps(report.as_dict(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8")
+            encoding="utf-8",
+        )
     return report.exit_code()
 
 

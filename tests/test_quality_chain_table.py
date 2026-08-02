@@ -25,6 +25,7 @@ topics was empty.
 
 Stdlib-only, no network, no git.
 """
+
 from __future__ import annotations
 
 import re

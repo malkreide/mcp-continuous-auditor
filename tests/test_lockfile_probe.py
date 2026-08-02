@@ -14,6 +14,7 @@ the file that installs.
 
 Stdlib-only and offline.
 """
+
 from __future__ import annotations
 
 import json
@@ -153,26 +154,33 @@ class DriftTest(Case):
         A probe that reported those as a finding would be switched off within a
         week, and the real drift underneath would go with it.
         """
-        write(self.root,
-              pyproject__toml=PYPROJECT_CAPPED,
-              uv__lock=UV_LOCK_FRESH.replace('specifier = ">=2.0.0,<3"',
-                                             'specifier = "<3.0,>=2.0"'))
+        write(
+            self.root,
+            pyproject__toml=PYPROJECT_CAPPED,
+            uv__lock=UV_LOCK_FRESH.replace(
+                'specifier = ">=2.0.0,<3"', 'specifier = "<3.0,>=2.0"'
+            ),
+        )
         self.assertEqual(self.run_probe().findings, [])
 
     def test_dropped_extras_are_a_finding_of_their_own(self) -> None:
         """Same range, different extras — a different set of packages installs."""
-        write(self.root,
-              pyproject__toml=PYPROJECT_CAPPED,
-              uv__lock=UV_LOCK_FRESH.replace('extras = ["cli"], ', ""))
+        write(
+            self.root,
+            pyproject__toml=PYPROJECT_CAPPED,
+            uv__lock=UV_LOCK_FRESH.replace('extras = ["cli"], ', ""),
+        )
         drift = self.find(self.run_probe(), "LOCK_DRIFT")
         self.assertIn("extras", drift.detail)
 
     def test_a_dependency_absent_from_the_lock(self) -> None:
-        write(self.root,
-              pyproject__toml=PYPROJECT_CAPPED,
-              uv__lock=UV_LOCK_FRESH.replace('{ name = "httpx", specifier = ">=0.27" },', "")
-                                    .replace('[[package]]\nname = "httpx"\nversion = "0.28.1"\n',
-                                             ""))
+        write(
+            self.root,
+            pyproject__toml=PYPROJECT_CAPPED,
+            uv__lock=UV_LOCK_FRESH.replace(
+                '{ name = "httpx", specifier = ">=0.27" },', ""
+            ).replace('[[package]]\nname = "httpx"\nversion = "0.28.1"\n', ""),
+        )
         codes = self.codes(self.run_probe())
         self.assertIn("LOCK_MISSING_DEP", codes)
         self.assertIn("LOCK_DRIFT", codes)
@@ -184,12 +192,15 @@ class DriftTest(Case):
         environment to evaluate it against is a guess wearing a finding's
         clothes.
         """
-        write(self.root,
-              pyproject__toml=PYPROJECT_CAPPED.replace(
-                  'dependencies = ["mcp[cli]>=2.0.0,<3", "httpx>=0.27"]',
-                  'dependencies = ["mcp[cli]>=2.0.0,<3", "httpx>=0.27", '
-                  '"tomli>=2; python_version < \'3.11\'"]'),
-              uv__lock=UV_LOCK_FRESH)
+        write(
+            self.root,
+            pyproject__toml=PYPROJECT_CAPPED.replace(
+                'dependencies = ["mcp[cli]>=2.0.0,<3", "httpx>=0.27"]',
+                'dependencies = ["mcp[cli]>=2.0.0,<3", "httpx>=0.27", '
+                "\"tomli>=2; python_version < '3.11'\"]",
+            ),
+            uv__lock=UV_LOCK_FRESH,
+        )
         self.assertEqual(self.run_probe().findings, [])
 
 
@@ -213,8 +224,11 @@ class NotMeasuredTest(Case):
         self.assertIn("no pyproject.toml", report.harness_error)
 
     def test_an_unparseable_lock_is_never_reported_clean(self) -> None:
-        write(self.root, pyproject__toml=PYPROJECT_CAPPED,
-              uv__lock="this is not toml [[[\n")
+        write(
+            self.root,
+            pyproject__toml=PYPROJECT_CAPPED,
+            uv__lock="this is not toml [[[\n",
+        )
         report = self.run_probe()
         self.assertEqual(report.exit_code(), lp.EXIT_CANNOT_RUN)
         self.assertIn("could not be read", report.harness_error)
@@ -239,8 +253,9 @@ content-hash = "deadbeef"
 """
 
     def test_poetry_pins_are_checked_against_pyproject(self) -> None:
-        write(self.root, pyproject__toml=PYPROJECT_CAPPED,
-              poetry__lock=self.POETRY_LOCK)
+        write(
+            self.root, pyproject__toml=PYPROJECT_CAPPED, poetry__lock=self.POETRY_LOCK
+        )
         report = self.run_probe()
         self.assertIn("LOCK_UNSATISFIED", self.codes(report))
 
@@ -250,12 +265,14 @@ content-hash = "deadbeef"
         The gap is named in the report rather than left to make a poetry
         repository read as more thoroughly checked than it was.
         """
-        write(self.root, pyproject__toml=PYPROJECT_CAPPED,
-              poetry__lock=self.POETRY_LOCK)
+        write(
+            self.root, pyproject__toml=PYPROJECT_CAPPED, poetry__lock=self.POETRY_LOCK
+        )
         report = self.run_probe()
         self.assertNotIn("LOCK_DRIFT", self.codes(report))
-        self.assertIn("does not record the project's own requires-dist",
-                      " ".join(report.notes))
+        self.assertIn(
+            "does not record the project's own requires-dist", " ".join(report.notes)
+        )
 
 
 class ToolCheckTest(Case):
@@ -268,18 +285,21 @@ class ToolCheckTest(Case):
         between this probe and one that quietly fixes its own finding is a
         single flag, and nothing else in the file would fail if it went missing.
         """
-        for kind, expected in (("uv", ["uv", "lock", "--check"]),
-                               ("poetry", ["poetry", "check", "--lock"])):
+        seen: list[list[str]] = []
+
+        def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003
+            seen.append(list(argv))
+            raise AssertionError("not reached")
+
+        for kind, expected in (
+            ("uv", ["uv", "lock", "--check"]),
+            ("poetry", ["poetry", "check", "--lock"]),
+        ):
             with self.subTest(kind=kind):
-                seen: list[list[str]] = []
-
-                def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003
-                    seen.append(list(argv))
-                    raise AssertionError("not reached")
-
+                seen.clear()
                 original_which, original_run = lp.shutil.which, lp.subprocess.run
                 lp.shutil.which = lambda _b: "/usr/bin/" + _b  # type: ignore[assignment]
-                lp.subprocess.run = fake_run                   # type: ignore[assignment]
+                lp.subprocess.run = fake_run  # type: ignore[assignment]
                 try:
                     lp.run_tool_check(kind, self.root, 5.0)
                 except AssertionError:
@@ -304,11 +324,17 @@ class ToolCheckTest(Case):
         Filing the first as LOCK_STALE puts an infrastructure failure on the
         repository's account — the distinction the boot gate's 127 exists for.
         """
-        self.assertTrue(lp._failed_rather_than_stale(
-            "error: Failed to fetch https://pypi.org/simple/mcp/"))
-        self.assertFalse(lp._failed_rather_than_stale(
-            "error: The lockfile at `uv.lock` needs to be updated, but "
-            "`--check` was provided"))
+        self.assertTrue(
+            lp._failed_rather_than_stale(
+                "error: Failed to fetch https://pypi.org/simple/mcp/"
+            )
+        )
+        self.assertFalse(
+            lp._failed_rather_than_stale(
+                "error: The lockfile at `uv.lock` needs to be updated, but "
+                "`--check` was provided"
+            )
+        )
 
 
 class ReportShapeTest(Case):

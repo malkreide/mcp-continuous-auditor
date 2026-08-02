@@ -16,6 +16,7 @@ real server behaviour rather than an invented one:
 
 Stdlib only, and no MCP: this fixture is about the process, not the protocol.
 """
+
 from __future__ import annotations
 
 import json

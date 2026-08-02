@@ -43,6 +43,7 @@ this belongs in the TARGET repo's workflow, not the auditor's CI.
 Exit code is always 0 — a flaky upstream must not fail the cron. Findings are
 signalled via $GITHUB_OUTPUT: `recall_drop`, `errors`, `alert`.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -54,7 +55,9 @@ from pathlib import Path
 from typing import Any
 
 _HERE = Path(__file__).resolve().parent
-_MANIFEST = Path(os.environ.get("RECALL_MANIFEST", _HERE / "recall_canary.manifest.json"))
+_MANIFEST = Path(
+    os.environ.get("RECALL_MANIFEST", _HERE / "recall_canary.manifest.json")
+)
 _SERVER_REF = os.environ.get("MCP_SERVER_IMPORT", "server:mcp")
 _TIMEOUT = int(os.environ.get("RECALL_CANARY_TIMEOUT", "60"))
 
@@ -101,6 +104,7 @@ def _tool_payload(result: Any) -> Any:
 # unrunnable against half the portfolio. Dispatch on the server object's module —
 # see schemas/generate_schemas.py for the long version.
 
+
 def _sdk_client(server: Any) -> Any:
     from mcp.client.client import Client  # (a) — mcp >= 2
 
@@ -115,8 +119,11 @@ def _fastmcp_client(server: Any) -> Any:
 
 def in_memory_client(server: Any) -> Any:
     origin = (type(server).__module__ or "").split(".")[0]
-    order = ((_fastmcp_client, _sdk_client) if origin == "fastmcp"
-             else (_sdk_client, _fastmcp_client))
+    order = (
+        (_fastmcp_client, _sdk_client)
+        if origin == "fastmcp"
+        else (_sdk_client, _fastmcp_client)
+    )
     problems: list[str] = []
     for make in order:
         try:
@@ -125,7 +132,8 @@ def in_memory_client(server: Any) -> Any:
             problems.append(f"{make.__name__}: {exc}")
     raise RuntimeError(
         "no in-memory client available for "
-        f"{type(server).__module__}.{type(server).__name__}: " + "; ".join(problems))
+        f"{type(server).__module__}.{type(server).__name__}: " + "; ".join(problems)
+    )
 
 
 async def _call(mcp: Any, tool: str, args: dict) -> Any:
@@ -134,7 +142,9 @@ async def _call(mcp: Any, tool: str, args: dict) -> Any:
     return _tool_payload(result)
 
 
-def evaluate(canaries: list[dict], caller: Any) -> tuple[list[str], list[str], list[str]]:
+def evaluate(
+    canaries: list[dict], caller: Any
+) -> tuple[list[str], list[str], list[str]]:
     """Run every canary. Returns (recall_rows, error_rows, ok_rows).
 
     `caller` is a callable (name, args) -> payload, injected so the tests can
@@ -151,7 +161,9 @@ def evaluate(canaries: list[dict], caller: Any) -> tuple[list[str], list[str], l
         try:
             payload = caller(tool, canary.get("args", {}))
         except Exception as exc:  # noqa: BLE001 — one bad canary must not stop the rest
-            error_rows.append(f"- ⚠️ `{name}`: call failed — `{type(exc).__name__}: {exc}`")
+            error_rows.append(
+                f"- ⚠️ `{name}`: call failed — `{type(exc).__name__}: {exc}`"
+            )
             continue
 
         count = count_records(payload, canary.get("count_path"))
@@ -171,11 +183,17 @@ def evaluate(canaries: list[dict], caller: Any) -> tuple[list[str], list[str], l
     return recall_rows, error_rows, ok_rows
 
 
-def build_report(canaries: list[dict], recall_rows: list[str], error_rows: list[str],
-                 ok_rows: list[str],
-                 prov: probe_provenance.Provenance | None = None) -> str:
-    report = ["# Recall-canary report\n",
-              f"Called {len(canaries)} tool(s) against the live upstream.\n"]
+def build_report(
+    canaries: list[dict],
+    recall_rows: list[str],
+    error_rows: list[str],
+    ok_rows: list[str],
+    prov: probe_provenance.Provenance | None = None,
+) -> str:
+    report = [
+        "# Recall-canary report\n",
+        f"Called {len(canaries)} tool(s) against the live upstream.\n",
+    ]
     if prov is not None:
         # Which server code built those requests. A floor breach is a claim
         # about a chain, and half that chain is the checkout named here.
@@ -206,7 +224,10 @@ def build_report(canaries: list[dict], recall_rows: list[str], error_rows: list[
 
 def main() -> int:
     if not _MANIFEST.exists():
-        print(f"No recall-canary manifest at {_MANIFEST} — nothing to do.", file=sys.stderr)
+        print(
+            f"No recall-canary manifest at {_MANIFEST} — nothing to do.",
+            file=sys.stderr,
+        )
         return 0
 
     manifest = json.loads(_MANIFEST.read_text(encoding="utf-8"))
@@ -225,7 +246,9 @@ def main() -> int:
         return asyncio.run(_call(mcp, tool, args))
 
     recall_rows, error_rows, ok_rows = evaluate(canaries, caller)
-    report_text = build_report(canaries, recall_rows, error_rows, ok_rows, prov.recheck())
+    report_text = build_report(
+        canaries, recall_rows, error_rows, ok_rows, prov.recheck()
+    )
 
     report_path = Path(os.environ.get("RECALL_REPORT", "recall-canary-report.md"))
     report_path.write_text(report_text, encoding="utf-8")

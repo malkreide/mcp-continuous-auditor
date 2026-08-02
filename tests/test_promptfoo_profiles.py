@@ -11,6 +11,7 @@ Asserts the credential boundary is actually encoded in the YAML:
 Needs PyYAML. The rest of the suite is stdlib-only, so this self-skips when yaml
 is absent (run e.g. `uv run --with pyyaml python -m unittest tests.test_promptfoo_profiles`).
 """
+
 from __future__ import annotations
 
 import unittest
@@ -20,6 +21,7 @@ PF = Path(__file__).resolve().parents[1] / "promptfoo"
 
 try:
     import yaml  # noqa: F401
+
     _HAVE_YAML = True
 except Exception:  # pragma: no cover - environment dependent
     _HAVE_YAML = False
@@ -27,13 +29,14 @@ except Exception:  # pragma: no cover - environment dependent
 
 def _load(rel: str) -> dict:
     import yaml
+
     return yaml.safe_load((PF / rel).read_text(encoding="utf-8"))
 
 
 def _assert_types(cfg: dict) -> set[str]:
     types: set[str] = set()
     for t in cfg.get("tests", []) or []:
-        for a in (t.get("assert") or []):
+        for a in t.get("assert") or []:
             if a.get("type"):
                 types.add(str(a["type"]))
     return types
@@ -62,11 +65,12 @@ class PromptfooProfilesTest(unittest.TestCase):
         self.assertNotIn("redteam", c)
         # Committed red-team cases are tagged so the classifier's redteam branch fires.
         plugins = {
-            (t.get("metadata") or {}).get("pluginId")
-            for t in (c.get("tests") or [])
+            (t.get("metadata") or {}).get("pluginId") for t in (c.get("tests") or [])
         }
         for expected in ("prompt-injection", "pii", "sql-injection"):
-            self.assertIn(expected, plugins, f"missing committed red-team case: {expected}")
+            self.assertIn(
+                expected, plugins, f"missing committed red-team case: {expected}"
+            )
 
     def test_generative_redteam_spec_is_isolated(self) -> None:
         c = _load("redteam/redteam.config.yaml")

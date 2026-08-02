@@ -62,6 +62,7 @@ promptfoo wrapper; the tests supply a tiny fake. Stdlib-only, and the only
 side effects are the journal, the baseline cache, and the (always reverted)
 candidate application — matching scripts/budget_guard.py.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -72,7 +73,7 @@ import re
 import shlex
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -110,7 +111,7 @@ class HardFail(Exception):
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _sha256_short(path: Path) -> str:
@@ -310,9 +311,7 @@ def _apply_mutant(target_dir: Path, patch: Path) -> None:
     for argv in (("apply", "--check", str(patch)), ("apply", str(patch))):
         cp = _git(target_dir, *argv)
         if cp.returncode != 0:
-            raise HardFail(
-                f"mutant {patch.name} does not apply: {cp.stderr.strip()}"
-            )
+            raise HardFail(f"mutant {patch.name} does not apply: {cp.stderr.strip()}")
 
 
 def _revert_mutant(target_dir: Path, patch: Path) -> None:
@@ -679,7 +678,9 @@ def main(argv: list[str] | None = None) -> int:
         "in the target checkout (Phase 6c supplies the pinned promptfoo wrapper)",
     )
     common.add_argument(
-        "--cache", default="", help="baseline cache file (default: derived from --journal + target SHA)"
+        "--cache",
+        default="",
+        help="baseline cache file (default: derived from --journal + target SHA)",
     )
     common.add_argument(
         "--coverage-mode",
@@ -712,7 +713,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.runner.strip():
         p.error("--runner is required (or set IMPROVE_RUNNER)")
     if args.coverage_mode == "mutation" and not args.mutants_dir.strip():
-        p.error("--coverage-mode mutation requires --mutants-dir (or IMPROVE_MUTANTS_DIR)")
+        p.error(
+            "--coverage-mode mutation requires --mutants-dir (or IMPROVE_MUTANTS_DIR)"
+        )
     return int(args.func(args))
 
 

@@ -5,6 +5,7 @@ Covers the pure decision logic (which issues a summary implies, and open-vs-comm
 dedup) plus main()'s no-network paths (no-findings no-op, invalid target, dry-run
 plan). No GitHub calls are made. Stdlib-only, matching the rest of the suite.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -22,8 +23,12 @@ import sync_findings_issues as sfi  # noqa: E402
 
 def _summary(**over: object) -> dict:
     base = {
-        "outcome": "findings", "target": "o/r", "target_sha": "abc1234",
-        "schema_drift": False, "redteam": False, "other_findings": False,
+        "outcome": "findings",
+        "target": "o/r",
+        "target_sha": "abc1234",
+        "schema_drift": False,
+        "redteam": False,
+        "other_findings": False,
         "toolchain_fail": False,
     }
     base.update(over)
@@ -35,7 +40,9 @@ class FindingClassesTest(unittest.TestCase):
         self.assertEqual(sfi.finding_classes(_summary(outcome="green")), [])
 
     def test_hard_fail_routes_nothing(self) -> None:
-        self.assertEqual(sfi.finding_classes(_summary(outcome="hard-fail", schema_drift=True)), [])
+        self.assertEqual(
+            sfi.finding_classes(_summary(outcome="hard-fail", schema_drift=True)), []
+        )
 
     def test_schema_and_redteam_are_two_issues(self) -> None:
         cls = sfi.finding_classes(_summary(schema_drift=True, redteam=True))
@@ -53,18 +60,29 @@ class FindingClassesTest(unittest.TestCase):
         # has to produce an issue. Before these classes existed it classified as
         # `findings` and then opened nothing at all.
         self.assertEqual(
-            [c["label"] for c in sfi.finding_classes(_summary(transport_boot_fail=True))],
-            ["audit-finding"])
+            [
+                c["label"]
+                for c in sfi.finding_classes(_summary(transport_boot_fail=True))
+            ],
+            ["audit-finding"],
+        )
         self.assertEqual(
-            [c["label"] for c in sfi.finding_classes(_summary(host_allowlist_fail=True))],
-            ["dns-rebinding"])
+            [
+                c["label"]
+                for c in sfi.finding_classes(_summary(host_allowlist_fail=True))
+            ],
+            ["dns-rebinding"],
+        )
 
     def test_an_unconfigured_control_is_not_an_issue(self) -> None:
         # Fail-open is a deployment state, not a defect: it belongs in the report,
         # not in a tracking issue that would never close.
         self.assertEqual(
-            sfi.finding_classes(_summary(outcome="green", host_allowlist_unconfigured=True)),
-            [])
+            sfi.finding_classes(
+                _summary(outcome="green", host_allowlist_unconfigured=True)
+            ),
+            [],
+        )
 
     def test_every_routed_label_has_a_colour(self) -> None:
         for _, label, _ in sfi._CLASSES:
@@ -84,7 +102,7 @@ class DecideTest(unittest.TestCase):
 
     def test_ignores_open_issue_without_marker(self) -> None:
         issues = [{"number": 9, "body": "unrelated open issue"}]
-        action, number = sfi.decide(issues, "<!-- nightly-audit:redteam -->")
+        action, _number = sfi.decide(issues, "<!-- nightly-audit:redteam -->")
         self.assertEqual(action, "create")
 
 

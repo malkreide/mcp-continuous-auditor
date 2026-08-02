@@ -12,6 +12,7 @@ are *supposed* to differ in every word; a probe that cannot tell a translation
 from a regression is worse than no probe, because it produces a red run that
 everybody learns to ignore.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -109,8 +110,11 @@ class TranslationIsNotDriftTest(Case):
         # the command, not a comment, and truncating it would invent a
         # difference between two identical examples.
         self.assertEqual(
-            pp._strip_trailing_comment("""gate --args '{"q": "#tag"}'  # los""").strip(),
-            """gate --args '{"q": "#tag"}'""")
+            pp._strip_trailing_comment(
+                """gate --args '{"q": "#tag"}'  # los"""
+            ).strip(),
+            """gate --args '{"q": "#tag"}'""",
+        )
 
     def test_an_untagged_fence_is_not_compared(self) -> None:
         """A directory tree in a fence is prose, and prose gets translated.
@@ -147,7 +151,9 @@ class DriftTest(Case):
         """
         self.write(de=DE.replace("## Übersicht\n\n- eins\n- zwei\n", ""))
         report = self.probe()
-        self.assertEqual(sum(1 for c in self.codes(report) if c == "SECTION_MISMATCH"), 1)
+        self.assertEqual(
+            sum(1 for c in self.codes(report) if c == "SECTION_MISMATCH"), 1
+        )
 
     def test_a_bullet_added_on_one_side_only(self) -> None:
         """The shape the observed drift took: a feature listed once."""
@@ -161,13 +167,16 @@ class DriftTest(Case):
         """A German README installing a renamed script is invisible to its reader."""
         self.write(de=DE.replace("scripts/gate.py", "scripts/old_gate.py"))
         report = self.probe()
-        finding = next(f for f in report.findings if f.code == "CODE_BLOCK_CONTENT_DRIFT")
+        finding = next(
+            f for f in report.findings if f.code == "CODE_BLOCK_CONTENT_DRIFT"
+        )
         self.assertEqual(finding.severity, "high")
         self.assertIn("old_gate.py", finding.detail)
 
     def test_a_link_present_on_one_side_only(self) -> None:
-        self.write(en=EN.replace("(https://example.invalid/a)",
-                                 "(https://example.invalid/b)"))
+        self.write(
+            en=EN.replace("(https://example.invalid/a)", "(https://example.invalid/b)")
+        )
         details = [f.detail for f in self.probe().findings if f.code == "LINK_DRIFT"]
         self.assertEqual(len(details), 2)  # one missing on each side
 
@@ -180,9 +189,20 @@ class DriftTest(Case):
 class LagTest(Case):
     def git(self, *args: str) -> None:
         subprocess.run(
-            ["git", "-C", str(self.root),
-             "-c", "user.email=p@audit.invalid", "-c", "user.name=p", *args],
-            check=True, capture_output=True, text=True)
+            [
+                "git",
+                "-C",
+                str(self.root),
+                "-c",
+                "user.email=p@audit.invalid",
+                "-c",
+                "user.name=p",
+                *args,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def setUp(self) -> None:
         super().setUp()
@@ -193,7 +213,9 @@ class LagTest(Case):
 
     def test_updating_both_files_in_one_commit_leaves_no_lag(self) -> None:
         """Good practice produces zero on its own; the check fires on the rest."""
-        self.write(en=EN + "\n## Roadmap\n\n- later\n", de=DE + "\n## Fahrplan\n\n- später\n")
+        self.write(
+            en=EN + "\n## Roadmap\n\n- later\n", de=DE + "\n## Fahrplan\n\n- später\n"
+        )
         self.git("commit", "--quiet", "-am", "docs: roadmap in both")
         report = self.probe()
         self.assertEqual(self.codes(report), [])
@@ -207,7 +229,8 @@ class LagTest(Case):
         does.
         """
         (self.root / "README.md").write_text(
-            EN.replace("Intro paragraph", "Rewritten intro paragraph"), encoding="utf-8")
+            EN.replace("Intro paragraph", "Rewritten intro paragraph"), encoding="utf-8"
+        )
         self.git("commit", "--quiet", "-am", "docs: rewrite the intro")
         report = self.probe()
         lag = next(f for f in report.findings if f.code == "TRANSLATION_LAG")
@@ -239,7 +262,8 @@ class NotMeasuredTest(Case):
         (self.root / "SECURITY.de.md").write_text("# S\n", encoding="utf-8")
         self.assertEqual(
             [(b.name, t.name) for b, t in pp.discover(self.root, "de")],
-            [("README.md", "README.de.md"), ("SECURITY.md", "SECURITY.de.md")])
+            [("README.md", "README.de.md"), ("SECURITY.md", "SECURITY.de.md")],
+        )
 
     def test_a_translation_without_a_base_is_not_a_pair(self) -> None:
         (self.root / "NOTES.de.md").write_text("# N\n", encoding="utf-8")
@@ -260,9 +284,11 @@ class OwnDocumentationTest(unittest.TestCase):
         report = pp.run(root)
         self.assertTrue(report.pairs, "README.de.md disappeared?")
         self.assertEqual(
-            [f"{f.code}: {f.detail}" for f in report.findings], [],
+            [f"{f.code}: {f.detail}" for f in report.findings],
+            [],
             "the English and German README have come apart — "
-            "run `python scripts/parity_probe.py --target .`")
+            "run `python scripts/parity_probe.py --target .`",
+        )
 
 
 if __name__ == "__main__":

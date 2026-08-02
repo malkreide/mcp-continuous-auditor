@@ -27,6 +27,7 @@ would only assert that the mock matches the assumption. Index responses ARE
 recorded rather than live — see ``tests/fixtures/pypi/README.md`` for what each
 payload is and which parts of it are captured versus reconstructed.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,7 +37,7 @@ import sys
 import tempfile
 import unittest
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -47,8 +48,9 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pypi"
 DIST = "zurich-opendata-mcp"
 
 
-def probe_metadata(target, max_age_days=7.0, offline=False, timeout=1.0,
-                   now=None, index_url=None):
+def probe_metadata(
+    target, max_age_days=7.0, offline=False, timeout=1.0, now=None, index_url=None
+):
     """The merged probe at its metadata depth, in the shape these tests use.
 
     They predate the merge, when this was `release_gap.probe(target, ...)` with
@@ -60,9 +62,15 @@ def probe_metadata(target, max_age_days=7.0, offline=False, timeout=1.0,
         dist = rg.read_project(target).get("name", target.name)
     except OSError:
         dist = target.name
-    return rg.probe(dist, target, metadata_only=True, offline=offline,
-                    max_age_days=max_age_days, now=now,
-                    index_url=index_url or rg.DEFAULT_INDEX)
+    return rg.probe(
+        dist,
+        target,
+        metadata_only=True,
+        offline=offline,
+        max_age_days=max_age_days,
+        now=now,
+        index_url=index_url or rg.DEFAULT_INDEX,
+    )
 
 
 def as_dict(report):
@@ -102,7 +110,11 @@ def json_payload(versions, latest=None, yanked=(), dist="demo-mcp"):
         "info": {"name": dist, "version": latest or list(versions)[-1]},
         "releases": {
             v: [
-                {"filename": f"{stem}-{v}.tar.gz", "yanked": (v in yanked), "yanked_reason": None}
+                {
+                    "filename": f"{stem}-{v}.tar.gz",
+                    "yanked": (v in yanked),
+                    "yanked_reason": None,
+                }
             ]
             for v in versions
         },
@@ -148,7 +160,9 @@ def run(cwd: Path, *args: str) -> None:
 
 def make_repo(tmp: Path, version: str = "0.2.0") -> Path:
     """A real git repo — see module docstring on why this is not mocked."""
-    (tmp / "pyproject.toml").write_text(PYPROJECT.format(version=version), encoding="utf-8")
+    (tmp / "pyproject.toml").write_text(
+        PYPROJECT.format(version=version), encoding="utf-8"
+    )
     run(tmp, "git", "init", "-q", "-b", "main")
     run(tmp, "git", "config", "user.email", "t@example.invalid")
     run(tmp, "git", "config", "user.name", "T")
@@ -158,7 +172,7 @@ def make_repo(tmp: Path, version: str = "0.2.0") -> Path:
 
 
 def commit(repo: Path, subject: str, days_ago: float = 0.0) -> None:
-    stamp = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+    stamp = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
     (repo / f"f{abs(hash(subject)) % 10_000}.txt").write_text(subject, encoding="utf-8")
     run(repo, "git", "add", "-A")
     subprocess.run(
@@ -272,7 +286,9 @@ class PublishGapTest(unittest.TestCase):
     """A tag PyPI does not have — the maintainer already thinks it shipped."""
 
     def _probe_with_pypi(self, repo: Path, pypi_version: str):
-        versions = sorted({"0.1.0", pypi_version}, key=lambda v: rg.release_key(v) or ())
+        versions = sorted(
+            {"0.1.0", pypi_version}, key=lambda v: rg.release_key(v) or ()
+        )
         with stub_index(simple_payload(versions), json_payload(versions, pypi_version)):
             return probe_metadata(repo, max_age_days=7, offline=False, timeout=1)
 
@@ -296,7 +312,9 @@ class PublishGapTest(unittest.TestCase):
 class UnreleasedCommitsTest(unittest.TestCase):
     def _probe(self, repo: Path, max_age_days: float = 7.0):
         with stub_index(simple_payload(["0.1.0"]), json_payload(["0.1.0"])):
-            return probe_metadata(repo, max_age_days=max_age_days, offline=False, timeout=1)
+            return probe_metadata(
+                repo, max_age_days=max_age_days, offline=False, timeout=1
+            )
 
     def test_recent_housekeeping_is_not_a_finding(self):
         """Every repo is ahead of PyPI right after a merge. That is not news.
@@ -344,8 +362,9 @@ class CommitKindBeatsAgeTest(unittest.TestCase):
 
     def _probe(self, repo: Path, **over):
         with stub_index(simple_payload(["0.1.0"]), json_payload(["0.1.0"])):
-            return probe_metadata(repo, max_age_days=7.0, offline=False, timeout=1,
-                                  **over)
+            return probe_metadata(
+                repo, max_age_days=7.0, offline=False, timeout=1, **over
+            )
 
     def _repo(self, tmp: str, subject: str, days_ago: float) -> Path:
         repo = make_repo(Path(tmp), version="0.1.0")
@@ -369,8 +388,9 @@ class CommitKindBeatsAgeTest(unittest.TestCase):
         """`feat!:` ignores both clocks: an unreleased breaking change is a
         change nobody downstream can plan around."""
         with tempfile.TemporaryDirectory() as d:
-            report = self._probe(self._repo(d, "feat!: drop the v1 tool names", 0.01),
-                                 )
+            report = self._probe(
+                self._repo(d, "feat!: drop the v1 tool names", 0.01),
+            )
             codes = {f.code: f for f in report.findings}
             self.assertIn("UNRELEASED", codes)
             self.assertEqual(codes["UNRELEASED"].severity, "high")
@@ -378,7 +398,9 @@ class CommitKindBeatsAgeTest(unittest.TestCase):
 
     def test_the_footer_spelling_of_breaking_counts_too(self):
         with tempfile.TemporaryDirectory() as d:
-            report = self._probe(self._repo(d, "refactor: rework BREAKING CHANGE api", 0.01))
+            report = self._probe(
+                self._repo(d, "refactor: rework BREAKING CHANGE api", 0.01)
+            )
             codes = {f.code: f for f in report.findings}
             self.assertIn("UNRELEASED", codes)
             self.assertIn("BREAKING", codes["UNRELEASED"].detail)
@@ -389,8 +411,13 @@ class CommitKindBeatsAgeTest(unittest.TestCase):
             repo = self._repo(d, "fix: something", 0.5)
             with stub_index(simple_payload(["0.1.0"]), json_payload(["0.1.0"])):
                 dist = rg.read_project(repo).get("name", repo.name)
-                report = rg.probe(dist, repo, metadata_only=True, max_age_days=7.0,
-                                  user_facing_age=1.0)
+                report = rg.probe(
+                    dist,
+                    repo,
+                    metadata_only=True,
+                    max_age_days=7.0,
+                    user_facing_age=1.0,
+                )
             self.assertNotIn("UNRELEASED", {f.code for f in report.findings})
 
 
@@ -431,9 +458,20 @@ class NoTagsTest(unittest.TestCase):
             origin = make_repo(Path(d) / "origin", version="0.1.0")
             run(origin, "git", "tag", "v0.1.0")
             clone = Path(d) / "clone"
-            subprocess.run(["git", "clone", "-q", "--depth", "1", "--no-tags",
-                            "file://" + str(origin), str(clone)],
-                           check=True, capture_output=True)
+            subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "-q",
+                    "--depth",
+                    "1",
+                    "--no-tags",
+                    "file://" + str(origin),
+                    str(clone),
+                ],
+                check=True,
+                capture_output=True,
+            )
             self.assertTrue(rg.is_shallow(clone))
             self.assertIsNone(rg.release_tags(clone))
             report = probe_metadata(clone, max_age_days=7, offline=True, timeout=1)
@@ -481,7 +519,8 @@ class ConvergedIndexTest(unittest.TestCase):
         """0.2.0–0.5.1 are withdrawn. That is history, not a defect in 0.7.0."""
         report = self._probe()
         self.assertEqual(
-            sorted(report.yanked), ["0.2.0", "0.3.0", "0.3.3", "0.4.0", "0.5.0", "0.5.1"]
+            sorted(report.yanked),
+            ["0.2.0", "0.3.0", "0.3.3", "0.4.0", "0.5.0", "0.5.1"],
         )
         self.assertNotIn("RELEASE_YANKED", {f.code for f in report.findings})
         self.assertIn("yanked release(s) on the index", rg.render(report))
@@ -539,7 +578,8 @@ class YankLagRegressionTest(unittest.TestCase):
         """The core of the finding: yank status must reach the report."""
         report = self._probe()
         self.assertEqual(
-            sorted(report.yanked), ["0.2.0", "0.3.0", "0.3.3", "0.4.0", "0.5.0", "0.5.1"]
+            sorted(report.yanked),
+            ["0.2.0", "0.3.0", "0.3.3", "0.4.0", "0.5.0", "0.5.1"],
         )
         self.assertIn("0.2.0", rg.render(report))
 
@@ -697,7 +737,7 @@ class SimpleHtmlTest(unittest.TestCase):
         orig = urllib.request.urlopen
 
         class FakeResponse:
-            headers = {"Content-Type": content_type}
+            headers = {"Content-Type": content_type}  # noqa: RUF012 - throwaway stub, not shared state
 
             def read(self):
                 return body.encode("utf-8")
@@ -770,13 +810,17 @@ class CustomIndexTest(unittest.TestCase):
             repo = make_repo(Path(d), version="0.7.0")
             if tag:
                 run(repo, "git", "tag", tag)
-            served = payload("zurich_simple_converged") if simple is self.DEFAULT else simple
+            served = (
+                payload("zurich_simple_converged") if simple is self.DEFAULT else simple
+            )
             with stub_index(served, json_api) as stub:
                 report = probe_metadata(repo, 7, False, 1, index_url=index_url)
         return report, stub
 
     def test_pypi_org_is_never_asked_about_a_private_index_package(self):
-        report, stub = self._probe(self.PRIVATE, json_api=payload("zurich_json_converged"))
+        report, stub = self._probe(
+            self.PRIVATE, json_api=payload("zurich_json_converged")
+        )
         self.assertEqual(stub.seen, ["simple"], "the JSON API must not be consulted")
         self.assertEqual(report.json_view.status, rg.NOT_APPLICABLE)
 
@@ -811,13 +855,16 @@ class CustomIndexTest(unittest.TestCase):
     def test_the_default_index_still_cross_checks(self):
         """The narrowing is conditional on the index, not a general retreat."""
         report, stub = self._probe(
-            rg.DEFAULT_INDEX, json_api=payload("zurich_json_publish_lag"))
+            rg.DEFAULT_INDEX, json_api=payload("zurich_json_publish_lag")
+        )
         self.assertEqual(stub.seen, ["simple", "json"])
         self.assertEqual(report.index_status, "unconfirmed")
 
     def test_the_index_url_reaches_the_json_output(self):
         report, _ = self._probe(self.PRIVATE)
-        self.assertEqual(json.loads(json.dumps(as_dict(report)))["index_url"], self.PRIVATE)
+        self.assertEqual(
+            json.loads(json.dumps(as_dict(report)))["index_url"], self.PRIVATE
+        )
 
     def test_a_private_html_index_all_the_way_to_a_finding(self):
         """The whole chain on the shape a private index actually has: PEP 503
@@ -825,10 +872,10 @@ class CustomIndexTest(unittest.TestCase):
         no JSON API anywhere. The individual pieces are tested above; this is
         the one case that proves they compose."""
         html = (
-            '<!DOCTYPE html><html><body>'
+            "<!DOCTYPE html><html><body>"
             '<a href="/f/demo_mcp-0.5.0.tar.gz">demo_mcp-0.5.0.tar.gz</a>'
             '<a href="/f/demo_mcp-0.6.0-py3-none-any.whl" data-yanked="bad build">'
-            'demo_mcp-0.6.0-py3-none-any.whl</a>'
+            "demo_mcp-0.6.0-py3-none-any.whl</a>"
             '<a href="/f/demo_mcp-0.6.0.tar.gz" data-yanked="">demo_mcp-0.6.0.tar.gz</a>'
             "</body></html>"
         )
@@ -837,10 +884,14 @@ class CustomIndexTest(unittest.TestCase):
             run(repo, "git", "tag", "v0.6.0")
             orig = rg._get
             rg._get = lambda url, timeout, accept=None: (  # type: ignore[assignment]
-                rg._parse_simple_html(html), "ok", ""
+                rg._parse_simple_html(html),
+                "ok",
+                "",
             )
             try:
-                report = probe_metadata(repo, 7, False, 1, index_url="http://localhost:8099")
+                report = probe_metadata(
+                    repo, 7, False, 1, index_url="http://localhost:8099"
+                )
             finally:
                 rg._get = orig  # type: ignore[assignment]
 
@@ -857,9 +908,11 @@ class IsPypiTest(unittest.TestCase):
     def test_matches_on_host_not_on_prefix(self):
         for url in ("https://pypi.org/simple", "https://pypi.org/simple/"):
             self.assertTrue(rg.is_pypi(url), url)
-        for url in ("https://pypi.example.com/simple",
-                    "https://mirror.local/pypi.org/simple",
-                    "http://localhost:8080/simple"):
+        for url in (
+            "https://pypi.example.com/simple",
+            "https://mirror.local/pypi.org/simple",
+            "http://localhost:8080/simple",
+        ):
             self.assertFalse(rg.is_pypi(url), url)
 
 
@@ -872,9 +925,13 @@ class SimpleUrlTest(unittest.TestCase):
         )
 
     def test_a_custom_index_is_honoured_with_or_without_a_slash(self):
-        for base in ("https://pypi.example.com/simple", "https://pypi.example.com/simple/"):
+        for base in (
+            "https://pypi.example.com/simple",
+            "https://pypi.example.com/simple/",
+        ):
             self.assertEqual(
-                rg.simple_url("demo-mcp", base), "https://pypi.example.com/simple/demo-mcp/"
+                rg.simple_url("demo-mcp", base),
+                "https://pypi.example.com/simple/demo-mcp/",
             )
 
 
@@ -1028,7 +1085,9 @@ class StaleArtifactTest(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as d:
             artifact, repo = self._dirs(Path(d))
-            (artifact / "_version.py").write_text("__version__='0.3.3'\n", encoding="utf-8")
+            (artifact / "_version.py").write_text(
+                "__version__='0.3.3'\n", encoding="utf-8"
+            )
             diff = rg.compare_trees(artifact, repo)
             self.assertEqual(diff.extra_in_artifact, ["_version.py"])
             self.assertFalse(diff.diverged)
@@ -1045,7 +1104,9 @@ class StaleArtifactTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             artifact, repo = self._dirs(Path(d))
             (artifact / "__pycache__").mkdir()
-            (artifact / "__pycache__" / "server.py").write_text("junk\n", encoding="utf-8")
+            (artifact / "__pycache__" / "server.py").write_text(
+                "junk\n", encoding="utf-8"
+            )
             self.assertFalse(rg.compare_trees(artifact, repo).diverged)
 
     def _report(self, tree: rg.TreeDiff, installed="0.3.3", repo_v="0.3.3"):
@@ -1057,8 +1118,9 @@ class StaleArtifactTest(unittest.TestCase):
         return report
 
     def test_a_diverged_tree_raises_stale_artifact(self):
-        report = self._report(rg.TreeDiff(checked=True, compared=4,
-                                          differs=["demo_mcp/server.py"]))
+        report = self._report(
+            rg.TreeDiff(checked=True, compared=4, differs=["demo_mcp/server.py"])
+        )
         codes = {f.code: f for f in rg.build_findings(report)}
         self.assertIn("STALE_ARTIFACT", codes)
         self.assertIn("demo_mcp/server.py", codes["STALE_ARTIFACT"].detail)
@@ -1072,8 +1134,11 @@ class StaleArtifactTest(unittest.TestCase):
         """STALE_ON_INDEX says it more directly from cheaper evidence."""
         report = rg.Report(dist="demo-mcp")
         report.versions = rg.Versions(installed="0.3.2", repo="0.3.3")
-        rg.compare_content(report, rg.Installed(True, version="0.3.2", site="/x",
-                                                tops=["demo_mcp"]), Path("."))
+        rg.compare_content(
+            report,
+            rg.Installed(True, version="0.3.2", site="/x", tops=["demo_mcp"]),
+            Path("."),
+        )
         self.assertFalse(report.tree.checked)
         self.assertIn("already differ", report.tree.detail)
 
@@ -1081,8 +1146,9 @@ class StaleArtifactTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "src" / "demo_mcp").mkdir(parents=True)
-            self.assertEqual(rg.find_repo_package(root, "demo_mcp"),
-                             root / "src" / "demo_mcp")
+            self.assertEqual(
+                rg.find_repo_package(root, "demo_mcp"), root / "src" / "demo_mcp"
+            )
             (root / "flat_mcp").mkdir()
             self.assertEqual(rg.find_repo_package(root, "flat_mcp"), root / "flat_mcp")
             self.assertIsNone(rg.find_repo_package(root, "absent_mcp"))
@@ -1094,9 +1160,13 @@ class StaleArtifactTest(unittest.TestCase):
             site.mkdir(parents=True)
             report = rg.Report(dist="demo-mcp")
             report.versions = rg.Versions(installed="0.3.3", repo="0.3.3")
-            rg.compare_content(report, rg.Installed(True, version="0.3.3",
-                                                    site=str(root / "site"),
-                                                    tops=["demo_mcp"]), root)
+            rg.compare_content(
+                report,
+                rg.Installed(
+                    True, version="0.3.3", site=str(root / "site"), tops=["demo_mcp"]
+                ),
+                root,
+            )
             self.assertFalse(report.tree.checked)
             self.assertIn("no matching package", report.tree.detail)
 
@@ -1109,18 +1179,26 @@ class PinnedVersionTest(unittest.TestCase):
     """
 
     def _probe(self, repo: Path, installer, pin: str):
-        with stub_index(simple_payload(["0.1.0", "0.2.0"]),
-                        json_payload(["0.1.0", "0.2.0"], "0.2.0")):
-            return rg.probe("demo-mcp", repo, pin_version=pin, installer=installer,
-                            speaker=lambda *a, **k: {"tools": [], "error": ""})
+        with stub_index(
+            simple_payload(["0.1.0", "0.2.0"]),
+            json_payload(["0.1.0", "0.2.0"], "0.2.0"),
+        ):
+            return rg.probe(
+                "demo-mcp",
+                repo,
+                pin_version=pin,
+                installer=installer,
+                speaker=lambda *a, **k: {"tools": [], "error": ""},
+            )
 
     def test_the_pin_reaches_the_installer(self):
         seen = {}
 
         def installer(dist, workdir, index_url, timeout, pin_version=""):
             seen["pin"] = pin_version
-            return rg.Installed(True, version="0.2.0", entrypoint="/bin/demo",
-                                site="", tops=[])
+            return rg.Installed(
+                True, version="0.2.0", entrypoint="/bin/demo", site="", tops=[]
+            )
 
         with tempfile.TemporaryDirectory() as d:
             repo = make_repo(Path(d), version="0.2.0")
@@ -1130,9 +1208,11 @@ class PinnedVersionTest(unittest.TestCase):
 
     def test_a_venv_holding_another_version_makes_no_claim_at_all(self):
         """127, not 0 and not 2: the artifact under test is not the one named."""
+
         def installer(dist, workdir, index_url, timeout, pin_version=""):
-            return rg.Installed(True, version="0.1.0", entrypoint="/bin/demo",
-                                site="", tops=[])
+            return rg.Installed(
+                True, version="0.1.0", entrypoint="/bin/demo", site="", tops=[]
+            )
 
         with tempfile.TemporaryDirectory() as d:
             repo = make_repo(Path(d), version="0.2.0")

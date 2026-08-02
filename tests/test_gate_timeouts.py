@@ -16,6 +16,7 @@ Two things are checked, and they fail differently:
 Stdlib-only; needs ``bash`` and ``timeout`` (both present in the audit
 environment, and the script hard-fails without the latter by design).
 """
+
 from __future__ import annotations
 
 import re
@@ -38,12 +39,13 @@ def _extract_function(text: str, name: str) -> str:
         elif text[i] == "}":
             depth -= 1
             if depth == 0:
-                return text[start:i + 1]
+                return text[start : i + 1]
     raise AssertionError(f"unbalanced braces in {name}()")
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("timeout"),
-                     "bash or timeout missing")
+@unittest.skipUnless(
+    shutil.which("bash") and shutil.which("timeout"), "bash or timeout missing"
+)
 class RunBoundedTest(unittest.TestCase):
     """Drive the real helper, not a copy of what it is supposed to do."""
 
@@ -59,8 +61,9 @@ class RunBoundedTest(unittest.TestCase):
             f"{self.body}\n"
             f"{command}\n"
         )
-        return subprocess.run(["bash", "-c", script], capture_output=True,
-                              timeout=60).returncode
+        return subprocess.run(
+            ["bash", "-c", script], capture_output=True, timeout=60
+        ).returncode
 
     def test_a_command_that_finishes_keeps_its_own_exit_code(self) -> None:
         self.assertEqual(self._run("run_bounded 10 true"), 0)
@@ -83,11 +86,15 @@ class RunBoundedTest(unittest.TestCase):
         # the next gate would compete with it for the port and the CPU.
         marker = "GATEBOUNDMARKER"
         rc = self._run(
-            "run_bounded 1 bash -c 'bash -c \"exec -a %s sleep 40\" & sleep 40'" % marker)
+            f"run_bounded 1 bash -c 'bash -c \"exec -a {marker} sleep 40\" & sleep 40'"
+        )
         self.assertEqual(rc, 124)
         alive = subprocess.run(["ps", "-eo", "comm"], capture_output=True, text=True)
-        self.assertNotIn(marker, alive.stdout,
-                         "the grandchild outlived the bound — an orphan is still running")
+        self.assertNotIn(
+            marker,
+            alive.stdout,
+            "the grandchild outlived the bound — an orphan is still running",
+        )
 
 
 class EveryGateIsBoundedTest(unittest.TestCase):
@@ -129,14 +136,20 @@ class EveryGateIsBoundedTest(unittest.TestCase):
     _BOUNDED = ("run_bounded", "run_in_target")
 
     def _unbounded(self, predicate) -> list[tuple[int, str]]:
-        return [(n, ln) for n, ln in self._logical_lines()
-                if predicate(ln) and not any(w in ln for w in self._BOUNDED)]
+        return [
+            (n, ln)
+            for n, ln in self._logical_lines()
+            if predicate(ln) and not any(w in ln for w in self._BOUNDED)
+        ]
 
     def test_run_in_target_is_itself_bounded(self) -> None:
         body = _extract_function(self.text, "run_in_target")
         self.assertIn("run_bounded", body)
-        self.assertIn('local secs="$2"', body,
-                      "run_in_target must take a per-gate budget, not a fixed one")
+        self.assertIn(
+            'local secs="$2"',
+            body,
+            "run_in_target must take a per-gate budget, not a fixed one",
+        )
 
     def test_every_uv_run_goes_through_a_bounded_launcher(self) -> None:
         # `uv run` is how every in-target gate is launched — ruff, mypy, pytest,
@@ -160,19 +173,27 @@ class EveryGateIsBoundedTest(unittest.TestCase):
         # wedged gate; six hours later "the audit could not complete" is not a
         # report anyone can act on.
         unbounded = self._unbounded(
-            lambda ln: re.search(r"(?:^|\|\||&&|;|\$\()\s*git (?:-C \S+ )?(?:clone|fetch)\b", ln))
+            lambda ln: re.search(
+                r"(?:^|\|\||&&|;|\$\()\s*git (?:-C \S+ )?(?:clone|fetch)\b", ln
+            )
+        )
         self.assertEqual(unbounded, [], f"unbounded provisioning call(s): {unbounded}")
 
-    def test_a_missing_timeout_binary_hard_fails_instead_of_running_unbounded(self) -> None:
+    def test_a_missing_timeout_binary_hard_fails_instead_of_running_unbounded(
+        self,
+    ) -> None:
         self.assertRegex(
             self.text,
             r'\[ -n "\$\{TIMEOUT_BIN\}" \] \|\| hard_fail',
-            "the script must refuse to run rather than fall through to unbounded gates")
+            "the script must refuse to run rather than fall through to unbounded gates",
+        )
 
     def test_run_bounded_does_not_preserve_status(self) -> None:
         # --preserve-status makes `timeout` return the command's own code instead
         # of 124, which would erase the entire distinction this change adds.
-        self.assertNotIn("--preserve-status", _extract_function(self.text, "run_bounded"))
+        self.assertNotIn(
+            "--preserve-status", _extract_function(self.text, "run_bounded")
+        )
 
     def test_the_probe_remaps_exempt_the_hang_codes(self) -> None:
         # The boot and rebinding gates rewrite "no report written + non-zero" to
@@ -224,12 +245,16 @@ class EveryGateIsBoundedTest(unittest.TestCase):
         handling above exists to prevent — and "the metadata is consistent" was
         never the shipped-artifact gate's question anyway.
         """
-        assignments = [ln.strip() for ln in self.lines
-                       if re.match(r"\s*rc_shipped=", ln)]
+        assignments = [
+            ln.strip() for ln in self.lines if re.match(r"\s*rc_shipped=", ln)
+        ]
         self.assertTrue(assignments, "no rc_shipped assignment found")
         for line in assignments:
-            self.assertNotIn("rc_shipped_meta", line,
-                             f"the pre-run must not feed the gate verdict: {line}")
+            self.assertNotIn(
+                "rc_shipped_meta",
+                line,
+                f"the pre-run must not feed the gate verdict: {line}",
+            )
 
 
 if __name__ == "__main__":

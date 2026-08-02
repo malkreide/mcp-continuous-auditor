@@ -93,7 +93,7 @@ class Section:
     level: int
     title: str
     line: int
-    items: int = 0          # top-level list items
+    items: int = 0  # top-level list items
     # (info string, normalised body). The info string decides whether the body
     # is compared at all — see `normalise_block`.
     blocks: list[tuple[str, str]] = field(default_factory=list)
@@ -118,8 +118,12 @@ class Finding:
     detail: str
 
     def as_dict(self) -> dict[str, str]:
-        return {"code": self.code, "severity": self.severity,
-                "pair": self.pair, "detail": self.detail}
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "pair": self.pair,
+            "detail": self.detail,
+        }
 
 
 @dataclass
@@ -136,10 +140,14 @@ class PairResult:
         return f"{self.base} ↔ {self.translation}"
 
     def as_dict(self) -> dict[str, Any]:
-        return {"base": self.base, "translation": self.translation,
-                "base_sections": self.base_sections,
-                "translation_sections": self.translation_sections,
-                "lag_measured": self.lag_measured, "lag_commits": list(self.lag)}
+        return {
+            "base": self.base,
+            "translation": self.translation,
+            "base_sections": self.base_sections,
+            "translation_sections": self.translation_sections,
+            "lag_measured": self.lag_measured,
+            "lag_commits": list(self.lag),
+        }
 
 
 @dataclass
@@ -196,7 +204,7 @@ def parse(path: Path) -> DocView:
                 current.blocks.append((info, normalise_block(block)))
                 block, info = [], ""
             else:
-                info = line.strip()[len(fence.group(1)):].strip()
+                info = line.strip()[len(fence.group(1)) :].strip()
             fenced = not fenced
             continue
         if fenced:
@@ -204,8 +212,9 @@ def parse(path: Path) -> DocView:
             continue
         heading = HEADING.match(line)
         if heading:
-            current = Section(level=len(heading.group(1)), title=heading.group(2),
-                              line=lineno)
+            current = Section(
+                level=len(heading.group(1)), title=heading.group(2), line=lineno
+            )
             view.sections.append(current)
             continue
         if TOP_LEVEL_ITEM.match(line):
@@ -270,22 +279,37 @@ def compare(base: DocView, other: DocView, pair: str) -> list[Finding]:
         # Only meaningful once the skeletons align: without that, section i on
         # one side and section i on the other are different sections, and every
         # count difference below would be an artefact of the misalignment.
-        for left, right in zip(base.sections, other.sections):
+        # strict: the skeletons were compared above and are equal here.
+        for left, right in zip(base.sections, other.sections, strict=True):
             if left.items != right.items:
-                findings.append(Finding(
-                    code="BULLET_DRIFT", severity="medium", pair=pair,
-                    detail=(
-                        f"`{base.name}` §{left.line} “{left.title}” has {left.items} "
-                        f"top-level item(s); `{other.name}` §{right.line} "
-                        f"“{right.title}” has {right.items}")))
+                findings.append(
+                    Finding(
+                        code="BULLET_DRIFT",
+                        severity="medium",
+                        pair=pair,
+                        detail=(
+                            f"`{base.name}` §{left.line} “{left.title}” has {left.items} "
+                            f"top-level item(s); `{other.name}` §{right.line} "
+                            f"“{right.title}” has {right.items}"
+                        ),
+                    )
+                )
             if len(left.blocks) != len(right.blocks):
-                findings.append(Finding(
-                    code="CODE_BLOCK_DRIFT", severity="medium", pair=pair,
-                    detail=(
-                        f"“{left.title}”: {len(left.blocks)} code block(s) in "
-                        f"`{base.name}`, {len(right.blocks)} in `{other.name}`")))
+                findings.append(
+                    Finding(
+                        code="CODE_BLOCK_DRIFT",
+                        severity="medium",
+                        pair=pair,
+                        detail=(
+                            f"“{left.title}”: {len(left.blocks)} code block(s) in "
+                            f"`{base.name}`, {len(right.blocks)} in `{other.name}`"
+                        ),
+                    )
+                )
             else:
-                for index, (lb, rb) in enumerate(zip(left.blocks, right.blocks), 1):
+                for index, (lb, rb) in enumerate(
+                    zip(left.blocks, right.blocks, strict=True), 1
+                ):
                     # Only fences that declare a language are compared. An
                     # untagged block is as often a directory tree or a sample
                     # report — prose in a monospace font, which a translation is
@@ -295,12 +319,18 @@ def compare(base: DocView, other: DocView, pair: str) -> list[Finding]:
                     if not lb[0] or not rb[0]:
                         continue
                     if lb[1] != rb[1]:
-                        findings.append(Finding(
-                            code="CODE_BLOCK_CONTENT_DRIFT", severity="high", pair=pair,
-                            detail=(
-                                f"“{left.title}” block {index} (```{lb[0]}): the commands "
-                                f"differ (comments excluded). `{base.name}`: "
-                                f"{_first_diff(lb[1], rb[1])}")))
+                        findings.append(
+                            Finding(
+                                code="CODE_BLOCK_CONTENT_DRIFT",
+                                severity="high",
+                                pair=pair,
+                                detail=(
+                                    f"“{left.title}” block {index} (```{lb[0]}): the commands "
+                                    f"differ (comments excluded). `{base.name}`: "
+                                    f"{_first_diff(lb[1], rb[1])}"
+                                ),
+                            )
+                        )
 
     findings.extend(link_findings(base, other, pair))
     return findings
@@ -313,23 +343,36 @@ def skeleton_findings(base: DocView, other: DocView, pair: str) -> list[Finding]
     every later position is shifted, and printing forty consequential
     mismatches buries the one that has to be fixed.
     """
-    findings = [Finding(
-        code="SECTION_COUNT_DRIFT", severity="high", pair=pair,
-        detail=(f"`{base.name}` has {len(base.sections) - 1} heading(s), "
-                f"`{other.name}` has {len(other.sections) - 1}"))]
+    findings = [
+        Finding(
+            code="SECTION_COUNT_DRIFT",
+            severity="high",
+            pair=pair,
+            detail=(
+                f"`{base.name}` has {len(base.sections) - 1} heading(s), "
+                f"`{other.name}` has {len(other.sections) - 1}"
+            ),
+        )
+    ]
     for index in range(max(len(base.sections), len(other.sections))):
         left = base.sections[index] if index < len(base.sections) else None
         right = other.sections[index] if index < len(other.sections) else None
         if left is not None and right is not None and left.level == right.level:
             continue
-        findings.append(Finding(
-            code="SECTION_MISMATCH", severity="high", pair=pair,
-            detail=(
-                f"the heading sequences diverge at position {index}: "
-                f"`{base.name}` has "
-                f"{_describe(left)}, `{other.name}` has {_describe(right)}. "
-                "Everything after this position is shifted and is not reported "
-                "separately — fix this one and re-run")))
+        findings.append(
+            Finding(
+                code="SECTION_MISMATCH",
+                severity="high",
+                pair=pair,
+                detail=(
+                    f"the heading sequences diverge at position {index}: "
+                    f"`{base.name}` has "
+                    f"{_describe(left)}, `{other.name}` has {_describe(right)}. "
+                    "Everything after this position is shifted and is not reported "
+                    "separately — fix this one and re-run"
+                ),
+            )
+        )
         break
     return findings
 
@@ -341,7 +384,9 @@ def _describe(section: Section | None) -> str:
 
 
 def _first_diff(left: str, right: str) -> str:
-    for a, b in zip(left.splitlines(), right.splitlines()):
+    # NOT strict: the two blocks differ, and their lengths may too —
+    # that case is what the fallback below reports.
+    for a, b in zip(left.splitlines(), right.splitlines(), strict=False):
         if a != b:
             return f"`{a}` vs `{b}`"
     longer = left.splitlines() if len(left) > len(right) else right.splitlines()
@@ -361,13 +406,23 @@ def link_findings(base: DocView, other: DocView, pair: str) -> list[Finding]:
     right = {ln for ln in other.links if ln not in cross}
     findings = []
     for missing in sorted(left - right):
-        findings.append(Finding(
-            code="LINK_DRIFT", severity="low", pair=pair,
-            detail=f"`{base.name}` links to {missing}; `{other.name}` does not"))
+        findings.append(
+            Finding(
+                code="LINK_DRIFT",
+                severity="low",
+                pair=pair,
+                detail=f"`{base.name}` links to {missing}; `{other.name}` does not",
+            )
+        )
     for extra in sorted(right - left):
-        findings.append(Finding(
-            code="LINK_DRIFT", severity="low", pair=pair,
-            detail=f"`{other.name}` links to {extra}; `{base.name}` does not"))
+        findings.append(
+            Finding(
+                code="LINK_DRIFT",
+                severity="low",
+                pair=pair,
+                detail=f"`{other.name}` links to {extra}; `{base.name}` does not",
+            )
+        )
     return findings
 
 
@@ -378,8 +433,9 @@ def link_findings(base: DocView, other: DocView, pair: str) -> list[Finding]:
 
 def _git(root: Path, *args: str) -> str | None:
     try:
-        res = subprocess.run(["git", "-C", str(root), *args],
-                             capture_output=True, text=True, timeout=30)
+        res = subprocess.run(
+            ["git", "-C", str(root), *args], capture_output=True, text=True, timeout=30
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     return res.stdout.strip() if res.returncode == 0 else None
@@ -426,8 +482,9 @@ def discover(target: Path, lang: str) -> list[tuple[Path, Path]]:
     return pairs
 
 
-def run(target: Path, lang: str = DEFAULT_LANG,
-        explicit: tuple[tuple[Path, Path], ...] = ()) -> Report:
+def run(
+    target: Path, lang: str = DEFAULT_LANG, explicit: tuple[tuple[Path, Path], ...] = ()
+) -> Report:
     report = Report(target=str(target))
     if not target.is_dir():
         report.harness_error = f"{target} is not a directory"
@@ -438,7 +495,8 @@ def run(target: Path, lang: str = DEFAULT_LANG,
         report.notes.append(
             f"no *.{lang}.md beside a *.md in {target} — nothing was measured. This "
             "run is not evidence that the documentation is bilingual, nor that it "
-            "is in sync")
+            "is in sync"
+        )
         return report
 
     for base_path, other_path in pairs:
@@ -447,9 +505,12 @@ def run(target: Path, lang: str = DEFAULT_LANG,
         except OSError as exc:
             report.harness_error = f"{base_path.name}/{other_path.name}: {exc}"
             return report
-        result = PairResult(base=base_path.name, translation=other_path.name,
-                            base_sections=len(base.sections) - 1,
-                            translation_sections=len(other.sections) - 1)
+        result = PairResult(
+            base=base_path.name,
+            translation=other_path.name,
+            base_sections=len(base.sections) - 1,
+            translation_sections=len(other.sections) - 1,
+        )
         pair_name = result.name
         report.findings.extend(compare(base, other, pair_name))
 
@@ -459,16 +520,24 @@ def run(target: Path, lang: str = DEFAULT_LANG,
         if not measured:
             report.notes.append(
                 f"{pair_name}: git could not be read, so the translation-lag check did "
-                "not run. The structural findings stand; freshness was not measured")
+                "not run. The structural findings stand; freshness was not measured"
+            )
         elif lag:
-            report.findings.append(Finding(
-                code="TRANSLATION_LAG", severity="medium", pair=pair_name,
-                detail=(
-                    f"{len(lag)} commit(s) touched `{base_path.name}` after the last "
-                    f"one that touched `{other_path.name}`: "
-                    + "; ".join(lag[:5]) + (" …" if len(lag) > 5 else "")
-                    + ". The structure can still match while a paragraph says "
-                      "something the other no longer does")))
+            report.findings.append(
+                Finding(
+                    code="TRANSLATION_LAG",
+                    severity="medium",
+                    pair=pair_name,
+                    detail=(
+                        f"{len(lag)} commit(s) touched `{base_path.name}` after the last "
+                        f"one that touched `{other_path.name}`: "
+                        + "; ".join(lag[:5])
+                        + (" …" if len(lag) > 5 else "")
+                        + ". The structure can still match while a paragraph says "
+                        "something the other no longer does"
+                    ),
+                )
+            )
         report.pairs.append(result)
 
     return report
@@ -490,7 +559,8 @@ def render(report: Report) -> str:
     for pair in report.pairs:
         lines.append(
             f"  {pair.name}: {pair.base_sections} vs {pair.translation_sections} "
-            f"heading(s), lag {'not measured' if not pair.lag_measured else len(pair.lag)}")
+            f"heading(s), lag {'not measured' if not pair.lag_measured else len(pair.lag)}"
+        )
     for note in report.notes:
         lines.append(f"  note: {note}")
     if not report.findings:
@@ -503,11 +573,19 @@ def render(report: Report) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--target", default=".", help="path to the checkout")
-    parser.add_argument("--lang", default=DEFAULT_LANG,
-                        help=f"translation suffix to pair up (default: {DEFAULT_LANG}, "
-                             f"i.e. README.md ↔ README.{DEFAULT_LANG}.md)")
-    parser.add_argument("--pair", action="append", default=[], metavar="BASE:TRANSLATION",
-                        help="an explicit pair, repeatable; overrides discovery")
+    parser.add_argument(
+        "--lang",
+        default=DEFAULT_LANG,
+        help=f"translation suffix to pair up (default: {DEFAULT_LANG}, "
+        f"i.e. README.md ↔ README.{DEFAULT_LANG}.md)",
+    )
+    parser.add_argument(
+        "--pair",
+        action="append",
+        default=[],
+        metavar="BASE:TRANSLATION",
+        help="an explicit pair, repeatable; overrides discovery",
+    )
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--report", default="", help="also write the JSON report here")
     return parser
@@ -520,13 +598,17 @@ def main(argv: list[str] | None = None) -> int:
     explicit: list[tuple[Path, Path]] = []
     for spec in args.pair:
         if ":" not in spec:
-            print(f"parity: --pair takes BASE:TRANSLATION, got {spec!r}", file=sys.stderr)
+            print(
+                f"parity: --pair takes BASE:TRANSLATION, got {spec!r}", file=sys.stderr
+            )
             return EXIT_CANNOT_RUN
         left, right = spec.split(":", 1)
         explicit.append((target / left, target / right))
     for left, right in explicit:
         if not left.is_file() or not right.is_file():
-            print(f"parity: {left.name} or {right.name} does not exist", file=sys.stderr)
+            print(
+                f"parity: {left.name} or {right.name} does not exist", file=sys.stderr
+            )
             return EXIT_CANNOT_RUN
 
     prov = probe_provenance.capture(target)
@@ -540,7 +622,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         Path(args.report).write_text(
             json.dumps(report.as_dict(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8")
+            encoding="utf-8",
+        )
     return report.exit_code()
 
 

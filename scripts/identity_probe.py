@@ -114,7 +114,12 @@ class Report:
     @property
     def ok(self) -> bool:
         runtime_bad = bool(self.runtime and self.runtime.get("status") == "mismatch")
-        return not self.drift and not self.hardcoded and not runtime_bad and not self.unresolved
+        return (
+            not self.drift
+            and not self.hardcoded
+            and not runtime_bad
+            and not self.unresolved
+        )
 
 
 def read_project(root: Path) -> dict[str, Any]:
@@ -175,13 +180,23 @@ def find_hardcoded(root: Path, dist: str) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     for path in sorted(src.rglob("*.py")):
         for lineno, line in enumerate(code_lines(path.read_text(encoding="utf-8")), 1):
-            values = [m.group(2) for m in ANY_UA.finditer(line) if norm(m.group(1)) == norm(dist)]
+            values = [
+                m.group(2)
+                for m in ANY_UA.finditer(line)
+                if norm(m.group(1)) == norm(dist)
+            ]
             values += [
-                m.group(1) for m in dunder.finditer(line) if re.match(r"\d+\.\d", m.group(1))
+                m.group(1)
+                for m in dunder.finditer(line)
+                if re.match(r"\d+\.\d", m.group(1))
             ]
             if any("+" not in v for v in values):
                 hits.append(
-                    {"file": str(path.relative_to(root)), "line": lineno, "code": line.strip()}
+                    {
+                        "file": str(path.relative_to(root)),
+                        "line": lineno,
+                        "code": line.strip(),
+                    }
                 )
     return hits
 
@@ -213,7 +228,7 @@ def unresolved_user_agent(root: Path, dist: str) -> str | None:
     if mentions and not resolved:
         return (
             f"src/ mentions a User-Agent ({mentions[0]}"
-            f"{', +%d more' % (len(mentions) - 1) if len(mentions) > 1 else ''}) "
+            f"{f', +{len(mentions) - 1} more' if len(mentions) > 1 else ''}) "
             "but no value could be resolved — source checked, User-Agent not"
         )
     return None
@@ -225,14 +240,21 @@ def collect_declared(root: Path) -> list[dict[str, str]]:
     manifest = root / "server.json"
     if manifest.exists():
         data = json.loads(manifest.read_text(encoding="utf-8"))
-        found.append({"where": "server.json → version", "value": data.get("version", "")})
+        found.append(
+            {"where": "server.json → version", "value": data.get("version", "")}
+        )
         for i, pkg in enumerate(data.get("packages", [])):
             found.append(
-                {"where": f"server.json → packages[{i}].version", "value": pkg.get("version", "")}
+                {
+                    "where": f"server.json → packages[{i}].version",
+                    "value": pkg.get("version", ""),
+                }
             )
     for readme in sorted(root.glob("README*.md")):
         for m in BADGE.finditer(readme.read_text(encoding="utf-8")):
-            found.append({"where": f"{readme.name} → version badge", "value": m.group(1)})
+            found.append(
+                {"where": f"{readme.name} → version badge", "value": m.group(1)}
+            )
     return found
 
 
@@ -285,13 +307,16 @@ def render(report: Report) -> str:
     # so that "nothing was found" stays the test for the OK sentence below.
     head = [report.provenance.render()] if report.provenance is not None else []
     if report.provenance is not None and report.provenance.blocking:
-        return "\n".join(head + [report.provenance.moved_detail()])
+        return "\n".join([*head, report.provenance.moved_detail()])
     out: list[str] = []
     if report.version == "(dynamic)":
         return "\n".join(
-            head + [f"{report.dist}: dynamic version — identity probe skipped."])
+            [*head, f"{report.dist}: dynamic version — identity probe skipped."]
+        )
     for d in report.drift:
-        out.append(f"DRIFT      {d['where']} = {d['value']!r} (pyproject {report.version!r})")
+        out.append(
+            f"DRIFT      {d['where']} = {d['value']!r} (pyproject {report.version!r})"
+        )
     for h in report.hardcoded:
         out.append(f"HARDCODED  {h['file']}:{h['line']}: {h['code'][:100]}")
     if report.unresolved:
@@ -306,8 +331,9 @@ def render(report: Report) -> str:
     if not out:
         checked = ", ".join(d["where"] for d in report.declared) or "no further places"
         out.append(
-            f"identity OK ({report.dist} {report.version}; checked: {checked}; src/ clean)")
-    return "\n".join(head + out)
+            f"identity OK ({report.dist} {report.version}; checked: {checked}; src/ clean)"
+        )
+    return "\n".join([*head, *out])
 
 
 def main() -> int:
@@ -323,7 +349,10 @@ def main() -> int:
 
     target = Path(args.target).resolve()
     if not (target / "pyproject.toml").exists():
-        print(f"{target}: no pyproject.toml — not a Python MCP server repo", file=sys.stderr)
+        print(
+            f"{target}: no pyproject.toml — not a Python MCP server repo",
+            file=sys.stderr,
+        )
         return 2
 
     # Captured before the first file is read and re-read after the last one:

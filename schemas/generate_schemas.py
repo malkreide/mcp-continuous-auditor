@@ -20,6 +20,7 @@ no output schema in MCP — the GeoJSON contract schema
 (``geojson_featurecollection.json``) is hand-maintained against RFC 7946 and is
 left untouched by this script.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -62,6 +63,7 @@ def _load_server() -> object:
 # target that had migrated to the 2.x SDK.
 # --------------------------------------------------------------------------
 
+
 def _sdk_client(server: object) -> object:
     from mcp.client.client import Client  # (a) — mcp >= 2
 
@@ -82,8 +84,11 @@ def in_memory_client(server: object) -> object:
     it backwards would drive a server with the other project's client.
     """
     origin = (type(server).__module__ or "").split(".")[0]
-    order = ((_fastmcp_client, _sdk_client) if origin == "fastmcp"
-             else (_sdk_client, _fastmcp_client))
+    order = (
+        (_fastmcp_client, _sdk_client)
+        if origin == "fastmcp"
+        else (_sdk_client, _fastmcp_client)
+    )
     problems: list[str] = []
     for make in order:
         try:
@@ -95,7 +100,8 @@ def in_memory_client(server: object) -> object:
         f"{type(server).__module__}.{type(server).__name__}. Tried the official "
         "SDK (`mcp>=2`, `mcp.client.client.Client`) and the standalone `fastmcp` "
         "package (`fastmcp.Client`) — they are different projects and cannot be "
-        "installed together. Details: " + "; ".join(problems))
+        "installed together. Details: " + "; ".join(problems)
+    )
 
 
 def _tools_of(listing: object) -> list:

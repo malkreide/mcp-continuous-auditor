@@ -11,6 +11,7 @@ interlock was factored out of run-worker.sh). Assumes the test host does NOT hav
 the ``inet mcp_worker_egress`` table loaded, which is true anywhere the rollout
 has not been applied.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -25,7 +26,7 @@ def _resolve(env_overrides: dict[str, str]) -> subprocess.CompletedProcess:
     """Source the helper, call resolve_worker_run_as, print rc + RUN_AS."""
     script = (
         f'source "{HELPER}"; '
-        f'resolve_worker_run_as; rc=$?; '
+        f"resolve_worker_run_as; rc=$?; "
         f'echo "RC=${{rc}}"; echo "RUN_AS=[${{RUN_AS[*]-}}]"'
     )
     env = {"PATH": "/usr/sbin:/usr/bin:/bin:/sbin", **env_overrides}

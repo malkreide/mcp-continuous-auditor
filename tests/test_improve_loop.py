@@ -10,6 +10,7 @@ every iteration feeds the improve-own budget state, a writer crash or flaky
 baseline hard-fails the whole run, and the keeps ceiling stops early.
 Needs `bash` + `git`.
 """
+
 from __future__ import annotations
 
 import json
@@ -74,8 +75,10 @@ WRITER = textwrap.dedent(
 )
 
 
-@unittest.skipUnless(LOOP.exists() and shutil.which("bash") and shutil.which("git"),
-                     "loop script, bash or git missing")
+@unittest.skipUnless(
+    LOOP.exists() and shutil.which("bash") and shutil.which("git"),
+    "loop script, bash or git missing",
+)
 class ImproveLoopTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -108,8 +111,9 @@ class ImproveLoopTest(unittest.TestCase):
 
     # -- helpers ----------------------------------------------------------
     def _git(self, *argv: str) -> None:
-        subprocess.run(["git", "-C", str(self.origin), *argv], check=True,
-                       capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(self.origin), *argv], check=True, capture_output=True
+        )
 
     def queue_candidate(self, name: str, old_config: str, new_config: str) -> None:
         """Prepare a candidate diff from `old_config` to `new_config`.
@@ -118,29 +122,35 @@ class ImproveLoopTest(unittest.TestCase):
         the config *after* any earlier keeps, not necessarily the base."""
         import difflib
 
-        diff = "".join(difflib.unified_diff(
-            old_config.splitlines(keepends=True),
-            new_config.splitlines(keepends=True),
-            fromfile=f"a/{CONFIG_REL}", tofile=f"b/{CONFIG_REL}",
-        ))
+        diff = "".join(
+            difflib.unified_diff(
+                old_config.splitlines(keepends=True),
+                new_config.splitlines(keepends=True),
+                fromfile=f"a/{CONFIG_REL}",
+                tofile=f"b/{CONFIG_REL}",
+            )
+        )
         (self.writer_queue / f"{name}.patch").write_text(diff)
 
     def run_loop(self, **env_overrides: str) -> subprocess.CompletedProcess:
         env = dict(os.environ)
-        env.update({
-            "TARGET_REPO": "owner/target",
-            "TARGET_REF": "main",
-            "TARGET_GIT_URL": str(self.origin),
-            "AUDIT_DIR": str(self.audit),
-            "WRITER_CMD": self.writer_cmd,
-            "IMPROVE_RUNNER": self.runner_cmd,
-            "IMPROVE_COVERAGE_MODE": "off",
-            "IMPROVE_BRANCH": "improve/test",
-            "IMPROVE_PUBLISH": "0",
-        })
+        env.update(
+            {
+                "TARGET_REPO": "owner/target",
+                "TARGET_REF": "main",
+                "TARGET_GIT_URL": str(self.origin),
+                "AUDIT_DIR": str(self.audit),
+                "WRITER_CMD": self.writer_cmd,
+                "IMPROVE_RUNNER": self.runner_cmd,
+                "IMPROVE_COVERAGE_MODE": "off",
+                "IMPROVE_BRANCH": "improve/test",
+                "IMPROVE_PUBLISH": "0",
+            }
+        )
         env.update(env_overrides)
-        return subprocess.run(["bash", str(LOOP)], env=env,
-                              capture_output=True, text=True, timeout=120)
+        return subprocess.run(
+            ["bash", str(LOOP)], env=env, capture_output=True, text=True, timeout=120
+        )
 
     def summary(self) -> dict:
         return json.loads((self.audit / "improve-summary.json").read_text())
@@ -148,7 +158,9 @@ class ImproveLoopTest(unittest.TestCase):
     def checkout_git(self, *argv: str) -> str:
         return subprocess.run(
             ["git", "-C", str(self.audit / "improve" / "target"), *argv],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout
 
     # -- the loop contract --------------------------------------------------
@@ -168,9 +180,11 @@ class ImproveLoopTest(unittest.TestCase):
         # exactly one keep committed on the improve branch, base untouched
         log = self.checkout_git("log", "--oneline", "main..improve/test")
         self.assertEqual(len(log.strip().splitlines()), 1)
-        changed = self.checkout_git(
-            "diff", "--name-only", "main..improve/test"
-        ).strip().splitlines()
+        changed = (
+            self.checkout_git("diff", "--name-only", "main..improve/test")
+            .strip()
+            .splitlines()
+        )
         self.assertEqual(changed, [CONFIG_REL])
 
         # every iteration fed the improve-own budget state

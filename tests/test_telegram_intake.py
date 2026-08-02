@@ -7,6 +7,7 @@ pinned here are the security-relevant ones: sender-allowlist gating (silent drop
 for unknown senders), the ref charset guard, /audit → issue, /status from the
 committed record, and offset-first acknowledgement.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -54,8 +55,13 @@ def _msg(text: str, sender: int = 42, chat: int = 99, mid: int = 1) -> dict:
 
 @contextlib.contextmanager
 def _env(**values: str):
-    keys = ["TELEGRAM_ALLOW_FROM", "GITHUB_REPOSITORY", "GITHUB_TOKEN",
-            "TELEGRAM_GITHUB_TOKEN", "TARGET_REPO"]
+    keys = [
+        "TELEGRAM_ALLOW_FROM",
+        "GITHUB_REPOSITORY",
+        "GITHUB_TOKEN",
+        "TELEGRAM_GITHUB_TOKEN",
+        "TARGET_REPO",
+    ]
     saved = {k: os.environ.get(k) for k in keys}
     for k in keys:
         os.environ.pop(k, None)
@@ -75,7 +81,9 @@ class AllowlistTest(unittest.TestCase):
     def test_unknown_sender_ignored_silently(self) -> None:
         client = FakeClient()
         with _env(TELEGRAM_ALLOW_FROM="42"):
-            out = ti.process_update(_msg("/status", sender=7), client, ti.allowed_sender_ids())
+            out = ti.process_update(
+                _msg("/status", sender=7), client, ti.allowed_sender_ids()
+            )
         self.assertIn("not authorized", out)
         self.assertEqual(client.sent, [])  # no reply to an unknown sender
 
@@ -114,10 +122,18 @@ class AuditCommandTest(unittest.TestCase):
             return "https://github.com/x/y/issues/1"
 
         client = FakeClient()
-        with _env(TELEGRAM_ALLOW_FROM="42", GITHUB_REPOSITORY="malkreide/mcp-continuous-auditor",
-                  GITHUB_TOKEN="tok", TARGET_REPO="malkreide/zurich-opendata-mcp"):
-            with unittest.mock.patch.object(ti, "create_issue", fake_create):
-                out = ti.process_update(_msg("/audit v0.3.3"), client, ti.allowed_sender_ids())
+        with (
+            _env(
+                TELEGRAM_ALLOW_FROM="42",
+                GITHUB_REPOSITORY="malkreide/mcp-continuous-auditor",
+                GITHUB_TOKEN="tok",
+                TARGET_REPO="malkreide/zurich-opendata-mcp",
+            ),
+            unittest.mock.patch.object(ti, "create_issue", fake_create),
+        ):
+            out = ti.process_update(
+                _msg("/audit v0.3.3"), client, ti.allowed_sender_ids()
+            )
         self.assertEqual(out, "/audit filed as issue")
         self.assertEqual(captured["repo"], "malkreide/mcp-continuous-auditor")
         self.assertEqual(captured["labels"], ["audit-request"])
@@ -128,9 +144,13 @@ class AuditCommandTest(unittest.TestCase):
 
     def test_audit_unsafe_ref_replies_not_raises(self) -> None:
         client = FakeClient()
-        with _env(TELEGRAM_ALLOW_FROM="42", GITHUB_REPOSITORY="o/r", GITHUB_TOKEN="t"):
-            with unittest.mock.patch.object(ti, "create_issue") as create:
-                out = ti.process_update(_msg("/audit a;rm -rf"), client, ti.allowed_sender_ids())
+        with (
+            _env(TELEGRAM_ALLOW_FROM="42", GITHUB_REPOSITORY="o/r", GITHUB_TOKEN="t"),
+            unittest.mock.patch.object(ti, "create_issue") as create,
+        ):
+            out = ti.process_update(
+                _msg("/audit a;rm -rf"), client, ti.allowed_sender_ids()
+            )
         create.assert_not_called()  # unsafe ref never reaches issue creation
         self.assertIn("rejected", out)
         self.assertIn("invalid git ref", client.sent[0]["text"])
@@ -162,7 +182,9 @@ class NonCommandTest(unittest.TestCase):
     def test_plain_text_gets_guidance(self) -> None:
         client = FakeClient()
         with _env(TELEGRAM_ALLOW_FROM="42"):
-            out = ti.process_update(_msg("hello there"), client, ti.allowed_sender_ids())
+            out = ti.process_update(
+                _msg("hello there"), client, ti.allowed_sender_ids()
+            )
         self.assertEqual(out, "guidance sent (non-command)")
         self.assertIn("only handle commands", client.sent[0]["text"])
 
@@ -172,21 +194,22 @@ class PollLoopTest(unittest.TestCase):
         # Two updates; ack must advance to the max update_id exactly once.
         updates = [_msg("/help", mid=10), _msg("/status", mid=11)]
         client = FakeClient(updates)
-        with _env(TELEGRAM_ALLOW_FROM="42"):
-            with unittest.mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "t"}):
-                with unittest.mock.patch.object(ti, "TelegramClient", lambda token: client):
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        rc = ti.main()
+        with (
+            _env(TELEGRAM_ALLOW_FROM="42"),
+            unittest.mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "t"}),
+            unittest.mock.patch.object(ti, "TelegramClient", lambda token: client),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            rc = ti.main()
         self.assertEqual(rc, 0)
         self.assertEqual(client.acked, [11])
         self.assertEqual(len(client.sent), 2)
 
     def test_no_token_is_noop(self) -> None:
-        with _env():
-            with unittest.mock.patch.dict(os.environ, {}, clear=False):
-                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
-                with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(ti.main(), 0)
+        with _env(), unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ti.main(), 0)
 
 
 if __name__ == "__main__":

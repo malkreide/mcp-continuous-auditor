@@ -7,6 +7,7 @@ monkeypatched. The invariants pinned here are the ones the audit script relies
 on: no-op without config, best-effort (main() always exits 0), token redaction,
 truncation, and the chat-id resolution order.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -31,7 +32,7 @@ class _FakeResponse:
     def read(self) -> bytes:
         return self._body
 
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -69,7 +70,11 @@ class ConfigTest(unittest.TestCase):
             self.assertIsNone(tn.telegram_config())
 
     def test_announce_to_preferred(self) -> None:
-        with _env(TELEGRAM_BOT_TOKEN="t", TELEGRAM_ANNOUNCE_TO="99", TELEGRAM_ALLOW_FROM="11,22"):
+        with _env(
+            TELEGRAM_BOT_TOKEN="t",
+            TELEGRAM_ANNOUNCE_TO="99",
+            TELEGRAM_ALLOW_FROM="11,22",
+        ):
             self.assertEqual(tn.telegram_config(), ("t", "99"))
 
     def test_falls_back_to_first_allow_from(self) -> None:
@@ -92,7 +97,9 @@ class FormatTest(unittest.TestCase):
         self.assertTrue(msg.endswith(tn.TRUNCATION_MARKER))
 
     def test_redaction(self) -> None:
-        self.assertEqual(tn.redact_token("url/bot SECRET /x", "SECRET"), "url/bot *** /x")
+        self.assertEqual(
+            tn.redact_token("url/bot SECRET /x", "SECRET"), "url/bot *** /x"
+        )
 
 
 class SendTest(unittest.TestCase):
@@ -116,9 +123,11 @@ class SendTest(unittest.TestCase):
             raise urllib.error.URLError("bottok is in this url")
 
         buf = io.StringIO()
-        with unittest.mock.patch.object(tn.urllib.request, "urlopen", boom):
-            with contextlib.redirect_stderr(buf):
-                self.assertFalse(tn.send_message("tok", "42", "hi"))
+        with (
+            unittest.mock.patch.object(tn.urllib.request, "urlopen", boom),
+            contextlib.redirect_stderr(buf),
+        ):
+            self.assertFalse(tn.send_message("tok", "42", "hi"))
         # the token must be redacted out of the warning
         self.assertNotIn("bottok", buf.getvalue())
 
@@ -126,17 +135,22 @@ class SendTest(unittest.TestCase):
         def not_ok(request, timeout=0):  # noqa: ANN001
             return _FakeResponse({"ok": False, "description": "bad"})
 
-        with unittest.mock.patch.object(tn.urllib.request, "urlopen", not_ok):
-            with contextlib.redirect_stderr(io.StringIO()):
-                self.assertFalse(tn.send_message("tok", "42", "hi"))
+        with (
+            unittest.mock.patch.object(tn.urllib.request, "urlopen", not_ok),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertFalse(tn.send_message("tok", "42", "hi"))
 
 
 class MainTest(unittest.TestCase):
     def _run(self, argv: list[str]) -> int:
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            with unittest.mock.patch.object(sys, "argv", ["telegram_notify.py", *argv]):
-                return tn.main()
+        with (
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+            unittest.mock.patch.object(sys, "argv", ["telegram_notify.py", *argv]),
+        ):
+            return tn.main()
 
     def test_no_config_exits_zero(self) -> None:
         with _env():
@@ -150,9 +164,11 @@ class MainTest(unittest.TestCase):
         def boom(request, timeout=0):  # noqa: ANN001
             raise OSError("network down")
 
-        with _env(TELEGRAM_BOT_TOKEN="t", TELEGRAM_ANNOUNCE_TO="1"):
-            with unittest.mock.patch.object(tn.urllib.request, "urlopen", boom):
-                self.assertEqual(self._run(["--title", "x"]), 0)
+        with (
+            _env(TELEGRAM_BOT_TOKEN="t", TELEGRAM_ANNOUNCE_TO="1"),
+            unittest.mock.patch.object(tn.urllib.request, "urlopen", boom),
+        ):
+            self.assertEqual(self._run(["--title", "x"]), 0)
 
     def test_report_file_becomes_body(self) -> None:
         sent: list = []
@@ -164,9 +180,11 @@ class MainTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             report = Path(d) / "nightly-report.md"
             report.write_text("AUDIT green\n", encoding="utf-8")
-            with _env(TELEGRAM_BOT_TOKEN="t", TELEGRAM_ANNOUNCE_TO="1"):
-                with unittest.mock.patch.object(tn.urllib.request, "urlopen", fake_urlopen):
-                    self.assertEqual(self._run(["--report", str(report)]), 0)
+            with (
+                _env(TELEGRAM_BOT_TOKEN="t", TELEGRAM_ANNOUNCE_TO="1"),
+                unittest.mock.patch.object(tn.urllib.request, "urlopen", fake_urlopen),
+            ):
+                self.assertEqual(self._run(["--report", str(report)]), 0)
         self.assertEqual(len(sent), 1)
         self.assertIn("AUDIT+green", sent[0])  # urlencoded body
 

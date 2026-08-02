@@ -134,8 +134,10 @@ of them — it stays in the Worker's logs. What the Broker classifies on is the
 integer exit code carried in the evidence's `gates` object. Keep the contract in
 the exit code, not in this report.
 """
+
 from __future__ import annotations
 
+import contextlib
 import http.client
 import json
 import os
@@ -201,9 +203,20 @@ _CLIENT_INFO = {"name": "mcp-continuous-auditor transport-boot-probe", "version"
 
 # Directories that are never part of a target's own source.
 _SKIP_DIRS = {
-    ".git", ".venv", "venv", ".tox", "node_modules", "__pycache__", "dist",
-    "build", ".mypy_cache", ".ruff_cache", ".pytest_cache", "site-packages",
-    ".audit", ".eggs",
+    ".git",
+    ".venv",
+    "venv",
+    ".tox",
+    "node_modules",
+    "__pycache__",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    "site-packages",
+    ".audit",
+    ".eggs",
 }
 _MAX_SCAN_FILES = 400
 _MAX_SCAN_BYTES = 512_000
@@ -212,6 +225,7 @@ _MAX_SCAN_BYTES = 512_000
 # --------------------------------------------------------------------------
 # transport derivation — read the target's config, do not guess
 # --------------------------------------------------------------------------
+
 
 def normalise_transport(raw: str) -> str | None:
     """Map the many spellings of a transport onto our three canonical names."""
@@ -226,7 +240,7 @@ def normalise_transport(raw: str) -> str | None:
 
 
 _SOURCE_MARKERS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"""transport\s*=\s*["']([A-Za-z_-]+)["']"""), ""),   # captured
+    (re.compile(r"""transport\s*=\s*["']([A-Za-z_-]+)["']"""), ""),  # captured
     # Matches `--transport http`, `--transport=http` and the JSON-array CMD form
     # a Dockerfile uses: ["serve", "--transport", "http"].
     (re.compile(r"""--transport["']?[=,\s]*["']?([A-Za-z_-]+)"""), ""),
@@ -240,15 +254,23 @@ _SOURCE_MARKERS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 _SCAN_GLOBS = (
-    "**/*.py", "**/Dockerfile*", "**/docker-compose*.yml", "**/docker-compose*.yaml",
-    "**/fly.toml", "**/Procfile", "**/*.env.example", "**/.env.example",
-    "**/pyproject.toml", "**/README*",
+    "**/*.py",
+    "**/Dockerfile*",
+    "**/docker-compose*.yml",
+    "**/docker-compose*.yaml",
+    "**/fly.toml",
+    "**/Procfile",
+    "**/*.env.example",
+    "**/.env.example",
+    "**/pyproject.toml",
+    "**/README*",
 )
 
 
 @dataclass
 class Derivation:
     """What the target's own configuration says about how it is served."""
+
     transports: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     floor_added: list[str] = field(default_factory=list)
@@ -321,7 +343,9 @@ def _boot_table(pyproject: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _console_script(root: Path, pyproject: dict[str, Any]) -> tuple[list[str] | None, str]:
+def _console_script(
+    root: Path, pyproject: dict[str, Any]
+) -> tuple[list[str] | None, str]:
     """The target's own launch argv, preferring an installed console script.
 
     A console script lives in the same venv as the interpreter running us (the
@@ -336,7 +360,9 @@ def _console_script(root: Path, pyproject: dict[str, Any]) -> tuple[list[str] | 
                 return [str(candidate)], f"[project.scripts] {name}"
 
     # `python -m <pkg>` when the package ships a __main__.
-    for main_py in sorted(root.glob("*/__main__.py")) + sorted(root.glob("src/*/__main__.py")):
+    for main_py in sorted(root.glob("*/__main__.py")) + sorted(
+        root.glob("src/*/__main__.py")
+    ):
         if any(part in _SKIP_DIRS for part in main_py.parts):
             continue
         pkg = main_py.parent.name
@@ -419,7 +445,7 @@ def derive(root: Path, env: dict[str, str] | None = None) -> Derivation:
 
 # Imported, then run. Only reached when the target ships no usable entrypoint —
 # see the module docstring on why this mode is weaker evidence for case 2.
-_GENERIC_LAUNCHER = r'''
+_GENERIC_LAUNCHER = r"""
 import importlib, os, sys
 sys.path.insert(0, os.getcwd())
 ref = os.environ.get("MCP_SERVER_IMPORT") or "server:mcp"
@@ -439,13 +465,13 @@ else:
         if "transport" not in str(exc).lower():
             raise
         srv.run(transport="streamable-http" if transport == "http" else "http", **kwargs)
-'''
+"""
 
 
 @dataclass
 class LaunchPlan:
     transport: str
-    mode: str                       # declared | entrypoint | generic
+    mode: str  # declared | entrypoint | generic
     argv: list[str]
     env: dict[str, str] = field(default_factory=dict)
     note: str = ""
@@ -455,18 +481,21 @@ def build_launch_plan(transport: str, derivation: Derivation) -> LaunchPlan:
     """Pick the most faithful way to start the target for one transport."""
     if transport in derivation.declared:
         return LaunchPlan(
-            transport=transport, mode="declared",
+            transport=transport,
+            mode="declared",
             argv=list(derivation.declared[transport]),
             note="argv declared by the target ([tool.mcp_auditor.boot.commands])",
         )
     if derivation.entrypoint:
         return LaunchPlan(
-            transport=transport, mode="entrypoint",
+            transport=transport,
+            mode="entrypoint",
             argv=list(derivation.entrypoint),
             note=f"target entrypoint ({derivation.entrypoint_source})",
         )
     return LaunchPlan(
-        transport=transport, mode="generic",
+        transport=transport,
+        mode="generic",
         argv=[sys.executable, "-c", _GENERIC_LAUNCHER],
         note="imported server object — case-2 coverage is partial in this mode",
     )
@@ -479,7 +508,9 @@ _HOST_ENV = ("MCP_HOST", "FASTMCP_HOST", "FASTMCP_SERVER_HOST", "HOST")
 _PORT_ENV = ("MCP_PORT", "FASTMCP_PORT", "FASTMCP_SERVER_PORT", "PORT")
 
 
-def launch_env(plan: LaunchPlan, host: str, port: int, base: dict[str, str] | None = None) -> dict[str, str]:
+def launch_env(
+    plan: LaunchPlan, host: str, port: int, base: dict[str, str] | None = None
+) -> dict[str, str]:
     env = dict(os.environ if base is None else base)
     env.update(plan.env)
     wire = "http" if plan.transport == STREAMABLE_HTTP else plan.transport
@@ -540,14 +571,17 @@ def argv_variants(plan: LaunchPlan, host: str, port: int) -> list[list[str]]:
         return [base]
     out = [base]
     for flags in _TRANSPORT_FLAGS.get(plan.transport, ()):
-        out.append(base + [f.replace("{port}", str(port)).replace("{host}", host)
-                           for f in flags])
+        out.append(
+            base
+            + [f.replace("{port}", str(port)).replace("{host}", host) for f in flags]
+        )
     return out
 
 
 # --------------------------------------------------------------------------
 # results
 # --------------------------------------------------------------------------
+
 
 @dataclass
 class ProbeResult:
@@ -569,14 +603,20 @@ class ProbeResult:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "transport": self.transport, "mode": self.mode, "ok": self.ok,
+            "transport": self.transport,
+            "mode": self.mode,
+            "ok": self.ok,
             "status": self.status,
-            "detail": self.detail, "tools": self.tools,
-            "elapsed_s": round(self.elapsed_s, 3), "evidence": self.evidence,
+            "detail": self.detail,
+            "tools": self.tools,
+            "elapsed_s": round(self.elapsed_s, 3),
+            "evidence": self.evidence,
         }
 
 
-def _rpc(method: str, ident: int, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rpc(
+    method: str, ident: int, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
     msg: dict[str, Any] = {"jsonrpc": "2.0", "id": ident, "method": method}
     msg["params"] = params if params is not None else {}
     return msg
@@ -614,10 +654,9 @@ def _terminate(proc: subprocess.Popen) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
             proc.kill()
-        try:
+        # pragma: no cover - unkillable child
+        with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:  # pragma: no cover - unkillable child
-            pass
 
 
 def _close_streams(proc: subprocess.Popen) -> None:
@@ -626,13 +665,11 @@ def _close_streams(proc: subprocess.Popen) -> None:
     attempt."""
     for stream in (proc.stdin, proc.stdout, proc.stderr):
         if stream is not None:
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 stream.close()
-            except (OSError, ValueError):
-                pass
 
 
-def _drain(queue: "Queue[str | None]", sink: list[str], wait: float = 1.0) -> str:
+def _drain(queue: Queue[str | None], sink: list[str], wait: float = 1.0) -> str:
     """Everything the reader thread has produced, waiting briefly for its EOF
     sentinel. Without the wait, a process that just crashed can lose its last words
     to a race — and those last words ARE the finding (the traceback naming the
@@ -662,7 +699,8 @@ def _tail(text: str, limit: int = 400) -> str:
 # stdio
 # --------------------------------------------------------------------------
 
-def _reader_thread(stream: Any, queue: "Queue[str | None]") -> threading.Thread:
+
+def _reader_thread(stream: Any, queue: Queue[str | None]) -> threading.Thread:
     def run() -> None:
         try:
             for line in iter(stream.readline, ""):
@@ -671,6 +709,7 @@ def _reader_thread(stream: Any, queue: "Queue[str | None]") -> threading.Thread:
             pass
         finally:
             queue.put(None)
+
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
     return thread
@@ -694,18 +733,28 @@ def probe_stdio(
     run_env = launch_env(plan, "127.0.0.1", 0, env)
     try:
         proc = subprocess.Popen(
-            plan.argv, cwd=str(cwd), env=run_env,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, start_new_session=True,
+            plan.argv,
+            cwd=str(cwd),
+            env=run_env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
         )
     except (OSError, ValueError) as exc:
-        return ProbeResult(plan.transport, plan.mode, False,
-                           f"could not spawn the target: {type(exc).__name__}: {exc}")
+        return ProbeResult(
+            plan.transport,
+            plan.mode,
+            False,
+            f"could not spawn the target: {type(exc).__name__}: {exc}",
+        )
 
-    out_q: "Queue[str | None]" = Queue()
+    out_q: Queue[str | None] = Queue()
     err_lines: list[str] = []
     _reader_thread(proc.stdout, out_q)
-    err_q: "Queue[str | None]" = Queue()
+    err_q: Queue[str | None] = Queue()
     _reader_thread(proc.stderr, err_q)
 
     deadline = started + timeout
@@ -733,7 +782,10 @@ def probe_stdio(
                 line = out_q.get(timeout=min(remaining, 0.5))
             except Empty:
                 if proc.poll() is not None:
-                    return None, f"the process exited (rc {proc.returncode}) before responding"
+                    return (
+                        None,
+                        f"the process exited (rc {proc.returncode}) before responding",
+                    )
                 continue
             if line is None:
                 return None, f"stdout closed (process rc {proc.poll()})"
@@ -751,7 +803,9 @@ def probe_stdio(
         if not send(_rpc("initialize", 1, _initialize_params())):
             _terminate(proc)
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"the target closed stdin before initialize could be written; stderr: {_tail(drain_stderr())}",
                 elapsed_s=time.monotonic() - started,
             )
@@ -765,14 +819,18 @@ def probe_stdio(
         if reply is None:
             _terminate(proc)
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"initialize failed: {err}; stderr: {_tail(drain_stderr())}",
                 elapsed_s=time.monotonic() - started,
             )
         if "error" in reply:
             _terminate(proc)
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"initialize returned a JSON-RPC error: {_tail(json.dumps(reply['error']), 200)}",
                 elapsed_s=time.monotonic() - started,
             )
@@ -781,7 +839,9 @@ def probe_stdio(
         if not send(_rpc("tools/list", 2)):
             _terminate(proc)
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"the target went away before tools/list; stderr: {_tail(drain_stderr())}",
                 elapsed_s=time.monotonic() - started,
             )
@@ -790,23 +850,30 @@ def probe_stdio(
         if listing is None:
             _terminate(proc)
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"tools/list failed: {err}; stderr: {_tail(drain_stderr())}",
                 elapsed_s=time.monotonic() - started,
             )
         if "error" in listing:
             _terminate(proc)
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"tools/list returned a JSON-RPC error: {_tail(json.dumps(listing['error']), 200)}",
                 elapsed_s=time.monotonic() - started,
             )
 
         count = _tool_count(listing.get("result"))
         return ProbeResult(
-            plan.transport, plan.mode, True,
+            plan.transport,
+            plan.mode,
+            True,
             f"initialize + tools/list OK ({count if count is not None else '?'} tool(s))",
-            tools=count, elapsed_s=time.monotonic() - started,
+            tools=count,
+            elapsed_s=time.monotonic() - started,
         )
     finally:
         _terminate(proc)
@@ -817,6 +884,7 @@ def probe_stdio(
 # HTTP (streamable-http and sse)
 # --------------------------------------------------------------------------
 
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -826,17 +894,23 @@ def free_port() -> int:
 @dataclass
 class Launch:
     """The outcome of trying to get a network transport listening."""
+
     proc: subprocess.Popen | None = None
     logs: str = ""
     argv: list[str] = field(default_factory=list)
-    attempt: int = 0            # 0 = the target's own invocation, >0 = a flag guess
-    reason: str = ""            # "" once something is listening
-    clean_exit: bool = False    # the TARGET'S OWN invocation exited rc 0 unlistening
+    attempt: int = 0  # 0 = the target's own invocation, >0 = a flag guess
+    reason: str = ""  # "" once something is listening
+    clean_exit: bool = False  # the TARGET'S OWN invocation exited rc 0 unlistening
     drain: Any = None
 
 
-def start_listening(variants: list[list[str]], run_env: dict[str, str], cwd: Path,
-                    port: int, deadline: float) -> Launch:
+def start_listening(
+    variants: list[list[str]],
+    run_env: dict[str, str],
+    cwd: Path,
+    port: int,
+    deadline: float,
+) -> Launch:
     """Try each invocation until one listens on `port`.
 
     Only attempt 0 — the target's own argv plus the transport env vars — decides
@@ -850,14 +924,21 @@ def start_listening(variants: list[list[str]], run_env: dict[str, str], cwd: Pat
     for i, argv in enumerate(variants):
         try:
             proc = subprocess.Popen(
-                argv, cwd=str(cwd), env=run_env,
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
+                argv,
+                cwd=str(cwd),
+                env=run_env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
         except (OSError, ValueError) as exc:
             if i == 0:
                 out.reason = f"could not spawn the target: {type(exc).__name__}: {exc}"
             continue
-        q: "Queue[str | None]" = Queue()
+        q: Queue[str | None] = Queue()
         _reader_thread(proc.stdout, q)
         cap: list[str] = []
         # A guessed variant gets a short leash; the target's own invocation gets
@@ -883,7 +964,9 @@ def start_listening(variants: list[list[str]], run_env: dict[str, str], cwd: Pat
     return out
 
 
-def wait_for_port(port: int, deadline: float, proc: subprocess.Popen | None = None) -> str:
+def wait_for_port(
+    port: int, deadline: float, proc: subprocess.Popen | None = None
+) -> str:
     """Block until the port accepts, the process dies, or the deadline passes.
     Returns "" on success or a reason string."""
     while time.monotonic() < deadline:
@@ -899,7 +982,9 @@ def wait_for_port(port: int, deadline: float, proc: subprocess.Popen | None = No
 
 def _parse_sse_payload(body: str) -> Any:
     """Pull the JSON out of an SSE frame; streamable-http may answer either way."""
-    chunks = [line[5:].strip() for line in body.splitlines() if line.startswith("data:")]
+    chunks = [
+        line[5:].strip() for line in body.splitlines() if line.startswith("data:")
+    ]
     for chunk in reversed(chunks):
         try:
             return json.loads(chunk)
@@ -947,9 +1032,15 @@ def _redirect_target(location: str, current: str) -> str:
     return f"{base}/{value}"
 
 
-def http_post(port: int, path: str, host_header: str, payload: dict[str, Any],
-              timeout: float, session_id: str = "",
-              extra_headers: dict[str, str] | None = None) -> HttpReply:
+def http_post(
+    port: int,
+    path: str,
+    host_header: str,
+    payload: dict[str, Any],
+    timeout: float,
+    session_id: str = "",
+    extra_headers: dict[str, str] | None = None,
+) -> HttpReply:
     """One JSON-RPC POST. The connection always goes to 127.0.0.1 — only the Host
     header varies, which is exactly the knob case 2 turns on.
 
@@ -991,8 +1082,13 @@ def http_post(port: int, path: str, host_header: str, payload: dict[str, Any],
     return HttpReply(resp.status, got, raw, _decode_body(got, raw), current)
 
 
-def http_get_sse(port: int, path: str, host_header: str, timeout: float,
-                 extra_headers: dict[str, str] | None = None) -> HttpReply:
+def http_get_sse(
+    port: int,
+    path: str,
+    host_header: str,
+    timeout: float,
+    extra_headers: dict[str, str] | None = None,
+) -> HttpReply:
     """The legacy SSE handshake's opening GET — we only need the first frames, so
     the read is bounded rather than following the stream to its end. Redirects are
     followed for the same reason as in http_post.
@@ -1032,15 +1128,22 @@ def http_get_sse(port: int, path: str, host_header: str, timeout: float,
     return HttpReply(resp.status, got, "", None, current)
 
 
-def _resolve_path(port: int, candidates: list[str], host_header: str,
-                  timeout: float) -> tuple[str, HttpReply | None]:
+def _resolve_path(
+    port: int, candidates: list[str], host_header: str, timeout: float
+) -> tuple[str, HttpReply | None]:
     """Find the endpoint path by trying the candidates with a real initialize. A
     404/405 means wrong path; anything else (including 421) is the server's real
     answer and ends the search."""
     last: HttpReply | None = None
     for path in candidates:
         try:
-            reply = http_post(port, path, host_header, _rpc("initialize", 1, _initialize_params()), timeout)
+            reply = http_post(
+                port,
+                path,
+                host_header,
+                _rpc("initialize", 1, _initialize_params()),
+                timeout,
+            )
         except (OSError, http.client.HTTPException):
             continue
         last = reply
@@ -1051,8 +1154,9 @@ def _resolve_path(port: int, candidates: list[str], host_header: str,
     return (candidates[0] if candidates else "/"), last
 
 
-def _unlistening_result(plan: LaunchPlan, launch: Launch, bind_host: str,
-                        port: int, elapsed: float) -> ProbeResult:
+def _unlistening_result(
+    plan: LaunchPlan, launch: Launch, bind_host: str, port: int, elapsed: float
+) -> ProbeResult:
     """Nothing listened. Decide WHICH of the two statements that supports.
 
     A clean exit (rc 0) from the target's own invocation means it ran something
@@ -1065,7 +1169,9 @@ def _unlistening_result(plan: LaunchPlan, launch: Launch, bind_host: str,
     ev = {"bind_host": bind_host, "port": port, "reason": launch.reason}
     if launch.clean_exit:
         return ProbeResult(
-            plan.transport, plan.mode, False,
+            plan.transport,
+            plan.mode,
+            False,
             "the entrypoint exited cleanly (rc 0) without ever listening, and none "
             "of the usual transport flags got it to serve either. It almost "
             f"certainly does not select {plan.transport} the way this gate asks — "
@@ -1074,12 +1180,19 @@ def _unlistening_result(plan: LaunchPlan, launch: Launch, bind_host: str,
             "argv in the target's pyproject.toml under "
             f'[tool.mcp_auditor.boot.commands] "{plan.transport}" = [...] and the '
             "gate will start it the way the target expects",
-            elapsed_s=elapsed, status=NOT_SELECTED,
-            evidence={**ev, "case": "transport-not-selected"})
+            elapsed_s=elapsed,
+            status=NOT_SELECTED,
+            evidence={**ev, "case": "transport-not-selected"},
+        )
     return ProbeResult(
-        plan.transport, plan.mode, False,
+        plan.transport,
+        plan.mode,
+        False,
         f"the server never came up: {launch.reason}",
-        elapsed_s=elapsed, status=FAIL, evidence=ev)
+        elapsed_s=elapsed,
+        status=FAIL,
+        evidence=ev,
+    )
 
 
 def probe_streamable_http(
@@ -1105,12 +1218,14 @@ def probe_streamable_http(
     run_env = launch_env(plan, bind_host, port, env)
     deadline = started + timeout
 
-    launch = start_listening(argv_variants(plan, bind_host, port), run_env, cwd,
-                             port, deadline)
+    launch = start_listening(
+        argv_variants(plan, bind_host, port), run_env, cwd, port, deadline
+    )
     proc = launch.proc
     if proc is None:
-        return _unlistening_result(plan, launch, bind_host, port,
-                                   time.monotonic() - started)
+        return _unlistening_result(
+            plan, launch, bind_host, port, time.monotonic() - started
+        )
 
     def logs() -> str:
         return launch.drain()
@@ -1121,13 +1236,17 @@ def probe_streamable_http(
         path, reply = _resolve_path(port, paths, loop_host, min(remaining, 10.0))
         if reply is None:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"the port was open but no endpoint answered on {', '.join(paths)}; output: {_tail(logs())}",
                 elapsed_s=time.monotonic() - started,
             )
         if reply.status != 200:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"initialize on {path} returned HTTP {reply.status} even for a loopback Host — "
                 f"the transport is broken, not merely host-restricted; body: {_tail(reply.body, 200)}",
                 elapsed_s=time.monotonic() - started,
@@ -1135,7 +1254,9 @@ def probe_streamable_http(
             )
         if not isinstance(reply.payload, dict) or "result" not in reply.payload:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"initialize on {path} did not return a JSON-RPC result; body: {_tail(reply.body, 200)}",
                 elapsed_s=time.monotonic() - started,
                 evidence={"path": path},
@@ -1146,52 +1267,91 @@ def probe_streamable_http(
         # --- CASE 2: the same request, only the Host header differs -------------
         remaining = max(deadline - time.monotonic(), 1.0)
         try:
-            hostile = http_post(port, path, probe_host,
-                                _rpc("initialize", 3, _initialize_params()), min(remaining, 10.0))
+            hostile = http_post(
+                port,
+                path,
+                probe_host,
+                _rpc("initialize", 3, _initialize_params()),
+                min(remaining, 10.0),
+            )
         except (OSError, http.client.HTTPException) as exc:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"the non-loopback Host probe could not complete: {type(exc).__name__}: {exc}",
                 elapsed_s=time.monotonic() - started,
                 evidence={"path": path, "probe_host": probe_host},
             )
         if hostile.status == 421:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"HTTP 421 for Host '{probe_host}' while the loopback Host passed — the inbound "
                 "host allow-list is derived from a 127.0.0.1 default, so a 0.0.0.0 deployment "
                 "rejects every request made under its real hostname. Pass the configured host "
                 "through to the app builder.",
                 elapsed_s=time.monotonic() - started,
-                evidence={"path": path, "probe_host": probe_host, "status": 421,
-                          "loopback_status": 200, "case": "host-allowlist-421"},
+                evidence={
+                    "path": path,
+                    "probe_host": probe_host,
+                    "status": 421,
+                    "loopback_status": 200,
+                    "case": "host-allowlist-421",
+                },
             )
         if hostile.status != 200:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"initialize under Host '{probe_host}' returned HTTP {hostile.status} "
                 f"(loopback returned 200); body: {_tail(hostile.body, 200)}",
                 elapsed_s=time.monotonic() - started,
-                evidence={"path": path, "probe_host": probe_host, "status": hostile.status},
+                evidence={
+                    "path": path,
+                    "probe_host": probe_host,
+                    "status": hostile.status,
+                },
             )
 
         # --- tools/list on the working session ---------------------------------
         remaining = max(deadline - time.monotonic(), 1.0)
         try:
-            http_post(port, path, loop_host,
-                      {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
-                      min(remaining, 10.0), session_id)
-            listing = http_post(port, path, loop_host, _rpc("tools/list", 2),
-                                min(remaining, 10.0), session_id)
+            http_post(
+                port,
+                path,
+                loop_host,
+                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                min(remaining, 10.0),
+                session_id,
+            )
+            listing = http_post(
+                port,
+                path,
+                loop_host,
+                _rpc("tools/list", 2),
+                min(remaining, 10.0),
+                session_id,
+            )
         except (OSError, http.client.HTTPException) as exc:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"tools/list could not complete: {type(exc).__name__}: {exc}",
                 elapsed_s=time.monotonic() - started,
             )
-        if listing.status != 200 or not isinstance(listing.payload, dict) or "result" not in listing.payload:
+        if (
+            listing.status != 200
+            or not isinstance(listing.payload, dict)
+            or "result" not in listing.payload
+        ):
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"tools/list on {path} returned HTTP {listing.status}; body: {_tail(listing.body, 200)}",
                 elapsed_s=time.monotonic() - started,
                 evidence={"path": path, "status": listing.status},
@@ -1199,10 +1359,13 @@ def probe_streamable_http(
 
         count = _tool_count(listing.payload.get("result"))
         return ProbeResult(
-            plan.transport, plan.mode, True,
+            plan.transport,
+            plan.mode,
+            True,
             f"bound {bind_host}:{port}{path} — initialize + tools/list OK under both a loopback "
             f"and a non-loopback Host ({count if count is not None else '?'} tool(s))",
-            tools=count, elapsed_s=time.monotonic() - started,
+            tools=count,
+            elapsed_s=time.monotonic() - started,
             evidence={"path": path, "probe_host": probe_host, "bind_host": bind_host},
         )
     finally:
@@ -1228,12 +1391,14 @@ def probe_sse(
     run_env = launch_env(plan, bind_host, port, env)
     deadline = started + timeout
 
-    launch = start_listening(argv_variants(plan, bind_host, port), run_env, cwd,
-                             port, deadline)
+    launch = start_listening(
+        argv_variants(plan, bind_host, port), run_env, cwd, port, deadline
+    )
     proc = launch.proc
     if proc is None:
-        return _unlistening_result(plan, launch, bind_host, port,
-                                   time.monotonic() - started)
+        return _unlistening_result(
+            plan, launch, bind_host, port, time.monotonic() - started
+        )
 
     def logs() -> str:
         return launch.drain()
@@ -1255,13 +1420,17 @@ def probe_sse(
 
         if stream is None:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"no SSE endpoint answered on {', '.join(paths)}; output: {_tail(logs())}",
                 elapsed_s=time.monotonic() - started,
             )
         if stream.status != 200:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"GET {used} returned HTTP {stream.status} for a loopback Host; body: {_tail(stream.body, 200)}",
                 elapsed_s=time.monotonic() - started,
                 evidence={"path": used, "loopback_status": stream.status},
@@ -1276,28 +1445,41 @@ def probe_sse(
                     break
         if not endpoint:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"the SSE stream on {used} never announced a message endpoint; body: {_tail(stream.body, 200)}",
                 elapsed_s=time.monotonic() - started,
                 evidence={"path": used},
             )
         if endpoint.startswith("http"):
-            endpoint = "/" + endpoint.split("/", 3)[-1] if endpoint.count("/") >= 3 else "/"
+            endpoint = (
+                "/" + endpoint.split("/", 3)[-1] if endpoint.count("/") >= 3 else "/"
+            )
 
         remaining = max(deadline - time.monotonic(), 1.0)
         try:
-            posted = http_post(port, endpoint, loop_host,
-                               _rpc("initialize", 1, _initialize_params()), min(remaining, 10.0))
+            posted = http_post(
+                port,
+                endpoint,
+                loop_host,
+                _rpc("initialize", 1, _initialize_params()),
+                min(remaining, 10.0),
+            )
         except (OSError, http.client.HTTPException) as exc:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"posting initialize to the SSE message endpoint failed: {type(exc).__name__}: {exc}",
                 elapsed_s=time.monotonic() - started,
             )
         # SSE delivers the reply on the stream, so 200/202 both mean "accepted".
         if posted.status not in (200, 202):
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"initialize on the SSE message endpoint returned HTTP {posted.status}; "
                 f"body: {_tail(posted.body, 200)}",
                 elapsed_s=time.monotonic() - started,
@@ -1309,23 +1491,33 @@ def probe_sse(
             hostile = http_get_sse(port, used, probe_host, min(remaining, 10.0))
         except (OSError, http.client.HTTPException) as exc:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"the non-loopback Host probe could not complete: {type(exc).__name__}: {exc}",
                 elapsed_s=time.monotonic() - started,
             )
         if hostile.status == 421:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"HTTP 421 for Host '{probe_host}' while the loopback Host passed — the inbound "
                 "host allow-list is derived from a 127.0.0.1 default, so a 0.0.0.0 deployment "
                 "rejects every request made under its real hostname.",
                 elapsed_s=time.monotonic() - started,
-                evidence={"path": used, "probe_host": probe_host, "status": 421,
-                          "case": "host-allowlist-421"},
+                evidence={
+                    "path": used,
+                    "probe_host": probe_host,
+                    "status": 421,
+                    "case": "host-allowlist-421",
+                },
             )
         if hostile.status != 200:
             return ProbeResult(
-                plan.transport, plan.mode, False,
+                plan.transport,
+                plan.mode,
+                False,
                 f"GET {used} under Host '{probe_host}' returned HTTP {hostile.status} "
                 "(loopback returned 200)",
                 elapsed_s=time.monotonic() - started,
@@ -1333,7 +1525,9 @@ def probe_sse(
             )
 
         return ProbeResult(
-            plan.transport, plan.mode, True,
+            plan.transport,
+            plan.mode,
+            True,
             f"bound {bind_host}:{port}{used} — SSE handshake + initialize OK under both a "
             "loopback and a non-loopback Host",
             elapsed_s=time.monotonic() - started,
@@ -1348,9 +1542,16 @@ def probe_sse(
 # entrypoint
 # --------------------------------------------------------------------------
 
-def probe_transport(plan: LaunchPlan, timeout: float, cwd: Path,
-                    bind_host: str, probe_host: str,
-                    http_paths: list[str], sse_paths: list[str]) -> ProbeResult:
+
+def probe_transport(
+    plan: LaunchPlan,
+    timeout: float,
+    cwd: Path,
+    bind_host: str,
+    probe_host: str,
+    http_paths: list[str],
+    sse_paths: list[str],
+) -> ProbeResult:
     if plan.transport == STDIO:
         return probe_stdio(plan, timeout, cwd)
     if plan.transport == SSE:
@@ -1360,14 +1561,20 @@ def probe_transport(plan: LaunchPlan, timeout: float, cwd: Path,
 
 def render(results: list[ProbeResult], derivation: Derivation) -> str:
     lines = ["# Transport boot gate", ""]
-    lines.append(f"Probed {len(results)} transport(s): "
-                 + ", ".join(r.transport for r in results))
+    lines.append(
+        f"Probed {len(results)} transport(s): "
+        + ", ".join(r.transport for r in results)
+    )
     if derivation.floor_added:
-        lines.append(f"Added by the floor (always probed): {', '.join(derivation.floor_added)}")
+        lines.append(
+            f"Added by the floor (always probed): {', '.join(derivation.floor_added)}"
+        )
     lines.append("")
     icons = {OK: "✅", FAIL: "❌", NOT_SELECTED: "🟡"}
     for r in results:
-        lines.append(f"{icons.get(r.status, '?')} {r.transport} [{r.mode}] — {r.detail}")
+        lines.append(
+            f"{icons.get(r.status, '?')} {r.transport} [{r.mode}] — {r.detail}"
+        )
 
     unselected = [r for r in results if r.status == NOT_SELECTED]
     if unselected:
@@ -1387,8 +1594,9 @@ def render(results: list[ProbeResult], derivation: Derivation) -> str:
             "[tool.mcp_auditor.boot.commands]",
         ]
         for r in unselected:
-            lines.append(f'"{r.transport}" = ["<entrypoint>", "--<flag>", '
-                         f'"--port", "{{port}}"]')
+            lines.append(
+                f'"{r.transport}" = ["<entrypoint>", "--<flag>", "--port", "{{port}}"]'
+            )
         lines.append("```")
     weak = [r for r in results if r.ok and r.mode == "generic" and r.transport != STDIO]
     if weak:
@@ -1410,34 +1618,52 @@ def main(argv: list[str] | None = None) -> int:
         timeout = float(env.get("BOOT_TIMEOUT") or DEFAULT_TIMEOUT)
         bind_host = env.get("BOOT_BIND_HOST") or DEFAULT_BIND_HOST
         probe_host = env.get("BOOT_HTTP_HOST") or DEFAULT_HTTP_HOST
-        http_paths = [p for p in (env.get("BOOT_HTTP_PATHS") or "/mcp/,/mcp,/").split(",") if p]
-        sse_paths = [p for p in (env.get("BOOT_SSE_PATHS") or "/sse/,/sse").split(",") if p]
+        http_paths = [
+            p for p in (env.get("BOOT_HTTP_PATHS") or "/mcp/,/mcp,/").split(",") if p
+        ]
+        sse_paths = [
+            p for p in (env.get("BOOT_SSE_PATHS") or "/sse/,/sse").split(",") if p
+        ]
         # Captured before `derive` reads the first file: the derivation, the
         # launch plan and every boot below are claims about this commit.
         prov = probe_provenance.capture(root)
         derivation = derive(root)
     except Exception as exc:  # noqa: BLE001 - the harness itself failed
-        print(f"transport-boot: harness could not run: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"transport-boot: harness could not run: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         return EXIT_CANNOT_RUN
 
     if not derivation.transports:
         # Fail closed, exactly like the schema gate: a target we cannot work out how
         # to boot is a FINDING, not a pass and not an infrastructure failure.
-        print("transport-boot: no transport could be derived from the target — treating as a "
-              "finding (set BOOT_GATE=off if this target genuinely cannot be booted here)",
-              file=sys.stderr)
+        print(
+            "transport-boot: no transport could be derived from the target — treating as a "
+            "finding (set BOOT_GATE=off if this target genuinely cannot be booted here)",
+            file=sys.stderr,
+        )
         return EXIT_FINDINGS
 
     results: list[ProbeResult] = []
     for transport in derivation.transports:
         plan = build_launch_plan(transport, derivation)
-        print(f"==> boot {transport} [{plan.mode}]: {' '.join(plan.argv[:2])}", file=sys.stderr)
+        print(
+            f"==> boot {transport} [{plan.mode}]: {' '.join(plan.argv[:2])}",
+            file=sys.stderr,
+        )
         try:
-            results.append(probe_transport(plan, timeout, root, bind_host, probe_host,
-                                           http_paths, sse_paths))
+            results.append(
+                probe_transport(
+                    plan, timeout, root, bind_host, probe_host, http_paths, sse_paths
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - one probe blowing up is a harness bug
-            print(f"transport-boot: probe for {transport} raised: "
-                  f"{type(exc).__name__}: {exc}", file=sys.stderr)
+            print(
+                f"transport-boot: probe for {transport} raised: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
             return EXIT_CANNOT_RUN
 
     report = render(results, derivation)
@@ -1466,16 +1692,26 @@ def main(argv: list[str] | None = None) -> int:
     report_path = env.get("BOOT_REPORT")
     if report_path:
         try:
-            Path(report_path).write_text(json.dumps({
-                "schema": 2,  # +provenance
-                "outcome": outcome,
-                "exit_code": exit_code,
-                "provenance": prov.as_dict(),
-                "derivation": derivation.as_dict(),
-                "transports": [r.as_dict() for r in results],
-            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            Path(report_path).write_text(
+                json.dumps(
+                    {
+                        "schema": 2,  # +provenance
+                        "outcome": outcome,
+                        "exit_code": exit_code,
+                        "provenance": prov.as_dict(),
+                        "derivation": derivation.as_dict(),
+                        "transports": [r.as_dict() for r in results],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         except OSError as exc:
-            print(f"transport-boot: could not write {report_path}: {exc}", file=sys.stderr)
+            print(
+                f"transport-boot: could not write {report_path}: {exc}", file=sys.stderr
+            )
 
     return exit_code
 

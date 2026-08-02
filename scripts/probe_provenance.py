@@ -86,7 +86,7 @@ import hashlib
 import json
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -112,7 +112,9 @@ def _git(root: Path, *args: str) -> str | None:
     try:
         res = subprocess.run(
             ["git", "-C", str(root), *args],
-            capture_output=True, text=True, timeout=_TIMEOUT,
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -122,7 +124,7 @@ def _git(root: Path, *args: str) -> str | None:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # Paths a probe creates by doing its job. A boot probe that starts a server in
@@ -132,8 +134,18 @@ def _now() -> str:
 # to get the whole check switched off. The same list the boot probe and
 # `portfolio_scan` already skip.
 _NOISE = (
-    "__pycache__/", ".venv/", "venv/", ".tox/", ".mypy_cache/", ".ruff_cache/",
-    ".pytest_cache/", ".eggs/", ".audit/", "node_modules/", "dist/", "build/",
+    "__pycache__/",
+    ".venv/",
+    "venv/",
+    ".tox/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    ".pytest_cache/",
+    ".eggs/",
+    ".audit/",
+    "node_modules/",
+    "dist/",
+    "build/",
     ".egg-info/",
 )
 
@@ -168,7 +180,9 @@ def _worktree_digest(root: Path) -> str | None:
     entries = _porcelain(root)
     if entries is None:
         return None
-    return hashlib.sha256("\n".join(entries).encode("utf-8", "replace")).hexdigest()[:16]
+    return hashlib.sha256("\n".join(entries).encode("utf-8", "replace")).hexdigest()[
+        :16
+    ]
 
 
 @dataclass
@@ -235,15 +249,18 @@ class Provenance:
             # The checkout was readable at the start and is not now — a probe
             # cannot conclude anything about a tree that disappeared under it.
             self.moves.append(
-                f"HEAD was {self.short} at the start and could not be read at the end")
+                f"HEAD was {self.short} at the start and could not be read at the end"
+            )
             return self
         if self.head_after != self.head:
             self.moves.append(
-                f"HEAD moved {self.short} → {self.head_after[:12]} during the run")
+                f"HEAD moved {self.short} → {self.head_after[:12]} during the run"
+            )
         if self.digest_after != self.digest:
             self.moves.append(
                 "the working tree changed during the run "
-                f"(uncommitted-state digest {self.digest} → {self.digest_after})")
+                f"(uncommitted-state digest {self.digest} → {self.digest_after})"
+            )
         return self
 
     # ---- output ----------------------------------------------------------
@@ -279,12 +296,16 @@ class Provenance:
         if self.status == MOVED_DURING_RUN:
             line = f"provenance: MOVED_DURING_RUN {where} — {'; '.join(self.moves)}"
             if not self.decisive:
-                line += (" — this probe's verdict is read from the index, not from "
-                         "the tree, so it stands; the checkout fields do not")
+                line += (
+                    " — this probe's verdict is read from the index, not from "
+                    "the tree, so it stands; the checkout fields do not"
+                )
             return line
         if self.status == PINNED_DIRTY:
-            return (f"provenance: PINNED_DIRTY {where} — the working tree carries "
-                    "uncommitted changes, so this commit does not reproduce what was read")
+            return (
+                f"provenance: PINNED_DIRTY {where} — the working tree carries "
+                "uncommitted changes, so this commit does not reproduce what was read"
+            )
         if self.status == OPEN:
             return f"provenance: {where} — run in progress"
         return f"provenance: PINNED {where}"
@@ -318,7 +339,8 @@ def capture(target: Path | str, decisive: bool = True) -> Provenance:
         prov.unavailable = (
             f"{root} is not a git checkout — no commit to pin this report to"
             if inside is None
-            else f"{root}: git could not resolve HEAD (an empty repository?)")
+            else f"{root}: git could not resolve HEAD (an empty repository?)"
+        )
         return prov
     prov.head = head
     branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD")

@@ -3,6 +3,7 @@
 publishing of the Phase-6c improve loop. Stdlib-only; the GitHub opener is
 injected, so no network and no real token are used.
 """
+
 from __future__ import annotations
 
 import io
@@ -30,27 +31,55 @@ class ReportTest(unittest.TestCase):
 
     def report(self, skip: int = 0) -> dict:
         summary = self.dir / "s.json"
-        rc = ils.main([
-            "report",
-            "--journal", str(self.journal),
-            "--skip-lines", str(skip),
-            "--target", "o/r", "--sha", "abc1234", "--branch", "improve/2026-07-13",
-            "--out-report", str(self.dir / "r.md"),
-            "--out-summary", str(summary),
-        ])
+        rc = ils.main(
+            [
+                "report",
+                "--journal",
+                str(self.journal),
+                "--skip-lines",
+                str(skip),
+                "--target",
+                "o/r",
+                "--sha",
+                "abc1234",
+                "--branch",
+                "improve/2026-07-13",
+                "--out-report",
+                str(self.dir / "r.md"),
+                "--out-summary",
+                str(summary),
+            ]
+        )
         self.assertEqual(rc, 0)
         return json.loads(summary.read_text())
 
     def test_aggregates_keeps_and_discards(self) -> None:
         entries = [
-            {"verdict": "keep", "candidate": "candidate-1.patch",
-             "candidate_sha": "aaa", "killed_mutant": "m2.patch", "dauer_s": 1.5},
-            {"verdict": "discard", "grund": "flaky", "candidate": "candidate-2.patch",
-             "dauer_s": 2.0},
-            {"verdict": "discard", "grund": "redundant", "candidate": "candidate-3.patch",
-             "dauer_s": 0.5},
-            {"verdict": "discard", "grund": "flaky", "candidate": "candidate-4.patch",
-             "dauer_s": 1.0},
+            {
+                "verdict": "keep",
+                "candidate": "candidate-1.patch",
+                "candidate_sha": "aaa",
+                "killed_mutant": "m2.patch",
+                "dauer_s": 1.5,
+            },
+            {
+                "verdict": "discard",
+                "grund": "flaky",
+                "candidate": "candidate-2.patch",
+                "dauer_s": 2.0,
+            },
+            {
+                "verdict": "discard",
+                "grund": "redundant",
+                "candidate": "candidate-3.patch",
+                "dauer_s": 0.5,
+            },
+            {
+                "verdict": "discard",
+                "grund": "flaky",
+                "candidate": "candidate-4.patch",
+                "dauer_s": 1.0,
+            },
         ]
         self.journal.write_text("".join(json.dumps(e) + "\n" for e in entries))
         s = self.report()
@@ -67,7 +96,12 @@ class ReportTest(unittest.TestCase):
 
     def test_skip_lines_isolates_this_run(self) -> None:
         old = {"verdict": "keep", "candidate": "old.patch", "dauer_s": 1}
-        new = {"verdict": "discard", "grund": "redundant", "candidate": "new.patch", "dauer_s": 1}
+        new = {
+            "verdict": "discard",
+            "grund": "redundant",
+            "candidate": "new.patch",
+            "dauer_s": 1,
+        }
         self.journal.write_text(json.dumps(old) + "\n" + json.dumps(new) + "\n")
         s = self.report(skip=1)
         self.assertEqual(s["iterations"], 1)
@@ -75,7 +109,8 @@ class ReportTest(unittest.TestCase):
 
     def test_hard_fail_entry_marks_outcome(self) -> None:
         self.journal.write_text(
-            json.dumps({"verdict": "hard-fail", "grund": "runner failed", "dauer_s": 1}) + "\n"
+            json.dumps({"verdict": "hard-fail", "grund": "runner failed", "dauer_s": 1})
+            + "\n"
         )
         s = self.report()
         self.assertEqual(s["outcome"], "hard-fail")
@@ -88,7 +123,7 @@ class ReportTest(unittest.TestCase):
 
 
 class _FakeResponse(io.BytesIO):
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -118,12 +153,22 @@ class PublishTest(unittest.TestCase):
             self.requests.append(req)
             return _FakeResponse(json.dumps(next(it)).encode())
 
-        return ils.main([
-            "publish",
-            "--repo", "owner/target", "--branch", "improve/2026-07-13",
-            "--base", "main", "--title", "improve: weekly run",
-            "--body-file", str(self.body),
-        ], opener=opener)
+        return ils.main(
+            [
+                "publish",
+                "--repo",
+                "owner/target",
+                "--branch",
+                "improve/2026-07-13",
+                "--base",
+                "main",
+                "--title",
+                "improve: weekly run",
+                "--body-file",
+                str(self.body),
+            ],
+            opener=opener,
+        )
 
     def test_creates_draft_pr(self) -> None:
         rc = self.publish([[], {"html_url": "https://github.com/owner/target/pull/9"}])

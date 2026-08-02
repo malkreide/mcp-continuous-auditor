@@ -25,6 +25,7 @@ into the same answer. Two carry the design:
 Everything is stdlib-only and offline. ``FastMCPRebindTest`` at the bottom needs
 fastmcp and self-skips without it.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -52,12 +53,14 @@ TOKEN = "s3cr3t-probe-token"
 
 try:
     import tomllib  # noqa: F401
+
     _HAVE_TOMLLIB = True
 except ModuleNotFoundError:  # pragma: no cover - py<3.11
     _HAVE_TOMLLIB = False
 
 try:
     import fastmcp  # noqa: F401
+
     _HAVE_FASTMCP = True
 except Exception:  # pragma: no cover - environment dependent
     _HAVE_FASTMCP = False
@@ -74,19 +77,34 @@ def _env(**extra: str) -> dict[str, str]:
 
 
 def _plan(transport: str = tbp.STREAMABLE_HTTP) -> tbp.LaunchPlan:
-    return tbp.LaunchPlan(transport=transport, mode="declared",
-                          argv=[sys.executable, str(SERVER)])
+    return tbp.LaunchPlan(
+        transport=transport, mode="declared", argv=[sys.executable, str(SERVER)]
+    )
 
 
-def _probe(mode: str, transport: str = tbp.STREAMABLE_HTTP, timeout: float = 25.0,
-           **fixture_env: str) -> rp.TransportResult:
+def _probe(
+    mode: str,
+    transport: str = tbp.STREAMABLE_HTTP,
+    timeout: float = 25.0,
+    **fixture_env: str,
+) -> rp.TransportResult:
     paths = ["/sse/"] if transport == tbp.SSE else ["/mcp/"]
-    env = _env(REBIND_FIXTURE_MODE=mode,
-               REBIND_FIXTURE_TRANSPORT="sse" if transport == tbp.SSE else "http",
-               **fixture_env)
+    env = _env(
+        REBIND_FIXTURE_MODE=mode,
+        REBIND_FIXTURE_TRANSPORT="sse" if transport == tbp.SSE else "http",
+        **fixture_env,
+    )
     return rp.probe_transport(
-        _plan(transport), timeout=timeout, cwd=FIXTURES, bind_host="127.0.0.1",
-        allowed_host=ALLOWED, foreign_host=FOREIGN, paths=paths, token=TOKEN, env=env)
+        _plan(transport),
+        timeout=timeout,
+        cwd=FIXTURES,
+        bind_host="127.0.0.1",
+        allowed_host=ALLOWED,
+        foreign_host=FOREIGN,
+        paths=paths,
+        token=TOKEN,
+        env=env,
+    )
 
 
 def _cases(result: rp.TransportResult, label: str) -> dict[str, rp.CaseResult]:
@@ -104,8 +122,11 @@ def _verdict(result: rp.TransportResult, label: str) -> str:
 # the probe matrix itself
 # ---------------------------------------------------------------------------
 
+
 class ProbeMatrixTest(unittest.TestCase):
-    def test_the_wrong_port_case_differs_from_the_allowed_case_only_in_the_port(self) -> None:
+    def test_the_wrong_port_case_differs_from_the_allowed_case_only_in_the_port(
+        self,
+    ) -> None:
         # The pair is the evidence. If a change ever makes these two differ in
         # hostname as well, the matrix stops discriminating and this test says so.
         cases = {c.name: c for c in rp.build_cases(ALLOWED, FOREIGN, 8000)}
@@ -129,7 +150,7 @@ class ProbeMatrixTest(unittest.TestCase):
         # A token inherited from the surrounding environment would make the
         # token-less pass a second copy of the token pass, and the comparison
         # between them is the whole evidence for auth-independence.
-        base = {name: "leftover" for name in rp.AUTH_ENV}
+        base = dict.fromkeys(rp.AUTH_ENV, "leftover")
         env = rp.pass_env(base, ALLOWED, 9000, token="")
         for name in rp.AUTH_ENV:
             self.assertNotIn(name, env)
@@ -139,6 +160,7 @@ class ProbeMatrixTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # a server that gets it right
 # ---------------------------------------------------------------------------
+
 
 class EnforcedTest(unittest.TestCase):
     def test_a_correct_allowlist_is_reported_as_enforced(self) -> None:
@@ -155,14 +177,16 @@ class EnforcedTest(unittest.TestCase):
         cases = _cases(res, rp.PASS_VALID_TOKEN)
         self.assertEqual(cases["foreign-host"].status, 421)
         self.assertTrue(cases["foreign-host"].matched)
-        self.assertTrue(cases["allowed"].matched)   # the same token IS accepted
+        self.assertTrue(cases["allowed"].matched)  # the same token IS accepted
 
     def test_the_token_pass_verifies_that_auth_was_enforced_at_all(self) -> None:
         res = _probe("allowlist")
         token_pass = next(p for p in res.passes if p.label == rp.PASS_VALID_TOKEN)
         self.assertEqual(token_pass.auth_enforced, "yes")
 
-    def test_a_target_that_ignores_the_token_makes_the_pass_weaker_not_wrong(self) -> None:
+    def test_a_target_that_ignores_the_token_makes_the_pass_weaker_not_wrong(
+        self,
+    ) -> None:
         # The host check still holds, so this is still enforced — but the report
         # must not claim the control beat an auth layer the target never ran.
         res = _probe("allowlist", REBIND_FIXTURE_IGNORE_AUTH="1")
@@ -181,6 +205,7 @@ class EnforcedTest(unittest.TestCase):
 # the discriminations — the reason the matrix has four rows and not one
 # ---------------------------------------------------------------------------
 
+
 class DiscriminationTest(unittest.TestCase):
     def test_a_foreign_host_probe_alone_would_have_been_fooled(self) -> None:
         # `loopback_only` reads no configuration at all and simply refuses every
@@ -189,13 +214,15 @@ class DiscriminationTest(unittest.TestCase):
         # control as working while nothing the operator configured is in force.
         res = _probe("loopback_only")
         cases = _cases(res, rp.PASS_NO_TOKEN)
-        self.assertTrue(cases["foreign-host"].matched)      # looks protected…
+        self.assertTrue(cases["foreign-host"].matched)  # looks protected…
         self.assertEqual(cases["foreign-host"].status, 421)
-        self.assertFalse(cases["allowed"].matched)          # …and is not measurable
+        self.assertFalse(cases["allowed"].matched)  # …and is not measurable
         self.assertEqual(res.verdict, rp.INCONCLUSIVE)
         self.assertIn("was itself refused", res.detail)
 
-    def test_only_the_wrong_port_probe_separates_a_loose_list_from_a_strict_one(self) -> None:
+    def test_only_the_wrong_port_probe_separates_a_loose_list_from_a_strict_one(
+        self,
+    ) -> None:
         # `hostname_only` honours the variable but drops the port. Against it,
         # probes 1, 3 and 4 answer EXACTLY as the healthy server does; the whole
         # difference is the wrong-port probe. This is the test that would fail if
@@ -203,12 +230,17 @@ class DiscriminationTest(unittest.TestCase):
         loose = _cases(_probe("hostname_only"), rp.PASS_NO_TOKEN)
         strict = _cases(_probe("allowlist"), rp.PASS_NO_TOKEN)
         for name in ("foreign-host", "foreign-origin", "allowed"):
-            self.assertEqual(loose[name].matched, strict[name].matched,
-                             msg=f"{name} differed, so it — not the port — carries the check")
+            self.assertEqual(
+                loose[name].matched,
+                strict[name].matched,
+                msg=f"{name} differed, so it — not the port — carries the check",
+            )
         self.assertTrue(strict["wrong-port"].matched)
         self.assertFalse(loose["wrong-port"].matched)
 
-    def test_a_loose_list_is_a_control_applied_wrongly_not_one_that_is_absent(self) -> None:
+    def test_a_loose_list_is_a_control_applied_wrongly_not_one_that_is_absent(
+        self,
+    ) -> None:
         # It refused the foreign host, so our allow-list demonstrably reached the
         # transport. A target that merely never switched the control on cannot
         # produce that mix — so this is a defect, and the text scan does not get
@@ -245,13 +277,16 @@ class DiscriminationTest(unittest.TestCase):
         self.assertEqual(res.evidence.get("case"), "host-check-absent")
         cases = _cases(res, rp.PASS_NO_TOKEN)
         for name in ("foreign-host", "wrong-port", "foreign-origin"):
-            self.assertFalse(cases[name].matched, msg=f"{name} was refused unexpectedly")
+            self.assertFalse(
+                cases[name].matched, msg=f"{name} was refused unexpectedly"
+            )
         self.assertTrue(cases["allowed"].matched)
 
 
 # ---------------------------------------------------------------------------
 # SSE — the other network transport
 # ---------------------------------------------------------------------------
+
 
 class SseTest(unittest.TestCase):
     def test_the_allowlist_is_enforced_on_the_sse_handshake_too(self) -> None:
@@ -263,8 +298,9 @@ class SseTest(unittest.TestCase):
         # stream. Reading it to the end would hang the gate on precisely the case
         # it is measuring — the swiss-transport-mcp#25 suite hit exactly this.
         started = time.monotonic()
-        res = _probe("ignores", transport=tbp.SSE, timeout=12.0,
-                     REBIND_FIXTURE_SSE_ENDLESS="1")
+        res = _probe(
+            "ignores", transport=tbp.SSE, timeout=12.0, REBIND_FIXTURE_SSE_ENDLESS="1"
+        )
         elapsed = time.monotonic() - started
         self.assertLess(elapsed, 90.0, msg=f"the gate overran: {elapsed:.1f}s")
         self.assertEqual(res.verdict, rp.NOT_ENFORCED, msg=res.detail)
@@ -273,6 +309,7 @@ class SseTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # "not configured" is its own category
 # ---------------------------------------------------------------------------
+
 
 class KnobDetectionTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -298,8 +335,10 @@ class KnobDetectionTest(unittest.TestCase):
         self.assertTrue(any(".env.example" in s for s in knob.sources))
 
     def test_the_bare_variable_is_still_found_on_its_own(self) -> None:
-        self._write("docker-compose.yaml",
-                    "    environment:\n      ALLOWED_HOSTS: mcp.example.org:8000\n")
+        self._write(
+            "docker-compose.yaml",
+            "    environment:\n      ALLOWED_HOSTS: mcp.example.org:8000\n",
+        )
         self.assertEqual(rp.detect_knob(self.root).names, ["ALLOWED_HOSTS"])
 
     def test_a_target_that_never_heard_of_it_does_not(self) -> None:
@@ -313,27 +352,37 @@ class ClassificationTest(unittest.TestCase):
 
     @staticmethod
     def _result(verdict: str, case: str = "") -> rp.TransportResult:
-        return rp.TransportResult(tbp.STREAMABLE_HTTP, "declared", verdict, "detail",
-                                  evidence={"case": case} if case else {})
+        return rp.TransportResult(
+            tbp.STREAMABLE_HTTP,
+            "declared",
+            verdict,
+            "detail",
+            evidence={"case": case} if case else {},
+        )
 
     def test_a_fail_open_target_without_the_knob_is_not_configured(self) -> None:
         outcome, code, reasons = rp.classify(
-            [self._result(rp.NOT_ENFORCED, "host-check-absent")], rp.Knob(advertised=False))
+            [self._result(rp.NOT_ENFORCED, "host-check-absent")],
+            rp.Knob(advertised=False),
+        )
         self.assertEqual(outcome, rp.OUT_NOT_CONFIGURED)
         self.assertEqual(code, rp.EXIT_NOT_CONFIGURED)
-        self.assertNotEqual(code, rp.EXIT_GREEN)     # not a pass
+        self.assertNotEqual(code, rp.EXIT_GREEN)  # not a pass
         self.assertNotEqual(code, rp.EXIT_FINDINGS)  # and not a finding
         self.assertTrue(any("fail-open" in r for r in reasons))
 
     def test_the_same_observation_with_the_knob_shipped_is_a_finding(self) -> None:
         knob = rp.Knob(advertised=True, names=["MCP_ALLOWED_HOSTS"])
         outcome, code, reasons = rp.classify(
-            [self._result(rp.NOT_ENFORCED, "host-check-absent")], knob)
+            [self._result(rp.NOT_ENFORCED, "host-check-absent")], knob
+        )
         self.assertEqual(outcome, rp.OUT_FINDINGS)
         self.assertEqual(code, rp.EXIT_FINDINGS)
         self.assertTrue(any("MCP_ALLOWED_HOSTS" in r for r in reasons))
 
-    def test_a_control_that_is_present_and_wrong_is_a_finding_without_the_knob(self) -> None:
+    def test_a_control_that_is_present_and_wrong_is_a_finding_without_the_knob(
+        self,
+    ) -> None:
         # Two shapes that prove the target HAS the control: one that works until a
         # token shows up, and one that refuses some hostile probes and serves
         # others. "Not configured" is the wrong shelf for either, and the text scan
@@ -341,7 +390,8 @@ class ClassificationTest(unittest.TestCase):
         for case in ("token-bypasses-host-check", "partial-enforcement"):
             with self.subTest(case=case):
                 outcome, code, _ = rp.classify(
-                    [self._result(rp.NOT_ENFORCED, case)], rp.Knob(advertised=False))
+                    [self._result(rp.NOT_ENFORCED, case)], rp.Knob(advertised=False)
+                )
                 self.assertEqual(outcome, rp.OUT_FINDINGS)
                 self.assertEqual(code, rp.EXIT_FINDINGS)
 
@@ -357,9 +407,12 @@ class ClassificationTest(unittest.TestCase):
         self.assertTrue(any("no network transport" in r for r in reasons))
 
     def test_the_not_configured_report_says_the_attack_is_unopposed(self) -> None:
-        text = rp.render([self._result(rp.NOT_ENFORCED, "host-check-absent")],
-                         rp.Knob(advertised=False), rp.OUT_NOT_CONFIGURED,
-                         ["nothing was configured to enforce"])
+        text = rp.render(
+            [self._result(rp.NOT_ENFORCED, "host-check-absent")],
+            rp.Knob(advertised=False),
+            rp.OUT_NOT_CONFIGURED,
+            ["nothing was configured to enforce"],
+        )
         self.assertIn("NOT CONFIGURED", text)
         self.assertIn("unopposed", text)
         self.assertNotIn("✅", text)
@@ -368,6 +421,7 @@ class ClassificationTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # the gate's exit contract, end to end
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_HAVE_TOMLLIB, "tomllib requires Python 3.11+")
 class ExitContractTest(unittest.TestCase):
@@ -381,14 +435,17 @@ class ExitContractTest(unittest.TestCase):
         self._saved = dict(os.environ)
         # A declared boot table is the faithful launch mode: the gate runs the
         # target's OWN command, exactly as it does against a real target.
-        (self.root / "pyproject.toml").write_text(textwrap.dedent(f'''
+        (self.root / "pyproject.toml").write_text(
+            textwrap.dedent(f'''
             [project]
             name = "t"
             version = "0"
 
             [tool.mcp_auditor.boot.commands]
             "streamable-http" = ["{sys.executable}", "{SERVER}"]
-        '''), encoding="utf-8")
+        '''),
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -399,27 +456,34 @@ class ExitContractTest(unittest.TestCase):
         report = self.root / "rebind.json"
         for name in rp.ALLOWLIST_ENV + rp.ORIGIN_ENV + rp.AUTH_ENV:
             os.environ.pop(name, None)
-        os.environ.update({
-            "BOOT_TARGET_ROOT": str(self.root),
-            "BOOT_TRANSPORTS": "streamable-http",
-            "REBIND_REPORT": str(report),
-            "REBIND_TIMEOUT": "25",
-            "REBIND_BIND_HOST": "127.0.0.1",
-            "REBIND_ALLOWED_HOST": ALLOWED,
-            "REBIND_FOREIGN_HOST": FOREIGN,
-            "REBIND_AUTH_TOKEN": TOKEN,
-            "REBIND_HTTP_PATHS": "/mcp/",
-            "REBIND_FIXTURE_TRANSPORT": "http",
-            **env,
-        })
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        os.environ.update(
+            {
+                "BOOT_TARGET_ROOT": str(self.root),
+                "BOOT_TRANSPORTS": "streamable-http",
+                "REBIND_REPORT": str(report),
+                "REBIND_TIMEOUT": "25",
+                "REBIND_BIND_HOST": "127.0.0.1",
+                "REBIND_ALLOWED_HOST": ALLOWED,
+                "REBIND_FOREIGN_HOST": FOREIGN,
+                "REBIND_AUTH_TOKEN": TOKEN,
+                "REBIND_HTTP_PATHS": "/mcp/",
+                "REBIND_FIXTURE_TRANSPORT": "http",
+                **env,
+            }
+        )
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             rc = rp.main()
         data = json.loads(report.read_text(encoding="utf-8")) if report.exists() else {}
         return rc, data
 
     def test_enforced_exits_green(self) -> None:
         rc, data = self._run(REBIND_FIXTURE_MODE="allowlist")
-        self.assertEqual(rc, rp.EXIT_GREEN, msg=json.dumps(data.get("reasons"), indent=2))
+        self.assertEqual(
+            rc, rp.EXIT_GREEN, msg=json.dumps(data.get("reasons"), indent=2)
+        )
         self.assertEqual(data["outcome"], rp.OUT_ENFORCED)
 
     def test_fail_open_without_the_knob_exits_three(self) -> None:
@@ -432,7 +496,8 @@ class ExitContractTest(unittest.TestCase):
         # Identical server behaviour; the only change is that the target's own
         # tree now names the variable. That is what turns fail-open into a defect.
         (self.root / ".env.example").write_text(
-            "MCP_ALLOWED_HOSTS=mcp.example.org:8000\n", encoding="utf-8")
+            "MCP_ALLOWED_HOSTS=mcp.example.org:8000\n", encoding="utf-8"
+        )
         rc, data = self._run(REBIND_FIXTURE_MODE="ignores")
         self.assertEqual(rc, rp.EXIT_FINDINGS)
         self.assertEqual(data["outcome"], rp.OUT_FINDINGS)
@@ -445,29 +510,39 @@ class ExitContractTest(unittest.TestCase):
         rc, data = self._run(REBIND_FIXTURE_MODE="hostname_only")
         self.assertEqual(rc, rp.EXIT_FINDINGS)
         self.assertFalse(data["knob"]["advertised"])
-        self.assertEqual(data["transports"][0]["evidence"]["case"], "partial-enforcement")
+        self.assertEqual(
+            data["transports"][0]["evidence"]["case"], "partial-enforcement"
+        )
 
     def test_a_token_bypass_exits_two(self) -> None:
         rc, data = self._run(REBIND_FIXTURE_MODE="auth_first")
         self.assertEqual(rc, rp.EXIT_FINDINGS)
-        self.assertEqual(data["transports"][0]["evidence"]["case"],
-                         "token-bypasses-host-check")
+        self.assertEqual(
+            data["transports"][0]["evidence"]["case"], "token-bypasses-host-check"
+        )
 
     def test_a_target_that_never_comes_up_is_a_finding_not_a_hard_fail(self) -> None:
         # Same rule as the boot gate: a statement about the target is exit 2. The
         # boot gate is where the *reason* is diagnosed; this gate only records
         # that it could not measure.
-        rc, data = self._run(REBIND_FIXTURE_MODE="allowlist",
-                             REBIND_HTTP_PATHS="/nope/", REBIND_TIMEOUT="8")
+        rc, data = self._run(
+            REBIND_FIXTURE_MODE="allowlist",
+            REBIND_HTTP_PATHS="/nope/",
+            REBIND_TIMEOUT="8",
+        )
         self.assertEqual(rc, rp.EXIT_FINDINGS)
         self.assertNotEqual(rc, rp.EXIT_CANNOT_RUN)
         self.assertEqual(data["outcome"], rp.OUT_FINDINGS)
 
-    def test_the_report_records_every_probe_so_the_verdict_can_be_rechecked(self) -> None:
+    def test_the_report_records_every_probe_so_the_verdict_can_be_rechecked(
+        self,
+    ) -> None:
         _, data = self._run(REBIND_FIXTURE_MODE="allowlist")
         cases = data["transports"][0]["passes"][0]["cases"]
-        self.assertEqual([c["name"] for c in cases],
-                         ["foreign-host", "wrong-port", "foreign-origin", "allowed"])
+        self.assertEqual(
+            [c["name"] for c in cases],
+            ["foreign-host", "wrong-port", "foreign-origin", "allowed"],
+        )
         self.assertTrue(all("status" in c and "why" in c for c in cases))
 
 
@@ -475,7 +550,10 @@ class ExitContractTest(unittest.TestCase):
 # the real thing (needs fastmcp)
 # ---------------------------------------------------------------------------
 
-@unittest.skipUnless(_HAVE_FASTMCP, "fastmcp not installed (uv run --with fastmcp to enable)")
+
+@unittest.skipUnless(
+    _HAVE_FASTMCP, "fastmcp not installed (uv run --with fastmcp to enable)"
+)
 class FastMCPRebindTest(unittest.TestCase):
     """A vanilla FastMCP server on a non-loopback bind is the fail-open case, and
     the gate must classify it as *not configured* rather than cry wolf — that is
@@ -487,12 +565,22 @@ class FastMCPRebindTest(unittest.TestCase):
     """
 
     def test_a_vanilla_fastmcp_server_reports_as_not_configured(self) -> None:
-        plan = tbp.LaunchPlan(tbp.STREAMABLE_HTTP, "generic",
-                              [sys.executable, "-c", tbp._GENERIC_LAUNCHER])
+        plan = tbp.LaunchPlan(
+            tbp.STREAMABLE_HTTP,
+            "generic",
+            [sys.executable, "-c", tbp._GENERIC_LAUNCHER],
+        )
         res = rp.probe_transport(
-            plan, timeout=60, cwd=FIXTURES, bind_host="0.0.0.0",
-            allowed_host=ALLOWED, foreign_host=FOREIGN, paths=["/mcp/", "/mcp"],
-            token=TOKEN, env=_env(MCP_SERVER_IMPORT="smoke_server:mcp"))
+            plan,
+            timeout=60,
+            cwd=FIXTURES,
+            bind_host="0.0.0.0",
+            allowed_host=ALLOWED,
+            foreign_host=FOREIGN,
+            paths=["/mcp/", "/mcp"],
+            token=TOKEN,
+            env=_env(MCP_SERVER_IMPORT="smoke_server:mcp"),
+        )
         self.assertEqual(res.verdict, rp.NOT_ENFORCED, msg=res.detail)
         outcome, code, _ = rp.classify([res], rp.Knob(advertised=False))
         self.assertEqual(outcome, rp.OUT_NOT_CONFIGURED)

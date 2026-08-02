@@ -9,6 +9,7 @@ deliberately ignores.
 
 Stdlib-only (`python3 -m unittest`), matching the rest of the repo's tooling.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -77,32 +79,55 @@ class LiveProbeRecallReportTest(unittest.TestCase):
     def _run(self, payload, probe_extra: dict) -> tuple[str, dict]:
         """Drive live_probe.main() with the fetch and fixture stubbed out."""
         manifest = self.dir / "manifest.json"
-        manifest.write_text(json.dumps({"probes": [
-            {"name": "p", "fixture": "f", "url": "https://example.invalid/x", **probe_extra}
-        ]}), encoding="utf-8")
+        manifest.write_text(
+            json.dumps(
+                {
+                    "probes": [
+                        {
+                            "name": "p",
+                            "fixture": "f",
+                            "url": "https://example.invalid/x",
+                            **probe_extra,
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
 
         outputs = self.dir / "gh_out"
         os.environ["DRIFT_REPORT"] = str(self.dir / "report.md")
         os.environ["GITHUB_OUTPUT"] = str(outputs)
 
-        orig_manifest, orig_fetch, orig_fixture = lp._MANIFEST, lp._fetch, lp._load_fixture
+        orig_manifest, orig_fetch, orig_fixture = (
+            lp._MANIFEST,
+            lp._fetch,
+            lp._load_fixture,
+        )
         try:
             lp._MANIFEST = manifest
             lp._fetch = lambda probe: payload
             lp._load_fixture = lambda name: payload  # identical → no schema drift
             self.assertEqual(lp.main(), 0)
         finally:
-            lp._MANIFEST, lp._fetch, lp._load_fixture = orig_manifest, orig_fetch, orig_fixture
+            lp._MANIFEST, lp._fetch, lp._load_fixture = (
+                orig_manifest,
+                orig_fetch,
+                orig_fixture,
+            )
 
         report = (self.dir / "report.md").read_text(encoding="utf-8")
         parsed = dict(
             line.split("=", 1)
-            for line in outputs.read_text(encoding="utf-8").splitlines() if "=" in line
+            for line in outputs.read_text(encoding="utf-8").splitlines()
+            if "=" in line
         )
         return report, parsed
 
     def test_breached_floor_sets_recall_drop_and_alert_but_not_drift(self):
-        report, out = self._run({"entries": [1]}, {"min_count": 10, "count_path": "entries"})
+        report, out = self._run(
+            {"entries": [1]}, {"min_count": 10, "count_path": "entries"}
+        )
         self.assertIn("Recall below floor", report)
         self.assertIn("**1** record(s), floor is **10**", report)
         self.assertEqual(out["recall_drop"], "true")
@@ -137,11 +162,21 @@ class LiveProbeRecallReportTest(unittest.TestCase):
 class RecallCanaryTest(unittest.TestCase):
     """The canary drives the server's own tools; evaluate() is the pure core."""
 
-    CANARIES = [
-        {"name": "many", "tool": "search", "args": {"q": "a"},
-         "min_count": 10, "count_path": "entries"},
-        {"name": "few", "tool": "search", "args": {"q": "b"},
-         "min_count": 1, "count_path": "entries"},
+    CANARIES: ClassVar[list[dict[str, Any]]] = [
+        {
+            "name": "many",
+            "tool": "search",
+            "args": {"q": "a"},
+            "min_count": 10,
+            "count_path": "entries",
+        },
+        {
+            "name": "few",
+            "tool": "search",
+            "args": {"q": "b"},
+            "min_count": 1,
+            "count_path": "entries",
+        },
     ]
 
     def test_floor_breach_is_reported_per_canary(self):
@@ -160,13 +195,13 @@ class RecallCanaryTest(unittest.TestCase):
                 raise RuntimeError("upstream 503")
             return {"entries": [1, 2]}
 
-        recall, errors, ok = rc.evaluate(self.CANARIES, caller)
+        _recall, errors, ok = rc.evaluate(self.CANARIES, caller)
         self.assertEqual(len(errors), 1)
         self.assertIn("upstream 503", errors[0])
         self.assertEqual(len(ok), 1, "the second canary must still have run")
 
     def test_uncountable_output_is_an_error(self):
-        recall, errors, ok = rc.evaluate(
+        recall, errors, _ok = rc.evaluate(
             [{"name": "x", "tool": "t", "min_count": 1, "count_path": "nope"}],
             lambda tool, args: {"entries": [1]},
         )
@@ -184,19 +219,23 @@ class RecallCanaryTest(unittest.TestCase):
             text = '{"entries": [1, 2, 3]}'
 
         class Result:
-            content = [Block()]
+            content = [Block()]  # noqa: RUF012 - throwaway stub, not shared state
 
         self.assertEqual(rc._tool_payload(Result()), {"entries": [1, 2, 3]})
 
     def test_tool_payload_falls_back_to_structured_content(self):
         class Result:
             content = None
-            structured_content = {"entries": [1]}
+            structured_content = {"entries": [1]}  # noqa: RUF012 - throwaway stub, not shared state
 
         self.assertEqual(rc._tool_payload(Result()), {"entries": [1]})
 
     def test_manifest_ships_valid_json_with_required_keys(self):
-        path = Path(__file__).resolve().parents[1] / "scripts" / "recall_canary.manifest.json"
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "recall_canary.manifest.json"
+        )
         data = json.loads(path.read_text(encoding="utf-8"))
         self.assertIn("canaries", data)
         for entry in data["canaries"]:

@@ -98,22 +98,70 @@ EXIT_CANNOT_RUN = 127
 
 DEFAULT_DOCS = ("README.md", "README.de.md", "SECURITY.md", "SECURITY.de.md")
 DEFAULT_CODE_SUFFIXES = (
-    ".py", ".yaml", ".yml", ".json", ".toml", ".sh", ".cfg", ".ini", ".template",
-    ".js", ".ts", ".nft", ".txt",
+    ".py",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".sh",
+    ".cfg",
+    ".ini",
+    ".template",
+    ".js",
+    ".ts",
+    ".nft",
+    ".txt",
 )
 SKIP_DIRS = {
-    ".git", ".venv", "venv", ".tox", "node_modules", "__pycache__", "dist",
-    "build", ".mypy_cache", ".ruff_cache", ".pytest_cache", "site-packages",
-    ".audit", ".eggs",
+    ".git",
+    ".venv",
+    "venv",
+    ".tox",
+    "node_modules",
+    "__pycache__",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    "site-packages",
+    ".audit",
+    ".eggs",
 }
 
 # Citations, not identifiers: no amount of grepping resolves them, and reporting
 # them would drown the findings the probe exists for.
-STANDARDS = frozenset({
-    "PEP", "RFC", "ISO", "CVE", "CWE", "OWASP", "GDPR", "HTTP", "HTTPS", "UTF",
-    "SHA", "TLS", "SSL", "DNS", "API", "URL", "URI", "JSON", "YAML", "TOML",
-    "MIT", "GPL", "BSD", "SPDX", "MCP", "LLM", "AI",
-})
+STANDARDS = frozenset(
+    {
+        "PEP",
+        "RFC",
+        "ISO",
+        "CVE",
+        "CWE",
+        "OWASP",
+        "GDPR",
+        "HTTP",
+        "HTTPS",
+        "UTF",
+        "SHA",
+        "TLS",
+        "SSL",
+        "DNS",
+        "API",
+        "URL",
+        "URI",
+        "JSON",
+        "YAML",
+        "TOML",
+        "MIT",
+        "GPL",
+        "BSD",
+        "SPDX",
+        "MCP",
+        "LLM",
+        "AI",
+    }
+)
 
 INLINE_SPAN = re.compile(r"`([^`\n]+)`")
 FENCE = re.compile(r"^\s*(```|~~~)")
@@ -121,7 +169,8 @@ FENCE = re.compile(r"^\s*(```|~~~)")
 CODE_ID = re.compile(r"^[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+$")
 PATH_LIKE = re.compile(
     r"^[A-Za-z0-9._][A-Za-z0-9._/-]*\."
-    r"(?:py|sh|md|ya?ml|json|toml|txt|cfg|ini|nft|js|ts|template)$")
+    r"(?:py|sh|md|ya?ml|json|toml|txt|cfg|ini|nft|js|ts|template)$"
+)
 # Anything a resolution could match: identifiers, dotted paths, hyphenated codes.
 WORD = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-/]*")
 # Paths may start with a dot — `.github/workflows/tests.yml` is the case that
@@ -140,7 +189,7 @@ URL = re.compile(r"https?://\S+")
 class Claim:
     """One thing a document asserts exists."""
 
-    kind: str      # code | path
+    kind: str  # code | path
     token: str
     doc: str
     line: int
@@ -185,8 +234,14 @@ class Finding:
     detail: str
 
     def as_dict(self) -> dict[str, Any]:
-        return {"code": self.code, "severity": self.severity, "doc": self.doc,
-                "line": self.line, "token": self.token, "detail": self.detail}
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "doc": self.doc,
+            "line": self.line,
+            "token": self.token,
+            "detail": self.detail,
+        }
 
 
 @dataclass
@@ -371,9 +426,14 @@ def find_collections(files: list[Path], root: Path) -> dict[str, Collection]:
                 continue
             for target in targets:
                 if isinstance(target, ast.Name):
-                    found.setdefault(target.id, Collection(
-                        name=target.id, members=members,
-                        where=f"{path.relative_to(root)}:{node.lineno}"))
+                    found.setdefault(
+                        target.id,
+                        Collection(
+                            name=target.id,
+                            members=members,
+                            where=f"{path.relative_to(root)}:{node.lineno}",
+                        ),
+                    )
     return found
 
 
@@ -404,8 +464,9 @@ def _string_members(value: ast.expr) -> frozenset[str] | None:
 # --------------------------------------------------------------------------
 
 
-def check_membership(doc_name: str, text: str, collections: dict[str, Collection],
-                     index: set[str]) -> list[Finding]:
+def check_membership(
+    doc_name: str, text: str, collections: dict[str, Collection], index: set[str]
+) -> list[Finding]:
     """The ARCH-003 case: codes cited beside a collection they are not in."""
     findings: list[Finding] = []
     for start, block in paragraphs(text):
@@ -422,26 +483,38 @@ def check_membership(doc_name: str, text: str, collections: dict[str, Collection
                     continue
                 if token in collection.members:
                     continue
-                findings.append(Finding(
-                    code="NOT_A_MEMBER", severity="medium", doc=doc_name,
-                    line=start, token=token,
-                    detail=(
-                        f"cited in the same paragraph as `{collection.name}` and shaped "
-                        f"like its members, but {collection.name} "
-                        f"({collection.where}) does not contain it. Members: "
-                        f"{', '.join(sorted(collection.members)[:8])}"
-                        f"{' …' if len(collection.members) > 8 else ''}. "
-                        + ("The identifier does exist elsewhere in the code, so this "
-                           "reads as a membership claim that is not true — if the "
-                           "paragraph means to contrast it, say so in words."
-                           if token in index else
-                           "The identifier does not exist in the code at all."))))
+                findings.append(
+                    Finding(
+                        code="NOT_A_MEMBER",
+                        severity="medium",
+                        doc=doc_name,
+                        line=start,
+                        token=token,
+                        detail=(
+                            f"cited in the same paragraph as `{collection.name}` and shaped "
+                            f"like its members, but {collection.name} "
+                            f"({collection.where}) does not contain it. Members: "
+                            f"{', '.join(sorted(collection.members)[:8])}"
+                            f"{' …' if len(collection.members) > 8 else ''}. "
+                            + (
+                                "The identifier does exist elsewhere in the code, so this "
+                                "reads as a membership claim that is not true — if the "
+                                "paragraph means to contrast it, say so in words."
+                                if token in index
+                                else "The identifier does not exist in the code at all."
+                            )
+                        ),
+                    )
+                )
     return findings
 
 
-def run(target: Path, docs: tuple[str, ...] = DEFAULT_DOCS,
-        ignore: tuple[str, ...] = (),
-        suffixes: tuple[str, ...] = DEFAULT_CODE_SUFFIXES) -> Report:
+def run(
+    target: Path,
+    docs: tuple[str, ...] = DEFAULT_DOCS,
+    ignore: tuple[str, ...] = (),
+    suffixes: tuple[str, ...] = DEFAULT_CODE_SUFFIXES,
+) -> Report:
     report = Report(target=str(target))
     if not target.is_dir():
         report.harness_error = f"{target} is not a directory"
@@ -451,7 +524,8 @@ def run(target: Path, docs: tuple[str, ...] = DEFAULT_DOCS,
     if not doc_paths:
         report.notes.append(
             f"none of {', '.join(docs)} exists in {target} — nothing was measured. "
-            "This run is not evidence that the documentation cites real identifiers")
+            "This run is not evidence that the documentation cites real identifiers"
+        )
         return report
     report.docs = [p.name for p in doc_paths]
 
@@ -460,7 +534,8 @@ def run(target: Path, docs: tuple[str, ...] = DEFAULT_DOCS,
     if not code_files:
         report.harness_error = (
             f"no code files under {target} — every citation would be reported as "
-            "unresolved, which would say more about this run than about the docs")
+            "unresolved, which would say more about this run than about the docs"
+        )
         return report
 
     index = build_index(code_files)
@@ -480,7 +555,8 @@ def run(target: Path, docs: tuple[str, ...] = DEFAULT_DOCS,
                 f"another repository ({', '.join(cited[:6])}"
                 f"{' …' if len(cited) > 6 else ''}) — those belong to that repository "
                 "and are not resolved here. Not a finding, and not a claim about them "
-                "either")
+                "either"
+            )
         seen: set[tuple[str, str]] = set()
         for claim in claims:
             if re.split(r"[-_]", claim.token)[0] in ignored or claim.token in ignored:
@@ -493,24 +569,40 @@ def run(target: Path, docs: tuple[str, ...] = DEFAULT_DOCS,
             seen.add(key)
             if claim.kind == "code":
                 if claim.token not in index:
-                    report.findings.append(Finding(
-                        code="UNRESOLVED_CLAIM", severity="high", doc=claim.doc,
-                        line=claim.line, token=claim.token,
-                        detail=(
-                            f"`{claim.token}` is cited as an identifier but appears "
-                            f"nowhere in the {len(code_files)} code file(s) of this "
-                            f"repository — only in prose. Context: {claim.context}")))
+                    report.findings.append(
+                        Finding(
+                            code="UNRESOLVED_CLAIM",
+                            severity="high",
+                            doc=claim.doc,
+                            line=claim.line,
+                            token=claim.token,
+                            detail=(
+                                f"`{claim.token}` is cited as an identifier but appears "
+                                f"nowhere in the {len(code_files)} code file(s) of this "
+                                f"repository — only in prose. Context: {claim.context}"
+                            ),
+                        )
+                    )
             elif not (target / claim.token).exists():
-                report.findings.append(Finding(
-                    code="UNRESOLVED_PATH", severity="high", doc=claim.doc,
-                    line=claim.line, token=claim.token,
-                    detail=(
-                        f"`{claim.token}` does not exist in the checkout. A document "
-                        "pointing at a renamed file is wrong in the way readers only "
-                        f"discover at the worst moment. Context: {claim.context}")))
+                report.findings.append(
+                    Finding(
+                        code="UNRESOLVED_PATH",
+                        severity="high",
+                        doc=claim.doc,
+                        line=claim.line,
+                        token=claim.token,
+                        detail=(
+                            f"`{claim.token}` does not exist in the checkout. A document "
+                            "pointing at a renamed file is wrong in the way readers only "
+                            f"discover at the worst moment. Context: {claim.context}"
+                        ),
+                    )
+                )
         report.findings.extend(
-            f for f in check_membership(path.name, text, collections, index)
-            if re.split(r"[-_]", f.token)[0] not in ignored and f.token not in ignored)
+            f
+            for f in check_membership(path.name, text, collections, index)
+            if re.split(r"[-_]", f.token)[0] not in ignored and f.token not in ignored
+        )
 
     return report
 
@@ -530,26 +622,37 @@ def render(report: Report) -> str:
         return "\n".join(lines)
     lines.append(
         f"  {report.claims} citation(s) in {', '.join(report.docs)} against "
-        f"{report.code_files} code file(s), {len(report.collections)} collection(s)")
+        f"{report.code_files} code file(s), {len(report.collections)} collection(s)"
+    )
     for note in report.notes:
         lines.append(f"  note: {note}")
     if not report.findings:
         lines.append("  every cited identifier and path resolves")
     for finding in report.findings:
-        lines.append(f"  {finding.code} [{finding.severity}] "
-                     f"{finding.doc}:{finding.line} `{finding.token}` — {finding.detail}")
+        lines.append(
+            f"  {finding.code} [{finding.severity}] "
+            f"{finding.doc}:{finding.line} `{finding.token}` — {finding.detail}"
+        )
     return "\n".join(lines)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--target", default=".", help="path to the checkout")
-    parser.add_argument("--doc", action="append", default=[],
-                        help=f"documentation file to check, repeatable "
-                             f"(default: {', '.join(DEFAULT_DOCS)})")
-    parser.add_argument("--ignore", action="append", default=[],
-                        help="an identifier, or the prefix before its separator, to "
-                             "treat as a citation rather than a claim. Repeatable")
+    parser.add_argument(
+        "--doc",
+        action="append",
+        default=[],
+        help=f"documentation file to check, repeatable "
+        f"(default: {', '.join(DEFAULT_DOCS)})",
+    )
+    parser.add_argument(
+        "--ignore",
+        action="append",
+        default=[],
+        help="an identifier, or the prefix before its separator, to "
+        "treat as a citation rather than a claim. Repeatable",
+    )
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--report", default="", help="also write the JSON report here")
     return parser
@@ -560,8 +663,9 @@ def main(argv: list[str] | None = None) -> int:
     target = Path(args.target).resolve()
 
     prov = probe_provenance.capture(target)
-    report = run(target, docs=tuple(args.doc) or DEFAULT_DOCS,
-                 ignore=tuple(args.ignore))
+    report = run(
+        target, docs=tuple(args.doc) or DEFAULT_DOCS, ignore=tuple(args.ignore)
+    )
     report.provenance = prov.recheck()
 
     if args.format == "json":
@@ -571,7 +675,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         Path(args.report).write_text(
             json.dumps(report.as_dict(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8")
+            encoding="utf-8",
+        )
     return report.exit_code()
 
 

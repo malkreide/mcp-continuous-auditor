@@ -12,6 +12,7 @@ cleanly when fastmcp is absent. To run it, provide fastmcp, e.g.:
 
     uv run --with fastmcp python -m unittest tests.test_smoke_target
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,12 +28,15 @@ SMOKE_FIXTURES = Path(__file__).resolve().parent / "smoke_fixtures"
 
 try:
     import fastmcp  # noqa: F401
+
     _HAVE_FASTMCP = True
 except Exception:  # pragma: no cover - environment dependent
     _HAVE_FASTMCP = False
 
 
-@unittest.skipUnless(_HAVE_FASTMCP, "fastmcp not installed (uv run --with fastmcp to enable)")
+@unittest.skipUnless(
+    _HAVE_FASTMCP, "fastmcp not installed (uv run --with fastmcp to enable)"
+)
 class SmokeTargetTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -56,9 +60,17 @@ class SmokeTargetTest(unittest.TestCase):
     def test_provider_replays_fixture_and_returns_is_json(self) -> None:
         import call_tool as ct
 
-        out = ct.call_api("", {}, {"vars": {
-            "tool": "record_count", "fixture": "records", "args": "{}",
-        }})
+        out = ct.call_api(
+            "",
+            {},
+            {
+                "vars": {
+                    "tool": "record_count",
+                    "fixture": "records",
+                    "args": "{}",
+                }
+            },
+        )
         self.assertIn("output", out, msg=out)
         parsed = json.loads(out["output"])  # is-json would pass
         self.assertEqual(parsed["count"], 3)  # records.json has 3 entries
