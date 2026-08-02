@@ -175,6 +175,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # exist in the yank gate and are exactly the semantics needed here — `~=2.1` and
 # `==2.*` are upper bounds even though neither spells `<`, and a second
 # implementation of that would be a second place for it to be subtly wrong.
+import contextlib
+
 import yank_probe as yp
 
 DEFAULT_INDEX = "https://pypi.org/simple"
@@ -955,10 +957,8 @@ def _terminate(proc: subprocess.Popen[str]) -> None:
         else:  # pragma: no cover - not exercised on Linux CI
             proc.terminate()
     except (OSError, ProcessLookupError):
-        try:
+        with contextlib.suppress(OSError):
             proc.terminate()
-        except OSError:
-            pass
 
 
 def watch(argv: list[str], cwd: Path, seconds: float) -> tuple[str, int | None, str]:

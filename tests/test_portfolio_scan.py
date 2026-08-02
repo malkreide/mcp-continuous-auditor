@@ -688,7 +688,7 @@ class EndToEndTest(unittest.TestCase):
     def test_a_nested_server_is_reported_end_to_end(self) -> None:
         root = _server(self.dir / "host", "host-mcp")
         _server(root / "packages" / "hidden", "hidden-mcp", sdk="mcp>=1.0")
-        rc, data, text = self._run(f"""
+        rc, data, _text = self._run(f"""
             defaults:
               predicates: [nested_manifests]
             targets:
@@ -724,7 +724,7 @@ class EndToEndTest(unittest.TestCase):
 
     def test_predicate_override_applies_to_every_target(self) -> None:
         _server(self.dir / "one", "one-mcp")
-        rc, data, _ = self._run(
+        _rc, data, _ = self._run(
             f"""
             defaults:
               predicates: [manifest, sdk_major, settings_write]

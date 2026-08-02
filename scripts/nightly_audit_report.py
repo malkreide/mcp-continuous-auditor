@@ -35,7 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -596,7 +596,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     graded_layer_ran = profile in ("graded", "full")
 
     return {
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "target": target,
         "target_sha": sha,
         "promptfoo_profile": profile,

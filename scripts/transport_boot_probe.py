@@ -133,6 +133,7 @@ the exit code, not in this report.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import json
 import os
@@ -645,10 +646,9 @@ def _terminate(proc: subprocess.Popen) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
             proc.kill()
-        try:
+        # pragma: no cover - unkillable child
+        with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:  # pragma: no cover - unkillable child
-            pass
 
 
 def _close_streams(proc: subprocess.Popen) -> None:
@@ -657,13 +657,11 @@ def _close_streams(proc: subprocess.Popen) -> None:
     attempt."""
     for stream in (proc.stdin, proc.stdout, proc.stderr):
         if stream is not None:
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 stream.close()
-            except (OSError, ValueError):
-                pass
 
 
-def _drain(queue: "Queue[str | None]", sink: list[str], wait: float = 1.0) -> str:
+def _drain(queue: Queue[str | None], sink: list[str], wait: float = 1.0) -> str:
     """Everything the reader thread has produced, waiting briefly for its EOF
     sentinel. Without the wait, a process that just crashed can lose its last words
     to a race — and those last words ARE the finding (the traceback naming the
@@ -694,7 +692,7 @@ def _tail(text: str, limit: int = 400) -> str:
 # --------------------------------------------------------------------------
 
 
-def _reader_thread(stream: Any, queue: "Queue[str | None]") -> threading.Thread:
+def _reader_thread(stream: Any, queue: Queue[str | None]) -> threading.Thread:
     def run() -> None:
         try:
             for line in iter(stream.readline, ""):
@@ -745,10 +743,10 @@ def probe_stdio(
             f"could not spawn the target: {type(exc).__name__}: {exc}",
         )
 
-    out_q: "Queue[str | None]" = Queue()
+    out_q: Queue[str | None] = Queue()
     err_lines: list[str] = []
     _reader_thread(proc.stdout, out_q)
-    err_q: "Queue[str | None]" = Queue()
+    err_q: Queue[str | None] = Queue()
     _reader_thread(proc.stderr, err_q)
 
     deadline = started + timeout
@@ -932,7 +930,7 @@ def start_listening(
             if i == 0:
                 out.reason = f"could not spawn the target: {type(exc).__name__}: {exc}"
             continue
-        q: "Queue[str | None]" = Queue()
+        q: Queue[str | None] = Queue()
         _reader_thread(proc.stdout, q)
         cap: list[str] = []
         # A guessed variant gets a short leash; the target's own invocation gets

@@ -218,7 +218,7 @@ def unresolved_user_agent(root: Path, dist: str) -> str | None:
     if mentions and not resolved:
         return (
             f"src/ mentions a User-Agent ({mentions[0]}"
-            f"{', +%d more' % (len(mentions) - 1) if len(mentions) > 1 else ''}) "
+            f"{f', +{len(mentions) - 1} more' if len(mentions) > 1 else ''}) "
             "but no value could be resolved — source checked, User-Agent not"
         )
     return None

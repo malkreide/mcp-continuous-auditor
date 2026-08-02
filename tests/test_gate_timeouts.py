@@ -86,8 +86,7 @@ class RunBoundedTest(unittest.TestCase):
         # the next gate would compete with it for the port and the CPU.
         marker = "GATEBOUNDMARKER"
         rc = self._run(
-            "run_bounded 1 bash -c 'bash -c \"exec -a %s sleep 40\" & sleep 40'"
-            % marker
+            f"run_bounded 1 bash -c 'bash -c \"exec -a {marker} sleep 40\" & sleep 40'"
         )
         self.assertEqual(rc, 124)
         alive = subprocess.run(["ps", "-eo", "comm"], capture_output=True, text=True)

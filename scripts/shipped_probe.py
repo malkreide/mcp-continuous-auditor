@@ -127,12 +127,13 @@ import time
 import urllib.error
 import urllib.request
 import venv
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote, urlsplit
 
 try:
@@ -915,8 +916,8 @@ def commits_since(root: Path, ref: str | None) -> list[dict[str, str]]:
 def age_days(iso: str, now: datetime | None = None) -> float:
     stamp = datetime.fromisoformat(iso)
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    reference = now or datetime.now(timezone.utc)
+        stamp = stamp.replace(tzinfo=UTC)
+    reference = now or datetime.now(UTC)
     return (reference - stamp).total_seconds() / 86400.0
 
 
@@ -1765,9 +1766,9 @@ def speak_mcp(
         )
         return out
 
-    q: "Queue[str | None]" = Queue()
+    q: Queue[str | None] = Queue()
     tbp._reader_thread(proc.stdout, q)
-    err_q: "Queue[str | None]" = Queue()
+    err_q: Queue[str | None] = Queue()
     tbp._reader_thread(proc.stderr, err_q)
     err_lines: list[str] = []
     deadline = time.monotonic() + timeout
@@ -2045,9 +2046,7 @@ def render(r: Report) -> str:
     # either. Same reasoning as the boot gate's `not-selected`.
     if r.index_status == "unconfirmed":
         lines += ["", f"⚠️ UNCONFIRMED — {r.index_detail}."]
-    elif r.index_status == "skipped":
-        lines += ["", f"ℹ️ {r.index_detail}."]
-    elif r.index_detail:
+    elif r.index_status == "skipped" or r.index_detail:
         lines += ["", f"ℹ️ {r.index_detail}."]
     if r.yank_source == "unconfirmed":
         lines += ["", f"⚠️ UNCONFIRMED — {r.yank_detail}."]

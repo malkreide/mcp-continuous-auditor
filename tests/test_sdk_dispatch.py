@@ -156,7 +156,7 @@ class ResultShapeTest(unittest.TestCase):
         # field raises AttributeError rather than returning None. Reading with a
         # default is what keeps that from crashing the schema gate.
         class Strict:
-            output_schema = {"ok": True}
+            output_schema = {"ok": True}  # noqa: RUF012 - throwaway stub, not shared state
 
             def __getattr__(self, item: str):
                 raise AttributeError(item)

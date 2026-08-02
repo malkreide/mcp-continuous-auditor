@@ -23,9 +23,10 @@ import json
 import os
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 _SUMMARY_SCHEMA = 1
 
@@ -33,7 +34,7 @@ Opener = Callable[[urllib.request.Request], Any]
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # --- report --------------------------------------------------------------------

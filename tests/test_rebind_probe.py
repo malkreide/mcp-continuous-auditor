@@ -150,7 +150,7 @@ class ProbeMatrixTest(unittest.TestCase):
         # A token inherited from the surrounding environment would make the
         # token-less pass a second copy of the token pass, and the comparison
         # between them is the whole evidence for auth-independence.
-        base = {name: "leftover" for name in rp.AUTH_ENV}
+        base = dict.fromkeys(rp.AUTH_ENV, "leftover")
         env = rp.pass_env(base, ALLOWED, 9000, token="")
         for name in rp.AUTH_ENV:
             self.assertNotIn(name, env)

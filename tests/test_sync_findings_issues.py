@@ -102,7 +102,7 @@ class DecideTest(unittest.TestCase):
 
     def test_ignores_open_issue_without_marker(self) -> None:
         issues = [{"number": 9, "body": "unrelated open issue"}]
-        action, number = sfi.decide(issues, "<!-- nightly-audit:redteam -->")
+        action, _number = sfi.decide(issues, "<!-- nightly-audit:redteam -->")
         self.assertEqual(action, "create")
 
 

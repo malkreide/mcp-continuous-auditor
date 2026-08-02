@@ -37,7 +37,7 @@ import sys
 import tempfile
 import unittest
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -172,7 +172,7 @@ def make_repo(tmp: Path, version: str = "0.2.0") -> Path:
 
 
 def commit(repo: Path, subject: str, days_ago: float = 0.0) -> None:
-    stamp = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+    stamp = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
     (repo / f"f{abs(hash(subject)) % 10_000}.txt").write_text(subject, encoding="utf-8")
     run(repo, "git", "add", "-A")
     subprocess.run(
@@ -737,7 +737,7 @@ class SimpleHtmlTest(unittest.TestCase):
         orig = urllib.request.urlopen
 
         class FakeResponse:
-            headers = {"Content-Type": content_type}
+            headers = {"Content-Type": content_type}  # noqa: RUF012 - throwaway stub, not shared state
 
             def read(self):
                 return body.encode("utf-8")
