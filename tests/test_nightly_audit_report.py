@@ -219,7 +219,7 @@ class ClassifierTest(unittest.TestCase):
         pf = self._write("pf.json", {"results": {"stats": {"errors": 1}, "results": [
             {"error": "boom\n## FAKE ALL GREEN\n\x1b[31mred"},
         ]}})
-        s = self._classify(ev, pf)
+        self._classify(ev, pf)
         report = (self.dir / "report.md").read_text(encoding="utf-8")
         self.assertNotIn("\n## FAKE ALL GREEN", report)  # no injected heading line
         self.assertNotIn("\x1b", report)                 # no terminal escape

@@ -11,7 +11,6 @@ Stdlib-only; needs bash + python3 (both present in the audit environment).
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import tempfile

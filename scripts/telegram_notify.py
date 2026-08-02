@@ -211,7 +211,7 @@ def main() -> int:
         report_body = _read_report(args.report)
         text = f"{text}\n\n{report_body}".strip() if text.strip() else report_body
 
-    if not (args.title.strip() or text.strip() or any(l.strip() for l in args.line)):
+    if not (args.title.strip() or text.strip() or any(ln.strip() for ln in args.line)):
         print("Empty message — nothing sent.")
         return 0
 

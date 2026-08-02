@@ -742,7 +742,7 @@ def classify_smoke(text: str, exit_code: int | None, entrypoint: str,
         tail = "\n".join((text or "").strip().splitlines()[-6:])[:400]
         return Smoke(
             status="crashed", entrypoint=entrypoint, exit_code=exit_code, evidence=evidence,
-            detail=(f"the installed console script crashed"
+            detail=("the installed console script crashed"
                     + (f" (exit {exit_code})" if exit_code is not None else "")
                     + f" within {seconds:.0f}s of starting with stdin closed. "
                       "Importing the package is not the same as starting it, and "
