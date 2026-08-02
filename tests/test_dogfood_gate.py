@@ -43,6 +43,8 @@ jobs:
         run: uv run ruff check
       - name: Type-check
         run: uv run mypy .
+      - name: Open a PR
+        uses: peter-evans/create-pull-request@v6
 """
 
 OWN = """\
@@ -55,6 +57,11 @@ jobs:
 
 TABLE = {
     "steps": {
+        "ci.yml.template::verify::actions/checkout@v4": {"status": "setup"},
+        "ci.yml.template::verify::Open a PR": {
+            "status": "target-only",
+            "note": "acts on the target repo",
+        },
         "ci.yml.template::verify::Lint": {
             "status": "mirrored",
             "by": "lint.yml::ruff::Lint",
@@ -68,24 +75,36 @@ TABLE = {
 
 
 def _steps():
-    return dg.executing_steps(TEMPLATE, "ci.yml.template")
+    return dg.workflow_steps(TEMPLATE, "ci.yml.template")
 
 
 def _own():
-    return set(dg.executing_steps(OWN, "lint.yml"))
+    return set(dg.workflow_steps(OWN, "lint.yml"))
 
 
 class ExecutingStepsTest(unittest.TestCase):
-    def test_only_steps_that_run_are_collected(self):
-        """`uses:`-only steps impose nothing and must not need a classification."""
+    def test_every_step_is_collected_including_uses(self):
+        """`uses:` steps carry shipped behaviour too — skipping them left a
+        hole in the completeness claim (found in review of #55)."""
         self.assertEqual(
             _steps(),
-            ["ci.yml.template::verify::Lint", "ci.yml.template::verify::Type-check"],
+            [
+                "ci.yml.template::verify::actions/checkout@v4",
+                "ci.yml.template::verify::Lint",
+                "ci.yml.template::verify::Type-check",
+                "ci.yml.template::verify::Open a PR",
+            ],
+        )
+
+    def test_uses_step_identity_falls_back_to_the_action_spec(self):
+        wf = "jobs:\n  j:\n    steps:\n      - uses: actions/checkout@v4\n"
+        self.assertEqual(
+            dg.workflow_steps(wf, "x.yml"), ["x.yml::j::actions/checkout@v4"]
         )
 
     def test_unnamed_step_still_yields_a_key(self):
         wf = "jobs:\n  j:\n    steps:\n      - run: echo hi\n"
-        self.assertEqual(dg.executing_steps(wf, "x.yml"), ["x.yml::j::(unnamed)"])
+        self.assertEqual(dg.workflow_steps(wf, "x.yml"), ["x.yml::j::(unnamed)"])
 
 
 class CompareTest(unittest.TestCase):
@@ -95,14 +114,17 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(warnings, ["ci.yml.template::verify::Type-check"])
 
     def test_unclassified_step_is_an_error(self):
-        table = {"steps": {k: v for k, v in TABLE["steps"].items() if "Lint" in k}}
+        """Genau einen Eintrag entfernen — genau ein Befund."""
+        table = {"steps": dict(TABLE["steps"])}
+        del table["steps"]["ci.yml.template::verify::Type-check"]
         errors, _ = dg.compare(_steps(), _own(), table)
-        self.assertEqual(len(errors), 1)
+        self.assertEqual(len(errors), 1, errors)
         self.assertTrue(errors[0].startswith("UNCLASSIFIED:"), errors[0])
+        self.assertIn("Type-check", errors[0])
 
     def test_empty_table_flags_every_step(self):
         errors, _ = dg.compare(_steps(), _own(), {})
-        self.assertEqual(len(errors), 2)
+        self.assertEqual(len(errors), 4)
         self.assertTrue(all(e.startswith("UNCLASSIFIED:") for e in errors), errors)
 
     def test_stale_entry_is_an_error(self):
@@ -150,6 +172,44 @@ class CompareTest(unittest.TestCase):
         errors, warnings = dg.compare(_steps(), _own(), table)
         self.assertEqual(errors, [])
         self.assertEqual(warnings, [])
+
+
+class AmbiguityTest(unittest.TestCase):
+    """Two steps sharing a name collapse to one key — then a single entry
+    classifies both, and a second gate inherits the first one's mirror claim
+    without ever being looked at. Found in review of #55."""
+
+    DUPLICATE = """\
+jobs:
+  verify:
+    steps:
+      - name: Lint
+        run: uv run ruff check
+      - name: Lint
+        run: uv run bandit -r src/
+"""
+
+    def test_duplicate_identities_are_an_error(self):
+        steps = dg.workflow_steps(self.DUPLICATE, "ci.yml.template")
+        self.assertEqual(len(steps), 2, "both steps must reach compare()")
+        table = {
+            "steps": {
+                "ci.yml.template::verify::Lint": {
+                    "status": "mirrored",
+                    "by": "lint.yml::ruff::Lint",
+                }
+            }
+        }
+        errors, _ = dg.compare(steps, _own(), table)
+        self.assertTrue(
+            any(e.startswith("AMBIGUOUS:") for e in errors),
+            f"a second step named Lint passed unseen: {errors}",
+        )
+
+    def test_several_unnamed_steps_in_one_job_are_ambiguous(self):
+        wf = "jobs:\n  j:\n    steps:\n      - run: a\n      - run: b\n"
+        errors, _ = dg.compare(dg.workflow_steps(wf, "x.yml"), set(), {})
+        self.assertTrue(any(e.startswith("AMBIGUOUS:") for e in errors), errors)
 
 
 class RealRepoTest(unittest.TestCase):

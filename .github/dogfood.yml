@@ -9,10 +9,17 @@
 #                own step; the guard verifies that step really exists.
 #   target-only  genuinely inapplicable here (needs an importable MCP server, a
 #                published package, a model key). `note` required.
-#   setup        installs or syncs something; imposes no gate. `note` optional.
+#   setup        plumbing that imposes no gate — checkout, install, sync,
+#                artefact upload. `note` optional.
 #   gap          applicable here, and not run. `note` required. Surfaced as a CI
 #                warning on every run, deliberately not a hard failure — see the
 #                note in scripts/dogfood_gate.py on why.
+#
+# Every step is listed, `uses:`-based ones included. An earlier version skipped
+# those on the reasoning that actions are not gates — which held for
+# `actions/checkout` and stopped there: two templates open issues and PRs
+# through actions, and the guard called itself complete without ever having
+# seen them. Found in review of #55.
 #
 # A template step with no entry here turns the guard red. That is the point:
 # the gap that started this file (`Lint` → `uv run ruff check`, shipped to every
@@ -123,3 +130,59 @@ steps:
     status: target-only
     note: >-
       Regenerates red-team cases against the target server. No server here.
+
+  # ------------------------------------------------ uses-basierte Schritte
+  # Reine Plumbing-Schritte. Sie stehen hier, damit die Liste vollstaendig ist,
+  # nicht weil sie etwas auferlegen.
+
+  "ci.yml.template::verify::actions/checkout@v4":
+    status: setup
+
+  "ci.yml.template::verify::Install uv":
+    status: setup
+
+  "ci.yml.template::determ::actions/checkout@v4":
+    status: setup
+
+  "ci.yml.template::determ::actions/setup-node@v4":
+    status: setup
+
+  "ci.yml.template::determ::Install uv":
+    status: setup
+
+  "ci.yml.template::graded::actions/checkout@v4":
+    status: setup
+
+  "ci.yml.template::graded::actions/setup-node@v4":
+    status: setup
+
+  "ci.yml.template::graded::Install uv":
+    status: setup
+
+  "live-probe.yml.template::probe::actions/checkout@v4":
+    status: setup
+
+  "live-probe.yml.template::probe::actions/setup-python@v5":
+    status: setup
+
+  "live-probe.yml.template::probe::Upload reports":
+    status: setup
+
+  "redteam-regen.yml.template::regen::actions/checkout@v4":
+    status: setup
+
+  "redteam-regen.yml.template::regen::actions/setup-node@v4":
+    status: setup
+
+  "live-probe.yml.template::probe::Open or update the drift tracking issue":
+    status: target-only
+    note: >-
+      Opens an issue in the TARGET repo when its live probe finds drift. The
+      auditor has no upstream of its own to drift against. Not plumbing —
+      shipped behaviour, and the reason the uses-Schritte gehoeren hierher.
+
+  "redteam-regen.yml.template::regen::Open a PR if the red-team set changed":
+    status: target-only
+    note: >-
+      Opens a PR in the TARGET repo with regenerated red-team cases. There is
+      no red-team set here to regenerate.

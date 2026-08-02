@@ -32,15 +32,18 @@ predictable response would be to delete the entry rather than the gap. Warning
 keeps it in every CI run's annotations and in this file, where removing it is a
 visible edit. The classification is enforced; the remedy is scheduled.
 
-Structural rules — all four are hard failures:
+Structural rules — all five are hard failures:
 
-  1. an executing template step with no entry          → UNCLASSIFIED
+  1. a template step with no entry                     → UNCLASSIFIED
   2. an entry for a step that no longer exists         → STALE
   3. `mirrored` whose `by` names no existing own step  → BROKEN MIRROR
   4. `target-only` or `gap` without a `note`           → UNJUSTIFIED
+  5. two steps in one job sharing an identity          → AMBIGUOUS
 
 Rule 3 is the one that ages well: it catches the day someone deletes the own
-lint step and leaves the claim that it exists standing.
+lint step and leaves the claim that it exists standing. Rule 5 closes the way
+around rule 1 — a second step reusing a name would otherwise inherit the first
+one's classification.
 
 Exit codes:
   0  every template step classified, every claim intact (gaps may be warned)
@@ -70,19 +73,31 @@ VALID_STATUS = ("mirrored", "target-only", "setup", "gap")
 NEEDS_NOTE = ("target-only", "gap")
 
 
-def executing_steps(workflow_text: str, label: str) -> list[str]:
-    """`<label>::<job>::<step name>` for every step that runs something.
+def workflow_steps(workflow_text: str, label: str) -> list[str]:
+    """`<label>::<job>::<identity>` for **every** step of the workflow.
 
-    Steps without a `run:` (checkout, setup-python, setup-uv) impose nothing
-    and are not classified — they are actions, not gates.
+    Identity is the step's `name`, falling back to its `uses:` spec, falling
+    back to `(unnamed)`.
+
+    An earlier version collected only steps carrying a `run:`, on the reasoning
+    that `uses:` steps are actions rather than gates. That reasoning held for
+    `actions/checkout` and stopped there: `live-probe.yml.template` opens a
+    drift issue and uploads reports through actions, and
+    `redteam-regen.yml.template` opens a PR through one. Those are shipped
+    behaviour, and the guard reported «fully classified» while never having
+    seen them. A future action-based gate — a CodeQL analyse step, say — would
+    have slipped past `UNCLASSIFIED` in exactly the same way.
+
+    So every step is classified; the plumbing ones simply carry `setup`. That
+    the list is complete matters more than that it is short — a guard whose
+    completeness claim has a hole is the failure mode it exists to prevent.
     """
     doc = yaml.safe_load(workflow_text) or {}
     keys: list[str] = []
     for job_name, job in (doc.get("jobs") or {}).items():
         for step in job.get("steps") or []:
-            if step.get("run") is None:
-                continue
-            keys.append(f"{label}::{job_name}::{step.get('name', '(unnamed)')}")
+            identity = step.get("name") or step.get("uses") or "(unnamed)"
+            keys.append(f"{label}::{job_name}::{identity}")
     return keys
 
 
@@ -100,7 +115,21 @@ def compare(
     errors: list[str] = []
     warnings: list[str] = []
 
+    # Two steps in one job sharing a name collapse to one key, and then a
+    # single entry classifies both. A second step named `Lint` running
+    # `bandit` would inherit the mirror claim of the first and pass unseen.
+    # Identity has to be unique before anything is read from the table.
+    seen: set[str] = set()
     for key in template_steps:
+        if key in seen:
+            errors.append(
+                f"AMBIGUOUS: {key}\n"
+                f"    Two steps in this job share an identity, so one entry "
+                f"would classify both. Give them distinct names."
+            )
+        seen.add(key)
+
+    for key in dict.fromkeys(template_steps):
         entry = entries.get(key)
         if entry is None:
             errors.append(
@@ -155,11 +184,11 @@ def collect(root: Path) -> tuple[list[str], set[str], dict[str, Any]]:
     """Read the templates, the auditor's own workflows and the table."""
     template_steps: list[str] = []
     for path in sorted((root / WORKFLOWS).glob("*.yml.template")):
-        template_steps += executing_steps(path.read_text(encoding="utf-8"), path.name)
+        template_steps += workflow_steps(path.read_text(encoding="utf-8"), path.name)
 
     own_steps: set[str] = set()
     for path in sorted((root / WORKFLOWS).glob("*.yml")):
-        own_steps |= set(executing_steps(path.read_text(encoding="utf-8"), path.name))
+        own_steps |= set(workflow_steps(path.read_text(encoding="utf-8"), path.name))
 
     return template_steps, own_steps, _load(root / TABLE)
 
