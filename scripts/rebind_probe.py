@@ -102,6 +102,8 @@ EXIT CODE — the gate contract
        attributed, or the target never came up. A boot failure is diagnosed by
        the transport boot gate; this gate only records that it could not measure.
   3    the control is NOT CONFIGURED — a category of its own, see above
+  4    MOVED_DURING_RUN — the checkout changed between deriving the launch plan
+       and judging the answers. No verdict; see `probe_provenance`.
   127  the HARNESS could not run. Only this is a hard failure.
 
 Set REBIND_GATE=off to skip the gate entirely.
@@ -145,6 +147,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import probe_provenance  # noqa: E402
 import transport_boot_probe as tbp  # noqa: E402
 
 EXIT_GREEN = 0
@@ -186,6 +189,9 @@ OUT_ENFORCED = "enforced"
 OUT_NOT_CONFIGURED = "not-configured"
 OUT_FINDINGS = "findings"
 OUT_NOT_APPLICABLE = "not-applicable"
+# The checkout moved between deriving the launch plan and judging the answers.
+# Not a verdict — the absence of one. See `probe_provenance`.
+OUT_MOVED = "moved"
 
 
 # --------------------------------------------------------------------------
@@ -893,6 +899,7 @@ def render(
         OUT_NOT_CONFIGURED: "🟡 Control NOT CONFIGURED — neither a pass nor a finding.",
         OUT_FINDINGS: "🚨 Finding — the inbound host check did not hold.",
         OUT_NOT_APPLICABLE: "➖ No network transport — nothing to check.",
+        OUT_MOVED: "⛔ MOVED_DURING_RUN — the checkout moved; no verdict.",
     }[outcome]
     lines = ["# DNS-rebinding gate (inbound Host/Origin allow-list)", "", head, ""]
 
@@ -944,6 +951,7 @@ def main(argv: list[str] | None = None) -> int:
         sse_paths = [
             p for p in (env.get("REBIND_SSE_PATHS") or "/sse/,/sse").split(",") if p
         ]
+        prov = probe_provenance.capture(root)
         derivation = tbp.derive(root)
         knob = detect_knob(root)
     except Exception as exc:  # noqa: BLE001 - the harness itself failed
@@ -980,7 +988,14 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_CANNOT_RUN
 
     outcome, exit_code, reasons = classify(results, knob)
+    prov.recheck()
+    if prov.blocking:
+        # The knob detection and the live probe would be describing two
+        # different trees; a rebinding verdict is not worth guessing at.
+        outcome, exit_code = OUT_MOVED, probe_provenance.EXIT_MOVED
+        reasons = [*reasons, prov.moved_detail()]
     print(render(results, knob, outcome, reasons))
+    print(prov.render(), file=sys.stderr)
 
     report_path = env.get("REBIND_REPORT")
     if report_path:
@@ -988,9 +1003,10 @@ def main(argv: list[str] | None = None) -> int:
             Path(report_path).write_text(
                 json.dumps(
                     {
-                        "schema": 1,
+                        "schema": 2,  # +provenance
                         "outcome": outcome,
                         "exit_code": exit_code,
+                        "provenance": prov.as_dict(),
                         "reasons": reasons,
                         "knob": knob.as_dict(),
                         "allowed_host": allowed_host,

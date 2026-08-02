@@ -7,6 +7,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — every report names the commit it is about (`probe_provenance.py`)
+
+An identity-probe finding (`VERSION = "0.4.0"` as a hand-maintained literal) was
+correct when it was measured and false ten minutes later: `main` had moved, and
+the report named no commit. It was not wrong — it was *unanchored*, which is
+worse, because a wrong finding gets argued with and an unanchored one gets filed.
+
+- **`scripts/probe_provenance.py`** — `capture(target)` at the start of a run,
+  `recheck()` at the end. Records `HEAD`, the branch, whether the checkout is
+  shallow, and a digest of `git status --porcelain`; the digest is what catches
+  a `git stash pop` or an editor save, which move the tree while `HEAD` stays
+  put and which are the commoner case. Probe byproducts (`__pycache__`,
+  egg-info, venvs) are excluded by name — a probe crying wolf at its own
+  footprints is the fastest way to get a check switched off.
+- **Four statuses, not two**: `PINNED`, `PINNED_DIRTY` (it did not move, but the
+  SHA does not reproduce it either), `MOVED_DURING_RUN`, and `UNPINNED` for a
+  target that is not a git checkout — an unpacked sdist is a legitimate target
+  and must not be failed for it.
+- **Exit code `4` = `MOVED_DURING_RUN`**, shared by every probe that reads a
+  tree, and outside the 0/2/3/127 vocabulary the gates already read.
+  `portfolio_scan` maps an unknown code to an error cell, which is the correct
+  reading of a run that reached no verdict.
+- **`decisive=False` for the index probes.** `yank_probe` and `published_probe`
+  read a package index; the checkout only tells them which distribution to ask
+  about. Withdrawing a catalogue finding because somebody committed locally
+  would be superstition, so those runs record and print the move and keep their
+  verdict. `blocking`, not `moved`, is what a probe branches on.
+- Wired into `identity_probe`, `shipped_probe`, `yank_probe`, `published_probe`,
+  `transport_boot_probe`, `rebind_probe`, `live_probe` and `recall_canary`. The
+  three manifest-driven ones pin the *auditor's* commit: "the canary was green"
+  is a different claim depending on which revision of the manifest it walked.
+- `published_probe --format json` now always emits an object
+  (`provenance` / `results` / `coverage`) rather than a bare list. The bare list
+  had nowhere to put the commit, which is the defect being fixed.
+
+### Added — `lockfile_probe.py`: is the declared bound in force where the install happens?
+
+The upper bounds from a portfolio PR were merged, reviewed and green — in
+`pyproject.toml`. `uv.lock` was not regenerated, so its recorded `requires-dist`
+still carried the uncapped range and its pins came from the pre-bound
+resolution. On `main`, the fix was in the file everybody reads and absent from
+the file that installs. `yank_probe` could not see it: that one reads published
+metadata off the index, and this happens earlier, on the branch.
+
+- **`LOCK_DRIFT`** prints *both* diverging specifiers, because "the lock is out
+  of date" is a sentence somebody has to act on and the pair is the whole of the
+  action. Where the difference is specifically a missing cap it says so: *the
+  upper bound is in pyproject.toml and NOT in the lock*.
+- **`LOCK_UNSATISFIED`** — the pinned version is not admitted by the declared
+  specifier. The stronger claim: what installs violates what is declared.
+- **`LOCK_STALE`** from `uv lock --check` / `poetry check --lock`, and a missing
+  tool is *reported*, never counted as agreement. A resolver that could not
+  reach an index has not disagreed with the lock; that is classified apart from
+  staleness so an infrastructure failure is not filed against the repository.
+- Specifiers are compared as parsed clause sets: `>=2.0.0,<3` and `<3,>=2.0.0`
+  are one requirement, `<3` and `<3.0` one bound. Reporting those as drift would
+  have the check muted inside a week.
+- **No lockfile is exit `3`, not a finding.** A library that ships no lock has
+  made a defensible choice, and a red gate there teaches people to commit a lock
+  they never sync from.
+- `uv lock` is only ever invoked **with `--check`** — without it, the command
+  regenerates the very file under audit. A test asserts on the exact argv.
+
+### Added — `doc_claim_probe.py`: the identifiers the documentation cites must exist
+
+An `ARCH-003` justification named ten rubric codes as the ones it had been
+graded against. None of the ten was in `GREEN_RUBRICS`. Review did not catch it,
+because checking meant opening ten files to look up ten constants.
+
+- Checks three shapes, and only inside backticks: **identifier codes**
+  (`LOCK_DRIFT`, `ARCH-003` — a lowercase letter takes a token out of scope,
+  which keeps `Requires-Dist` and `User-Agent` out of the findings), **paths**,
+  and **collection membership** against a constant the code actually defines.
+- Resolution runs against the repository's **non-Markdown** files, so a rubric
+  defined in promptfoo YAML resolves and a code that appears only in the README,
+  the German README and the CHANGELOG does not: that is repetition, not a
+  definition.
+- Fenced blocks are read for **paths only** — a command in an example is a
+  claim, its sample output is illustration.
+- Standards citations and identifiers on lines linking to another repository are
+  exempt **and listed**: this README's `OPS-005` belongs to `mcp-audit-skill`,
+  and an exemption nobody can see is indistinguishable from a blind spot.
+
+### Added — `parity_probe.py`: the EN/DE documentation pair must stay parallel
+
+The portfolio is bilingual, the English side moves first, and both files render
+— so a section that exists in one and not the other is invisible without reading
+both and counting.
+
+- Compares the **heading level skeleton** (never the heading text: `Overview` and
+  `Übersicht` are a correct translation), top-level bullet counts per section,
+  **language-tagged** code blocks, and link targets. Untagged fences are counted
+  but not compared — a directory tree is prose in a monospace font. Comments
+  inside blocks are stripped, whole-line and trailing.
+- Only the **first** heading divergence is reported: after one missing section
+  every later position is shifted, and forty consequential mismatches bury the
+  one that has to be fixed.
+- **`TRANSLATION_LAG`** counts commits touching the base after the last commit
+  touching the translation — the only check that fires while every structural
+  one is green, which is what a half-translated paragraph looks like.
+- The cross-language link is excluded in both directions; it is the one link
+  that is supposed to differ.
+
+### Changed — the README's `## Features` is a reference again, and the case histories moved to `docs/probes/`
+
+Four of the bullets had grown into 400-word paragraphs. The substance was right
+and the section had stopped being usable as a reference — nobody scans a feature
+list to read an incident report.
+
+- Each probe is now **three lines**: the question it asks, what the script does,
+  and the one fact that licenses it — with a link to its page.
+- **`docs/probes/`** carries the case histories, one page per probe (`identity`,
+  `shipped`, `yank`, `published`, `lockfile`, `doc-claim`, `parity`,
+  `provenance`) plus an index that states the rule they all follow: clean,
+  finding and *not measured* are three answers, never two.
+- Both READMEs were changed in the same commit, and `parity_probe` was run
+  against this repository to prove it. `tests/test_parity_probe.py` and
+  `tests/test_doc_claim_probe.py` now each carry a case that holds this
+  repository's own documentation to the check it ships.
+- New skills: `skills/lockfile-probe`, `skills/doc-claim-probe`,
+  `skills/parity-probe`.
+
 ### Added — the repository says which chain it belongs to, and a test keeps it saying so
 
 This repository is the last of five that were written for the same failure class

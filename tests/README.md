@@ -93,6 +93,45 @@ Covers:
   a probe and not a credential holder: no option performs a yank (asserted
   against the argparse surface, not a source grep), no `Authorization` header, no
   `getenv`, and every request a GET. No network, no `git`.
+- `test_lockfile_probe.py` — the lockfile probe (`scripts/lockfile_probe.py`),
+  which asks the neighbouring question to the yank gate's: `pyproject.toml`
+  states the bound, does the lock the deployment installs from state it too?
+  Real `pyproject.toml` / `uv.lock` / `poetry.lock` files are written into a temp
+  dir and the whole comparison runs over them; only the tool subprocess is
+  injected. The central scenario is the incident — bounds merged, the lock not
+  regenerated — and it asserts that BOTH specifiers reach the finding, since
+  "the lock is out of date" is a sentence somebody has to act on. Roughly half
+  the cases are about silence: clause order and trailing zeros are not drift,
+  marker-gated requirements are skipped, and a missing lockfile is exit 3 rather
+  than a finding. `ToolCheckTest` pins the argv itself — `uv lock` **without**
+  `--check` regenerates the file under audit, and the difference between this
+  probe and one that overwrites its own evidence is a single flag.
+- `test_doc_claim_probe.py` — the doc-claim probe
+  (`scripts/doc_claim_probe.py`): every identifier the documentation cites must
+  resolve in the code. Half these tests are about what must NOT be reported —
+  `Requires-Dist`, `PEP-658`, prose outside backticks, sample output inside a
+  fenced block, an identifier belonging to a linked repository — because the
+  check is only useful if a red run means something. `MembershipTest` covers the
+  incident directly: a code cited beside `GREEN_RUBRICS` that the collection does
+  not contain, with the members printed in the finding. `OwnDocumentationTest`
+  holds this repository's own READMEs to the check it ships.
+- `test_parity_probe.py` — the bilingual parity probe
+  (`scripts/parity_probe.py`). The correct-translation cases carry as much weight
+  as the drift ones: translated headings, translated comments inside a command,
+  an untagged fence containing a directory tree and the cross-language link must
+  all stay silent, or the red run becomes something everybody learns to ignore.
+  `LagTest` builds a real git repository rather than stubbing the log, because
+  "how far has the base moved since the translation was last touched" is a
+  question about git's actual behaviour. `OwnDocumentationTest` runs the probe
+  against this repository's own README pair.
+- `test_probe_provenance.py` — the SHA every report carries
+  (`scripts/probe_provenance.py`). Real repositories are built in a temp dir and
+  moved underneath a captured provenance: a commit lands, a file is edited
+  without committing, a `__pycache__` appears. The last one is the interesting
+  test — the probe's own footprints must not count as a move, or every
+  full-depth run reports MOVED_DURING_RUN about itself. Also pins the
+  `decisive=False` path the index probes use, where the move is reported and the
+  verdict stands.
 - `test_portfolio_scan.py` — the portfolio fan-out (`scripts/portfolio_scan.py`).
   Built around the three properties that would have caught the nested server
   left on the old SDK: `nested_manifests` flags an unclaimed manifest below the

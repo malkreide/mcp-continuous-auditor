@@ -120,6 +120,7 @@ from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import probe_provenance  # noqa: E402
 import shipped_probe as sp
 
 EXIT_GREEN = 0
@@ -407,11 +408,17 @@ class Report:
     truncated: int = 0
     findings: list[Finding] = field(default_factory=list)
     harness_error: str = ""
+    # The checkout the distribution name was read from. Not decisive — every
+    # finding below is about the index, and withdrawing one because somebody
+    # committed locally would be superstition. It is recorded so the report
+    # still names the state it was launched from.
+    provenance: probe_provenance.Provenance | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "schema": 1,
+            "schema": 2,  # +provenance
             "probe": "yank",
+            "provenance": self.provenance.as_dict() if self.provenance else None,
             "dist": self.dist,
             "index_url": self.index_url,
             "index_status": self.index_status,
@@ -927,6 +934,8 @@ def run(
 
 def render(report: Report) -> str:
     lines = [f"yank probe — {report.dist} on {report.index_url}"]
+    if report.provenance is not None:
+        lines.append(f"  {report.provenance.render()}")
     if report.harness_error:
         lines.append(f"  HARNESS: {report.harness_error}")
         return "\n".join(lines)
@@ -1004,7 +1013,9 @@ def main(argv: list[str] | None = None) -> int:
         print("no distribution name — pass --dist", file=sys.stderr)
         return EXIT_CANNOT_RUN
 
+    prov = probe_provenance.capture(Path(args.target), decisive=False)
     report = run(dist, args.index_url, args.timeout, args.max_versions)
+    report.provenance = prov.recheck()
 
     if args.format == "json":
         print(json.dumps(report.as_dict(), indent=2))

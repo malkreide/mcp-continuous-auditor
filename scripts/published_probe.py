@@ -177,6 +177,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # implementation of that would be a second place for it to be subtly wrong.
 import contextlib
 
+import probe_provenance  # noqa: E402
 import yank_probe as yp
 
 DEFAULT_INDEX = "https://pypi.org/simple"
@@ -1448,6 +1449,11 @@ def main() -> int:
         )
         return 2
 
+    # Der Stand dieses Repos, nicht der Ziele: die Zielliste und die Schwellen
+    # kommen von hier. Nicht entscheidend — gemessen wird das Artefakt auf dem
+    # Index, und ein Commit hier zieht keinen Befund zurueck.
+    prov = probe_provenance.capture_auditor()
+
     results = []
     for dist in targets:
         try:
@@ -1479,30 +1485,34 @@ def main() -> int:
 
     # Ein Ziel ohne Ergebnis waere ein stiller Ausfall — genau die Sorte, die
     # aussieht wie ein sauberer Lauf. Beides zaehlt gegen dieselbe Soll-Zahl.
+    prov.recheck()
     missing = [d for d in targets if d not in {r.dist for r in results}]
     coverage_ok = not args.manifest or (
         len(results) + len(skipped) == expected and not missing
     )
 
     if args.format == "json":
-        # Ohne --manifest bleibt die Ausgabe die blanke Liste wie bisher; mit
-        # --manifest wird sie ein Objekt, weil die Abdeckung Teil des Ergebnisses
-        # ist und nicht als Kommentar danebenstehen darf.
+        # Die Ausgabe ist immer ein Objekt: die blanke Liste hatte keinen Platz
+        # fuer die Provenienz, und ein Report, der den Stand nicht benennt, den
+        # er beschreibt, ist genau der Mangel, den `probe_provenance` behebt.
         payload = [_as_dict(r) for r in results]
-        out: Any = payload
+        out: dict[str, Any] = {
+            "schema": 1,
+            "probe": "published",
+            "provenance": prov.as_dict(),
+            "results": payload,
+        }
         if args.manifest:
-            out = {
-                "coverage": {
-                    "expected": expected,
-                    "probed": len(results),
-                    "skipped": [{"name": n, "reason": why} for n, why in skipped],
-                    "missing": missing,
-                    "complete": coverage_ok,
-                },
-                "results": payload,
+            out["coverage"] = {
+                "expected": expected,
+                "probed": len(results),
+                "skipped": [{"name": n, "reason": why} for n, why in skipped],
+                "missing": missing,
+                "complete": coverage_ok,
             }
         print(json.dumps(out, indent=2, ensure_ascii=False))
     else:
+        print(prov.render())
         for r in results:
             print(render(r))
         if args.manifest:

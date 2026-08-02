@@ -58,10 +58,15 @@ metadata is written at install time, so an editable install keeps reporting
 the pre-bump version until it is reinstalled. Source can be perfect and the
 artifact still wrong.
 
+Every report carries the commit it is about (see ``probe_provenance``): this
+probe's own first field report was already false ten minutes later because
+``main`` had moved and the report named no SHA.
+
 Exit codes:
   0  no findings
   1  findings (all categories reported before exiting)
   2  the target is not shaped as expected (no pyproject.toml)
+  4  the checkout moved during the run — no verdict (``probe_provenance``)
 
 Usage:
   python scripts/identity_probe.py --target ../swiss-environment-mcp
@@ -80,6 +85,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import probe_provenance  # noqa: E402
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10 — tomllib landed in 3.11
@@ -96,6 +105,7 @@ class Report:
     hardcoded: list[dict[str, Any]] = field(default_factory=list)
     runtime: dict[str, str] | None = None
     unresolved: str | None = None
+    provenance: probe_provenance.Provenance | None = None
 
     @property
     def drift(self) -> list[dict[str, str]]:
@@ -293,9 +303,16 @@ def probe(target: Path, check_installed: bool) -> Report:
 
 
 def render(report: Report) -> str:
+    # The provenance line is a prefix, not a finding — it is kept out of `out`
+    # so that "nothing was found" stays the test for the OK sentence below.
+    head = [report.provenance.render()] if report.provenance is not None else []
+    if report.provenance is not None and report.provenance.blocking:
+        return "\n".join([*head, report.provenance.moved_detail()])
     out: list[str] = []
     if report.version == "(dynamic)":
-        return f"{report.dist}: dynamic version — identity probe skipped."
+        return "\n".join(
+            [*head, f"{report.dist}: dynamic version — identity probe skipped."]
+        )
     for d in report.drift:
         out.append(
             f"DRIFT      {d['where']} = {d['value']!r} (pyproject {report.version!r})"
@@ -313,8 +330,10 @@ def render(report: Report) -> str:
         out.append(f"NOTE       {report.runtime['detail']}")
     if not out:
         checked = ", ".join(d["where"] for d in report.declared) or "no further places"
-        return f"identity OK ({report.dist} {report.version}; checked: {checked}; src/ clean)"
-    return "\n".join(out)
+        out.append(
+            f"identity OK ({report.dist} {report.version}; checked: {checked}; src/ clean)"
+        )
+    return "\n".join([*head, *out])
 
 
 def main() -> int:
@@ -336,7 +355,11 @@ def main() -> int:
         )
         return 2
 
+    # Captured before the first file is read and re-read after the last one:
+    # every sentence below is about the commit named here, or about none.
+    prov = probe_provenance.capture(target)
     report = probe(target, args.installed)
+    report.provenance = prov.recheck()
 
     if args.format == "json":
         print(
@@ -348,7 +371,10 @@ def main() -> int:
                     "hardcoded": report.hardcoded,
                     "unresolved": report.unresolved,
                     "runtime": report.runtime,
-                    "ok": report.ok,
+                    "provenance": prov.as_dict(),
+                    # A run that moved reports no verdict at all, so `ok` would
+                    # be a claim it is not entitled to make.
+                    "ok": None if prov.blocking else report.ok,
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -357,6 +383,8 @@ def main() -> int:
     else:
         print(render(report))
 
+    if prov.blocking:
+        return probe_provenance.EXIT_MOVED
     return 0 if report.ok else 1
 
 

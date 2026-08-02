@@ -82,6 +82,10 @@ EXIT CODE — the gate contract (see nightly-audit.sh / nightly_audit_report.py)
        could not be located at all (mirrors the schema gate: absence is a finding,
        not a pass). Switch the gate off with BOOT_GATE=off if a target genuinely
        cannot be booted here.
+  4    MOVED_DURING_RUN: HEAD or the working tree changed between deriving the
+       launch plan and judging the boot, so the plan and the verdict are about
+       two different trees. Outranks 2 — a boot judged against a tree it was not
+       launched from must not be charged to the target. See `probe_provenance`.
   3    NOT MEASURED: the entrypoint exited cleanly without listening and no
        transport flag got it to serve, so this gate never managed to ASK for that
        transport. Neither a pass nor a finding — the same shape as the rebinding
@@ -148,6 +152,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import probe_provenance  # noqa: E402
 
 # Gate contract — deliberately the same numbers as the auditor's own classifier.
 EXIT_GREEN = 0
@@ -1616,6 +1624,9 @@ def main(argv: list[str] | None = None) -> int:
         sse_paths = [
             p for p in (env.get("BOOT_SSE_PATHS") or "/sse/,/sse").split(",") if p
         ]
+        # Captured before `derive` reads the first file: the derivation, the
+        # launch plan and every boot below are claims about this commit.
+        prov = probe_provenance.capture(root)
         derivation = derive(root)
     except Exception as exc:  # noqa: BLE001 - the harness itself failed
         print(
@@ -1658,11 +1669,20 @@ def main(argv: list[str] | None = None) -> int:
     report = render(results, derivation)
     print(report)
 
+    prov.recheck()
+    print(prov.render(), file=sys.stderr)
+
     # A real failure outranks a not-selected: if stdio genuinely did not come up,
     # that is the finding, whatever we could not ask of the HTTP transport.
     failed = [r for r in results if r.status == FAIL]
     unselected = [r for r in results if r.status == NOT_SELECTED]
-    if failed:
+    if prov.blocking:
+        # Ahead of the failure branch on purpose: a boot that was launched from
+        # one tree and judged against another has not measured anything, and
+        # calling that a finding would put a defect on the target's account.
+        print(f"transport-boot: {prov.moved_detail()}", file=sys.stderr)
+        outcome, exit_code = "moved", probe_provenance.EXIT_MOVED
+    elif failed:
         outcome, exit_code = "findings", EXIT_FINDINGS
     elif unselected:
         outcome, exit_code = "not-measured", EXIT_NOT_MEASURED
@@ -1675,9 +1695,10 @@ def main(argv: list[str] | None = None) -> int:
             Path(report_path).write_text(
                 json.dumps(
                     {
-                        "schema": 1,
+                        "schema": 2,  # +provenance
                         "outcome": outcome,
                         "exit_code": exit_code,
+                        "provenance": prov.as_dict(),
                         "derivation": derivation.as_dict(),
                         "transports": [r.as_dict() for r in results],
                     },
