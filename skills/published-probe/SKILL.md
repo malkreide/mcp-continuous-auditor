@@ -34,6 +34,47 @@ Each run creates a throwaway venv per distribution and removes it afterwards.
 Expect roughly a minute per package; this is not a fast check and is not meant
 to run on every commit. Its place is after a release, and in a periodic sweep.
 
+## Portfolio-wide: take the target list from the manifest
+
+Never hand-assemble the list of distributions for a fleet-wide run. On
+2026-07-31 such a run reported **"33 of 33 ok"** — true, and about the wrong
+set: `portfolio.json` listed 43 active servers, and ten had never been on the
+command line. Seven were `core`; one was `meteoswiss-mcp`, whose broken release
+is the incident `shipped_probe.py` exists for. Nothing contradicted the number,
+because nothing compared it against the source of truth.
+
+```bash
+# in swiss-public-data-mcp
+python scripts/coverage_manifest.py --format json > manifest.json
+
+# here
+python scripts/published_probe.py --manifest manifest.json
+python scripts/published_probe.py --manifest manifest.json \
+    --allow-skip meteoswiss-mcp:"upstream down, ticket #12"
+```
+
+Every such run ends with a coverage line, and an entry may only be left out with
+a stated reason:
+
+```
+42/43 geprueft — uebersprungen: MCP-Server-for-patent-research- (kein Paket auf dem Index …)
+```
+
+Three rules hold the mechanism up, and each of them exists because dropping it
+produces a green run that measured nothing:
+
+* Coverage counts **every** manifest entry, including the ones that publish no
+  package — otherwise the denominator depends on the same judgement the check
+  exists to audit.
+* An **empty** manifest is refused. `0/0 geprueft` with exit 0 is not
+  distinguishable from an audited portfolio.
+* A **missing** `pypi_dist` key is refused rather than read as `null`. If the
+  producer ever renames the field, every entry would otherwise become a
+  justified omission: nothing measured, coverage complete, exit 0.
+
+A target that produced no result at all appears as `OHNE ERGEBNIS` and fails the
+run: a sweep that quietly stops halfway looks exactly like a clean one.
+
 ## Always pass `--version` after a release
 
 `pip install <dist>` was measured serving the PREVIOUS artifact for minutes
