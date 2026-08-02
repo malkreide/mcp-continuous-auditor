@@ -22,21 +22,25 @@ import published_probe as pp  # noqa: E402
 DIST = "demo-mcp"
 
 
-def classify(findings: list[pp.Finding], installed: str, mentions_ua: bool) -> str:
-    """The status rules of probe(), applied to an already-taken measurement."""
-    result = pp.Result(dist=DIST, installed=installed, findings=findings, mentions_ua=mentions_ua)
+def measured(findings: list[pp.Finding] | None = None, installed: str = "1.2.3",
+             mentions_ua: bool = True, **over) -> pp.Result:
+    """A Result as `probe()` would leave it, without a venv or an index."""
+    result = pp.Result(dist=DIST, installed=installed, findings=findings or [],
+                       mentions_ua=mentions_ua, **over)
     for f in result.findings:
         f.own = pp._is_own(f.value, DIST)
         f._ok = f.own and f.sent_version == installed
-    foreign = [f for f in result.findings if not f.own]
-    graded = [f for f in result.findings if f.own and f.sent_version is not None]
-    if graded and not all(f._ok for f in graded):
-        return "drift"
-    if foreign:
-        return "foreign_user_agent"
-    if graded:
-        return "ok"
-    return "unverified" if mentions_ua else "no_user_agent"
+    return result
+
+
+def classify(findings: list[pp.Finding], installed: str, mentions_ua: bool) -> str:
+    """The status rules of probe(), applied to an already-taken measurement.
+
+    Calls the real `decide_status` rather than restating it. The helper used to
+    be a copy of the rules, which meant a change to the probe's precedence could
+    not fail a test — the copy moved with nothing.
+    """
+    return pp.decide_status(measured(findings, installed, mentions_ua))[0]
 
 
 def finding(value: str, evidence: str = "runtime") -> pp.Finding:
@@ -180,9 +184,323 @@ class ExitStatusTest(unittest.TestCase):
             ("unverified", False),
             ("foreign_user_agent", False),
             ("install_failed", False),
+            ("broken_import", False),
+            ("smoke_failed", False),
+            ("smoke_unverified", False),
+            ("unbounded_dependency", False),
         ):
             with self.subTest(status=status):
                 self.assertEqual(pp.Result(dist="x", status=status).ok, expected)
+
+
+def check(module: str = "demo_mcp.private", kind: str = "submodule") -> pp.ImportCheck:
+    return pp.ImportCheck(module=module, root=module.split(".")[0], kind=kind,
+                          error="ImportError: cannot import name 'x'")
+
+
+class ImportVerdictTest(unittest.TestCase):
+    """`bag-health-mcp` was reported as having a circular import. It has none.
+
+    What failed was importing the private submodule as the very FIRST import of
+    the process — an artefact of the order this probe walked the modules in.
+    `import bag_health_mcp.server` runs cleanly in a fresh venv, which is what a
+    user's code does, and that is the measurement that decides.
+    """
+
+    def test_cold_fails_and_warm_succeeds_is_an_import_order_artefact(self) -> None:
+        got = pp.classify_import(check(), cold={"ok": False, "error": "ImportError: x"},
+                                 warm={"ok": True, "error": ""})
+        self.assertEqual(got.verdict, "order-artifact")
+        self.assertFalse(got.real)
+
+    def test_warm_failing_is_a_real_broken_import(self) -> None:
+        """The rule: import the root first, and whatever still fails is real."""
+        got = pp.classify_import(check(), cold={"ok": False, "error": "boom"},
+                                 warm={"ok": False, "error": "ImportError: no mcp.server.fastmcp"})
+        self.assertEqual(got.verdict, "real")
+        self.assertTrue(got.real)
+        self.assertIn("fastmcp", got.warm_error)
+
+    def test_neither_reproduces_is_named_apart_from_an_order_artefact(self) -> None:
+        """Both fresh imports work: the bulk scan's own state produced it.
+
+        Reported as `not-reproduced` rather than `order-artifact`, because
+        claiming it was the ORDER would be claiming something not measured.
+        """
+        got = pp.classify_import(check(), cold={"ok": True, "error": ""},
+                                 warm={"ok": True, "error": ""})
+        self.assertEqual(got.verdict, "not-reproduced")
+        self.assertFalse(got.real)
+
+    def test_a_missing_extras_only_dependency_is_not_the_server_being_broken(self) -> None:
+        """A shipped test module importing `pytest` fails for every user, and
+        says nothing about the server. `pip install <dist>` installs no extras."""
+        conditional = pp.conditional_names(['pytest>=8; extra == "dev"'])
+        got = pp.classify_import(
+            check("demo_mcp.tests.test_api"),
+            cold={"ok": False, "error": "ModuleNotFoundError: No module named 'pytest'"},
+            warm={"ok": False, "error": "ModuleNotFoundError: No module named 'pytest'"},
+            conditional=conditional)
+        self.assertEqual(got.verdict, "optional-dep")
+        self.assertFalse(got.real)
+
+    def test_a_missing_module_nothing_declares_stays_real(self) -> None:
+        """Measured against `cowsay` 6.1: its shipped `cowsay.tests.*` import
+        `pytest` with no requirement declaring it anywhere. That genuinely does
+        not import for anyone who ran `pip install cowsay`."""
+        got = pp.classify_import(
+            check("demo_mcp.tests.test_api"),
+            cold={"ok": False, "error": "ModuleNotFoundError: No module named 'pytest'"},
+            warm={"ok": False, "error": "ModuleNotFoundError: No module named 'pytest'"},
+            conditional=set())
+        self.assertEqual(got.verdict, "real")
+
+    def test_an_unconditional_dependency_is_never_excused(self) -> None:
+        """`mcp` missing is the incident, not an extra."""
+        conditional = pp.conditional_names(["mcp>=1.20.0", 'ruff; extra == "dev"'])
+        self.assertEqual(conditional, {"ruff"})
+        got = pp.classify_import(
+            check(), cold={"ok": False, "error": "x"},
+            warm={"ok": False, "error": "ModuleNotFoundError: No module named 'mcp'"},
+            conditional=conditional)
+        self.assertEqual(got.verdict, "real")
+
+    def test_a_verification_that_could_not_run_counts_as_real(self) -> None:
+        """Fail closed. An unverified failure is not a pass — see `unverified`."""
+        got = pp.classify_import(check(), cold={"error": "no parseable output"},
+                                 warm={"error": "no parseable output"})
+        self.assertEqual(got.verdict, "unconfirmed")
+        self.assertTrue(got.real)
+
+    def test_a_real_broken_import_decides_the_status(self) -> None:
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
+                                             {"ok": False, "error": "x"})]
+        status, detail = pp.decide_status(result)
+        self.assertEqual(status, "broken_import")
+        self.assertIn("demo_mcp.private", detail)
+
+    def test_an_artefact_does_not_decide_the_status(self) -> None:
+        """The regression this whole distinction exists to prevent."""
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
+                                             {"ok": True, "error": ""})]
+        self.assertEqual(pp.decide_status(result)[0], "ok")
+
+    def test_the_artefact_is_still_rendered_rather_than_swallowed(self) -> None:
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
+                                             {"ok": True, "error": ""})]
+        result.status, result.detail = pp.decide_status(result)
+        self.assertIn("IMPORT-ORD", pp.render(result))
+
+
+class StartEventTest(unittest.TestCase):
+    def test_a_structured_log_line_counts(self) -> None:
+        self.assertTrue(pp.has_start_event('{"event": "server.start", "transport": "stdio"}'))
+
+    def test_a_plain_text_line_counts(self) -> None:
+        self.assertTrue(pp.has_start_event("2026-08-01 INFO server.start transport=stdio"))
+
+    def test_a_structured_line_with_another_event_does_not(self) -> None:
+        """Read by field, not by substring — a JSON line is not grepped."""
+        self.assertFalse(pp.has_start_event('{"event": "config.load", "note": "server.start"}'))
+
+    def test_silence_is_not_a_start(self) -> None:
+        self.assertFalse(pp.has_start_event("Loading config...\nReady.\n"))
+
+    def test_the_event_name_is_configurable(self) -> None:
+        self.assertTrue(pp.has_start_event('{"event": "boot"}', event="boot"))
+
+
+class SmokeTest(unittest.TestCase):
+    """Import success is not start success — the whole reason this stage exists."""
+
+    def test_the_event_and_a_clean_exit_is_a_pass(self) -> None:
+        """stdin is CLOSED, so a stdio server announcing and then exiting 0 on
+        EOF is the healthy shape. The exit code is not the signal."""
+        got = pp.classify_smoke('{"event": "server.start"}\n', 0, "demo-mcp", 6.0)
+        self.assertEqual(got.status, "ok")
+
+    def test_still_running_after_the_window_with_the_event_is_a_pass(self) -> None:
+        got = pp.classify_smoke("server.start listening\n", None, "demo-mcp", 6.0)
+        self.assertEqual(got.status, "ok")
+
+    def test_a_nonzero_exit_is_a_crash(self) -> None:
+        got = pp.classify_smoke("ValueError: settings are read-only\n", 1, "demo-mcp", 6.0)
+        self.assertEqual(got.status, "crashed")
+
+    def test_a_traceback_with_a_zero_exit_is_still_a_crash(self) -> None:
+        """A server that swallows its own exception still did not come up."""
+        text = 'Traceback (most recent call last)\n  File "x"\nValueError: boom\n'
+        self.assertEqual(pp.classify_smoke(text, 0, "demo-mcp", 6.0).status, "crashed")
+
+    def test_no_event_and_no_crash_is_not_a_pass(self) -> None:
+        """Same rule as `unverified`: not seeing it is not evidence it happened."""
+        got = pp.classify_smoke("nothing to say\n", 0, "demo-mcp", 6.0)
+        self.assertEqual(got.status, "no_event")
+        self.assertIn("not a pass", got.detail)
+
+    def test_a_crash_decides_the_status_over_a_clean_user_agent(self) -> None:
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        result.smoke = pp.classify_smoke("Traceback (most recent call last)\n", 1,
+                                         "demo-mcp", 6.0)
+        self.assertEqual(pp.decide_status(result)[0], "smoke_failed")
+
+    def test_drift_outranks_an_unannounced_start(self) -> None:
+        """Positive evidence about the wire beats the absence of evidence."""
+        result = measured([finding("demo-mcp/0.1.0")], "1.2.3", True)
+        result.smoke = pp.classify_smoke("quiet\n", 0, "demo-mcp", 6.0)
+        self.assertEqual(pp.decide_status(result)[0], "drift")
+
+    def test_a_missing_console_script_is_a_failed_smoke(self) -> None:
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        result.smoke = pp.Smoke(status="no_entrypoint", detail="no console script")
+        self.assertEqual(pp.decide_status(result)[0], "smoke_failed")
+
+    def test_a_skipped_smoke_changes_nothing(self) -> None:
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        self.assertEqual(pp.decide_status(result)[0], "ok")
+
+
+class WatchTest(unittest.TestCase):
+    """The process half of the smoke stage, against a real subprocess.
+
+    `classify_smoke` above decides what an outcome MEANS; this asserts the
+    outcomes are produced at all — stdin really closed, output really drained,
+    a server that outlives the window really terminated.
+    """
+
+    FIXTURE = Path(__file__).resolve().parent / "fixtures" / "published_smoke_server.py"
+
+    def _watch(self, mode: str, seconds: float = 3.0):
+        text, code, error = pp.watch([sys.executable, str(self.FIXTURE), mode],
+                                     Path(self.FIXTURE).parent, seconds)
+        self.assertEqual(error, "")
+        return text, code
+
+    def test_a_server_that_outlives_the_window_is_still_running(self) -> None:
+        text, code = self._watch("announce", seconds=1.0)
+        self.assertIsNone(code)
+        self.assertEqual(pp.classify_smoke(text, code, "x", 1.0).status, "ok")
+
+    def test_a_stdio_server_exits_zero_on_the_closed_stdin(self) -> None:
+        """stdin is CLOSED by the probe; surviving EOF is the correct behaviour
+        and must not be read as the server falling over."""
+        text, code = self._watch("eof")
+        self.assertEqual(code, 0)
+        self.assertEqual(pp.classify_smoke(text, code, "x", 3.0).status, "ok")
+
+    def test_a_crash_at_start_is_seen(self) -> None:
+        text, code = self._watch("crash")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(pp.classify_smoke(text, code, "x", 3.0).status, "crashed")
+
+    def test_a_silent_server_is_not_a_pass(self) -> None:
+        text, code = self._watch("quiet")
+        self.assertEqual(pp.classify_smoke(text, code, "x", 3.0).status, "no_event")
+
+    def test_a_server_that_floods_stdout_does_not_deadlock_the_probe(self) -> None:
+        """More output than a pipe buffer holds. A probe that waits for exit
+        without draining hangs here until its own timeout and then reports a
+        failure that never happened."""
+        text, code = self._watch("flood", seconds=3.0)
+        self.assertIsNone(code)
+        self.assertEqual(pp.classify_smoke(text, code, "x", 3.0).status, "ok")
+
+    def test_a_missing_entrypoint_reports_rather_than_raises(self) -> None:
+        text, code, error = pp.watch(["/nonexistent/entrypoint"], Path("."), 2.0)
+        self.assertTrue(error)
+        self.assertEqual((text, code), ("", None))
+
+
+def caps(requires: list[str], imported: set[str], versions: dict[str, list[str] | None]):
+    return pp.dependency_caps(requires, imported, DIST, lambda n: versions.get(n))
+
+
+class DependencyCapTest(unittest.TestCase):
+    """`swiss-energy-mcp` 0.3.3 shipped `mcp[cli]>=1.20.0` with no upper bound.
+
+    The artifact never changed. `mcp` 2.0.0 was published, and every fresh
+    install of that release died on import. Nothing in the repository was wrong
+    on the day it was written; the published metadata met a new major.
+    """
+
+    def test_an_open_range_with_a_published_major_past_it_is_a_finding(self) -> None:
+        got = caps(["mcp[cli]>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "1.28.1", "2.0.0"]})
+        self.assertEqual([c.verdict for c in got], ["major-available"])
+        self.assertIn("2.0.0", got[0].detail)
+        self.assertTrue(got[0].finding)
+
+    def test_an_open_range_with_no_higher_major_yet_is_armed_not_a_finding(self) -> None:
+        """The day before. Reported, because the trap is real; not red, because
+        nothing has happened yet."""
+        got = caps(["mcp[cli]>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "1.28.1"]})
+        self.assertEqual([c.verdict for c in got], ["armed"])
+        self.assertFalse(got[0].finding)
+
+    def test_an_upper_bound_is_recognised_in_all_its_spellings(self) -> None:
+        """`~=` and `==2.*` bound the major without ever spelling `<`."""
+        for spec in ("mcp>=1.20,<2", "mcp~=1.20.0", "mcp==1.28.1"):
+            with self.subTest(spec=spec):
+                got = caps([spec], {"mcp"}, {"mcp": ["1.20.0", "2.0.0"]})
+                self.assertEqual([c.verdict for c in got], ["capped"])
+
+    def test_a_declared_but_never_imported_dependency_is_not_reported(self) -> None:
+        """Import-critical is MEASURED, from sys.modules, not assumed from the
+        requirement list. A dependency that is never imported cannot break an
+        import, and a finding about it would be a finding about nothing."""
+        got = caps(["rich>=13"], set(), {"rich": ["13.0", "14.0"]})
+        self.assertEqual(got, [])
+
+    def test_an_environment_gated_requirement_is_skipped(self) -> None:
+        """`extra == 'dev'` is not what `pip install` gives a user."""
+        got = caps(['pytest>=8; extra == "dev"'], {"pytest"}, {"pytest": ["8.0", "9.0"]})
+        self.assertEqual(got, [])
+
+    def test_an_unreadable_index_is_unknown_and_never_capped(self) -> None:
+        got = caps(["mcp>=1.20.0"], {"mcp"}, {"mcp": None})
+        self.assertEqual([c.verdict for c in got], ["unknown"])
+        self.assertFalse(got[0].finding)
+
+    def test_a_prerelease_major_does_not_count_as_published(self) -> None:
+        """`2.0.0rc1` is not what a default resolver takes."""
+        got = caps(["mcp>=1.20.0"], {"mcp"}, {"mcp": ["1.28.1", "2.0.0rc1"]})
+        self.assertEqual([c.verdict for c in got], ["armed"])
+
+    def test_an_open_range_decides_the_status_when_nothing_sharper_did(self) -> None:
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        result.caps = caps(["mcp>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "2.0.0"]})
+        status, detail = pp.decide_status(result)
+        self.assertEqual(status, "unbounded_dependency")
+        self.assertIn("mcp", detail)
+
+    def test_a_broken_import_outranks_it(self) -> None:
+        """It already happened; the warning about it happening is not the news."""
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        result.caps = caps(["mcp>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "2.0.0"]})
+        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
+                                             {"ok": False, "error": "no mcp.server.fastmcp"})]
+        self.assertEqual(pp.decide_status(result)[0], "broken_import")
+
+
+class RenderTest(unittest.TestCase):
+    def test_every_layer_gets_a_line_not_just_the_headline(self) -> None:
+        """A package can drift AND fail to import AND carry an open range.
+
+        Only one of those can be the status. Printing only that one would hide
+        two true facts behind a precedence rule.
+        """
+        result = measured([finding("demo-mcp/0.1.0")], "1.2.3", True)
+        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
+                                             {"ok": False, "error": "x"})]
+        result.caps = caps(["mcp>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "2.0.0"]})
+        result.smoke = pp.classify_smoke("quiet\n", 0, "demo-mcp", 6.0)
+        result.status, result.detail = pp.decide_status(result)
+        text = pp.render(result)
+        for marker in ("BROKEN-IMP", "SMOKE-?", "UNCAPPED", "DRIFT"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, text)
 
 
 if __name__ == "__main__":

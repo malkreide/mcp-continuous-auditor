@@ -23,10 +23,12 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -81,7 +83,11 @@ class TargetsFileTest(unittest.TestCase):
     def test_the_committed_example_parses(self) -> None:
         targets, defaults = ps.load_targets(EXAMPLE)
         self.assertGreaterEqual(len(targets), 3)
-        self.assertEqual(defaults.get("ref"), "main")
+        # No `ref` default, and that is the point: an unset ref is resolved
+        # against the remote at clone time. Three repositories in this portfolio
+        # are on `master`, and a default of `main` clones nothing there.
+        self.assertIsNone(defaults.get("ref"))
+        self.assertEqual([t.ref for t in targets], [""] * len(targets))
         self.assertEqual(targets[0].repo, "malkreide/zurich-opendata-mcp")
         # Per-target overrides win over defaults.
         opted_in = [t for t in targets if "boot" in t.predicates]
@@ -391,6 +397,173 @@ class MatrixTest(unittest.TestCase):
         self.assertIn("| `o/a` |", text)
         self.assertIn("| `o/b` |", text)
 
+    def test_the_matrix_names_the_ref_it_measured(self) -> None:
+        """Three of these repositories are on `master`. A report that does not
+        say which branch it read cannot be checked."""
+        row = self._row("o/a", sdk_major="2")
+        row.ref = "master"
+        text = ps.render([row], ["sdk_major"], [], "green")
+        self.assertIn("| `master` |", text)
+
+
+class CoverageTest(unittest.TestCase):
+    """Three servers fell out of the tracking for half a day.
+
+    Nothing was red. Nothing was even reported — they were simply not in the
+    runs, and every run that did happen said "no findings" about the servers it
+    had looked at, which reads exactly like "no findings". It was noticed only
+    because 26 + 4 did not come to 33.
+    """
+
+    @staticmethod
+    def _targets(n: int) -> list[ps.Target]:
+        return [ps.Target(repo=f"o/r{i}") for i in range(n)]
+
+    def test_a_full_run_is_complete(self) -> None:
+        ts = self._targets(3)
+        cov = ps.assess_coverage(ts, ts, None, False)
+        self.assertTrue(cov.complete)
+        self.assertEqual(cov.skipped, [])
+
+    def test_a_narrowed_run_names_what_it_left_out(self) -> None:
+        """By NAME, not by count. A count is what the campaign already had."""
+        ts = self._targets(3)
+        cov = ps.assess_coverage(ts, ts[:2], None, False)
+        self.assertFalse(cov.complete)
+        self.assertEqual(cov.skipped, ["o/r2"])
+        self.assertIn("o/r2", cov.detail)
+
+    def test_a_short_targets_file_cannot_be_covered_by_any_selection(self) -> None:
+        ts = self._targets(30)
+        cov = ps.assess_coverage(ts, ts, 33, False)
+        self.assertFalse(cov.complete)
+        self.assertIn("33 were expected", cov.detail)
+
+    def test_an_incomplete_run_gives_no_overall_verdict(self) -> None:
+        ts = self._targets(3)
+        cov = ps.assess_coverage(ts, ts[:2], None, False)
+        outcome, code = ps.classify([], cov)
+        self.assertEqual((outcome, code), ("incomplete", ps.EXIT_INCOMPLETE))
+        text = ps.render([], ["p"], [], outcome, cov)
+        self.assertIn("NO OVERALL VERDICT", text)
+        self.assertIn("`o/r2`", text)
+
+    def test_coverage_outranks_a_clean_matrix(self) -> None:
+        """The sentence three servers hid behind was "no findings"."""
+        ts = self._targets(3)
+        rows = [ps.Row(target=t, cells={"p": ps.Cell(ps.OK, "fine")}) for t in ts[:2]]
+        cov = ps.assess_coverage(ts, ts[:2], None, False)
+        self.assertEqual(ps.classify(rows, cov)[0], "incomplete")
+
+    def test_partial_acknowledges_a_narrow_run_and_still_names_the_gap(self) -> None:
+        ts = self._targets(3)
+        cov = ps.assess_coverage(ts, ts[:2], None, acknowledged=True)
+        self.assertFalse(cov.complete)
+        self.assertTrue(cov.claimable)
+        self.assertEqual(ps.classify([], cov)[0], "green")
+        text = ps.render([], ["p"], [], "green", cov)
+        self.assertIn("PARTIAL (acknowledged with --partial)", text)
+        self.assertIn("`o/r2`", text)
+
+    def test_no_coverage_object_leaves_the_verdict_alone(self) -> None:
+        rows = [ps.Row(target=ps.Target(repo="o/a"), cells={"p": ps.Cell(ps.OK)})]
+        self.assertEqual(ps.classify(rows)[0], "green")
+
+
+class DefaultBranchTest(unittest.TestCase):
+    """`git remote show origin` answered wrongly for four repositories in one
+    sitting: it reads `refs/remotes/origin/HEAD` out of the local clone, which
+    is written once at clone time and never refreshed. `ls-remote` asks.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _origin(self, branch: str) -> Path:
+        root = self.dir / f"origin-{branch}"
+        root.mkdir()
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "x-mcp"\nversion = "0.1.0"\n', encoding="utf-8")
+        for cmd in (["git", "init", "-q", "-b", branch],
+                    ["git", "config", "user.email", "t@example.invalid"],
+                    ["git", "config", "user.name", "T"],
+                    ["git", "add", "-A"],
+                    ["git", "commit", "-q", "-m", "chore: init"]):
+            subprocess.run(cmd, cwd=root, check=True, capture_output=True)
+        return root
+
+    def test_a_master_repository_is_resolved_not_assumed(self) -> None:
+        origin = self._origin("master")
+        branch, reason = ps.default_branch("file://" + str(origin), 30)
+        self.assertEqual((branch, reason), ("master", ""))
+
+    def test_a_main_repository_resolves_too(self) -> None:
+        origin = self._origin("main")
+        self.assertEqual(ps.default_branch("file://" + str(origin), 30)[0], "main")
+
+    def test_an_unreachable_remote_yields_a_reason_and_no_guess(self) -> None:
+        branch, reason = ps.default_branch("file://" + str(self.dir / "absent"), 30)
+        self.assertEqual(branch, "")
+        self.assertTrue(reason, "a failure must carry its reason, not an empty string")
+
+    def test_the_symref_line_is_parsed_and_the_sha_line_is_not(self) -> None:
+        out = "ref: refs/heads/release/2.x\tHEAD\n0123456789abcdef\tHEAD\n"
+        self.assertEqual(ps._SYMREF.search(out).group("branch"), "release/2.x")
+
+    def test_an_unset_ref_asks_the_remote(self) -> None:
+        asked: list[str] = []
+
+        def resolver(url: str, timeout: float) -> tuple[str, str]:
+            asked.append(url)
+            return "master", ""
+
+        target = ps.Target(repo="o/r")
+        root, reason, ref = ps.checkout(target, self.dir / "w", 30, resolver)
+        # The clone itself fails (there is no such repo) — what matters here is
+        # that the branch was ASKED for rather than assumed.
+        self.assertEqual(asked, ["https://github.com/o/r.git"])
+        self.assertEqual(ref, "master")
+        self.assertIsNone(root)
+        self.assertTrue(reason)
+
+    def test_an_explicit_ref_is_not_second_guessed(self) -> None:
+        def resolver(url: str, timeout: float) -> tuple[str, str]:
+            raise AssertionError("an explicit ref must not be resolved away")
+
+        _, _, ref = ps.checkout(ps.Target(repo="o/r", ref="v1.2.3"),
+                                self.dir / "w", 30, resolver)
+        self.assertEqual(ref, "v1.2.3")
+
+    def test_an_unresolvable_default_still_clones_the_remote_head(self) -> None:
+        """No `--branch` at all: git takes the remote's HEAD, which is the same
+        answer by another route. What it must never do is fall back to `main`."""
+        origin = self._origin("master")
+        target = ps.Target(repo="o/r")
+        with unittest.mock.patch.object(
+                ps, "default_branch", lambda url, t: ("", "ls-remote refused")):
+            # Point the clone at the local origin by using a path target's URL
+            # shape: the resolver failing is what is under test.
+            cmds: list[list[str]] = []
+            real = subprocess.run
+
+            def spy(cmd, *a, **k):
+                cmds.append(list(cmd))
+                if cmd[:2] == ["git", "clone"]:
+                    cmd = [c if not c.startswith("https://") else "file://" + str(origin)
+                           for c in cmd]
+                return real(cmd, *a, **k)
+
+            with unittest.mock.patch.object(subprocess, "run", spy):
+                root, reason, ref = ps.checkout(target, self.dir / "w2", 30)
+        clone = next(c for c in cmds if c[:2] == ["git", "clone"])
+        self.assertNotIn("--branch", clone)
+        self.assertIsNotNone(root, msg=reason)
+        self.assertEqual(ref, "master")
+
 
 class EndToEndTest(unittest.TestCase):
     """main() over local checkouts — no network, no clone."""
@@ -484,6 +657,57 @@ class EndToEndTest(unittest.TestCase):
                 path: {self.dir / "one"}
         ''', "--predicates", "manifest")
         self.assertEqual(data["predicates"], ["manifest"])
+
+    def test_only_narrows_the_sweep_and_costs_it_its_verdict(self) -> None:
+        """`--only` is how three servers left the tracking without anything
+        going red. The run still happens; it just may not call itself green."""
+        for name in ("a", "b"):
+            _server(self.dir / name, f"{name}-mcp")
+        text_targets = f'''
+            defaults:
+              predicates: [manifest]
+            targets:
+              - repo: o/a
+                path: {self.dir / "a"}
+              - repo: o/b
+                path: {self.dir / "b"}
+        '''
+        rc, data, text = self._run(text_targets, "--only", "o/a")
+        self.assertEqual(rc, ps.EXIT_INCOMPLETE)
+        self.assertEqual(data["coverage"]["skipped"], ["o/b"])
+        self.assertIn("NO OVERALL VERDICT", text)
+
+        rc, data, text = self._run(text_targets, "--only", "o/a", "--partial")
+        self.assertEqual(rc, ps.EXIT_GREEN)
+        self.assertIn("PARTIAL (acknowledged", text)
+        self.assertEqual(data["coverage"]["skipped"], ["o/b"])
+
+    def test_a_targets_file_shorter_than_expected_is_not_a_sweep(self) -> None:
+        _server(self.dir / "a", "a-mcp")
+        rc, data, text = self._run(f'''
+            expect_targets: 33
+            defaults:
+              predicates: [manifest]
+            targets:
+              - repo: o/a
+                path: {self.dir / "a"}
+        ''')
+        self.assertEqual(rc, ps.EXIT_INCOMPLETE)
+        self.assertEqual(data["coverage"]["expected"], 33)
+        self.assertIn("33 were expected", text)
+
+    def test_the_expected_count_can_be_given_on_the_command_line(self) -> None:
+        _server(self.dir / "a", "a-mcp")
+        rc, data, _ = self._run(f'''
+            defaults:
+              predicates: [manifest]
+            targets:
+              - repo: o/a
+                path: {self.dir / "a"}
+        ''', "--expect-targets", "1")
+        self.assertEqual(rc, ps.EXIT_GREEN)
+        self.assertEqual(data["coverage"]["expected"], 1)
+        self.assertTrue(data["coverage"]["complete"])
 
     def test_an_unreadable_targets_file_is_not_a_green_sweep(self) -> None:
         missing = self.dir / "nope.yaml"

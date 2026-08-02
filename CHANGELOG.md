@@ -7,6 +7,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `published_probe.py`: imports and start decide the status, and the published dependency ranges are read
+
+The probe installed the artifact and read one thing off it: the User-Agent. Every
+import failure it hit on the way landed in `import_errors` and changed nothing,
+so a package that could not be imported at all could still be reported
+`no_user_agent` — a statement about code the probe never executed.
+
+**Import errors are now a finding (`broken_import`, exit 1)** — and the naive
+version of that check is wrong, which the portfolio had already proved.
+`bag-health-mcp` was reported as having a circular import. It has none:
+`import bag_health_mcp.server` runs cleanly in a fresh venv. What failed was
+importing the private submodule as the *very first import of the process*,
+before its own package root had initialised. So the rule is the one the evidence
+supports — **import the package root first, then the submodules, and whatever
+still fails after that is real** — and every failure the bulk scan sees is
+re-measured in two fresh interpreters, `cold` (submodule first) and `warm` (root,
+then submodule). `warm` is what a user's code does and is what decides. Three
+non-findings are named apart from each other rather than lumped together: an
+import-order artefact, a failure that reproduces in neither fresh interpreter,
+and a module missing something the distribution declares only behind an extra (a
+shipped test module importing `pytest` is not the server being broken). A
+verification that could not run at all counts as real — absence of proof is not a
+pass, the same rule `unverified` already followed.
+
+**A smoke stage, because import success is not start success.** `parlament-mcp#29`
+raised at start and the process never came up, which no amount of importing
+shows. The installed **console script** — the thing a user types — is now run
+with stdin closed for a few seconds and must announce a `server.start` event
+without crashing. stdin closed is deliberate: a stdio server reads EOF and shuts
+down cleanly, so the exit code is not the signal and the announcement before it
+is. A clean exit that announced nothing is `smoke_unverified`, not a pass.
+`--start-event` renames the event, `--no-smoke` skips the stage.
+
+**Missing upper bounds in the published metadata.** `swiss-energy-mcp` 0.3.3
+shipped `mcp[cli]>=1.20.0` uncapped; the day `mcp` 2.0.0 was published, every
+fresh install of that release died on import. The artifact did not change, the
+resolver's answer did. `requires_dist` of the installed artifact is now read, and
+a missing upper bound is reported for the **import-critical** dependencies —
+measured, from the modules that actually appear in `sys.modules` after importing
+the package, not from a list of names somebody thought looked important. Two
+tiers: `UNCAPPED` when the index **already** serves a higher major than the
+declared floor (the finding, and it arrives before the break rather than after
+it), and *armed* when no higher major is published yet. An index that could not
+be read is `unknown`, never `capped`. Measured end to end against `httpie` 3.2.4,
+which carries three such ranges. `Requires-Dist` parsing and the PEP 440 bound
+semantics are reused from `yank_probe.py` rather than reimplemented.
+
+**`--version` pins the install.** `pip install <dist>` was measured serving the
+PREVIOUS artifact for minutes after the new version was listed — `--no-cache-dir`
+empties pip's cache and not the index's. A re-check after a release that does not
+pin is a re-check of the release before it. A venv that comes back holding
+another version exits 2 rather than quietly measuring the wrong artifact.
+
+Every layer keeps its own line in the output and its own field in `--format
+json`: only one of them can be the *status*, and hiding two true facts behind a
+precedence rule is not a summary. The status precedence is
+`broken_import` > `smoke_failed` > `drift`/`foreign_user_agent` >
+`unbounded_dependency` > `smoke_unverified` > `unverified` > `ok`, ordered by how
+much of the rest of the report each failure invalidates.
+
+### Added — `shipped_probe.py`: three anchors, and a version pin
+
+* **`NO_TAGS`** — a repository with no release tags at all is now its own
+  finding. `PUBLISH_GAP`, `TAG_NOT_ON_INDEX` and `UNTAGGED_VERSION` all measure
+  against the last tag and therefore measured *nothing* there, and `UNRELEASED`
+  counted every commit in history rather than the ones past a release. A green
+  run on an untagged repository was a statement about how little was compared.
+  A shallow clone is emphatically **not** this: `git tag --list` succeeds with
+  empty output in a `--depth 1` clone, so `release_tags` now asks
+  `git rev-parse --is-shallow-repository` and returns *undeterminable* rather
+  than accusing every shallow checkout in the fan-out.
+* **Commit kind beats age.** A `fix:` and a `docs:` sitting unreleased shared one
+  seven-day clock, so a fix that had been merged and not released for six days
+  was reported as nothing at all — while every one of those days is a day users
+  run the behaviour the fix removed. They no longer share a clock: a breaking
+  change (`feat!:`, or `BREAKING CHANGE` in the subject) is reported at **any**
+  age, user-facing work past `--max-age-days-user-facing` (default **0**, i.e.
+  immediately), housekeeping still past `--max-age-days` (default 7). The knob
+  exists so anyone wanting a grace period after a merge has one; the default says
+  the delay itself is the thing worth seeing.
+* **`STALE_ARTIFACT`** — content, not numbers. Every other comparison in the
+  probe is between version *numbers*, and numbers agree in exactly the case that
+  matters most: the artifact on the index and the tree in the repository both say
+  0.3.3 and are not the same code. At the full depth the installed package's
+  `*.py` are now compared against the checkout's, and **only** when the two
+  version numbers agree — where they differ, `STALE_ON_INDEX` says it more
+  directly from cheaper evidence. Line endings are normalised (a wheel built on
+  one platform and a checkout on another differ in that byte and nothing else),
+  and a file present in the wheel but absent from the tree is reported and is not
+  on its own a finding, because a generated `_version.py` from setuptools-scm
+  lives exactly there.
+* **`--pin-version`** installs `dist==VERSION` for a post-release re-check, on
+  the same measurement as `published_probe.py --version`. The default stays
+  unpinned: a gate is asking what a user's `pip install` resolves to today, which
+  is a different and equally real question. A venv holding another version sets
+  `harness_error` (127) — no claim is made about either release.
+
+Report schema bumped 2 → 3 for the `tree` block.
+
+### Added — `portfolio_scan.py`: a sweep must claim its coverage, and ask for the branch
+
+Two failures from the same campaign, neither of which turned anything red.
+
+**Three servers dropped out of the tracking for half a day.** Nothing was
+reported about them — they were simply not in the runs, and every run that did
+happen said "no findings" about the servers it *had* looked at, which reads
+exactly like "no findings". It was noticed because 26 + 4 did not come to 33. So
+every run now compares what the targets file declares against what it scanned,
+names each gap **by name** (a count is what that campaign already had), and gives
+**no overall verdict at all** when the two disagree — which outranks both
+`findings` and a clean matrix. `expect_targets:` in the targets file is the
+second anchor, against the file itself quietly losing an entry. `--partial` is
+how a deliberately narrow `--only` run says so: it keeps the verdict, and the
+report still names everything it left out.
+
+**`git remote show origin` answered wrongly for four repositories in one
+sitting** — it reads `refs/remotes/origin/HEAD` out of the local clone, written
+once at clone time and never refreshed. A target that names no `ref` now has its
+default branch resolved with `git ls-remote --symref`, which opens a connection
+and asks. Three of this portfolio's repositories run on `master`; a
+`--branch main` clone against them fails, and a row of error cells for a healthy
+repository is the most expensive kind of false finding because it looks like the
+target's fault. `defaults: ref: main` is gone from `targets.example.yaml` — an
+unset ref stays unset — the resolved ref is a column in the matrix and a field in
+the report, and a resolution that fails clones the remote HEAD with no `--branch`
+at all rather than falling back to a name nobody verified.
+
+Report schema bumped 1 → 2 for the `coverage` block and the per-row
+`requested_ref`.
+
+### Changed — two tests encode the new policy rather than the old
+
+`test_recent_work_is_not_a_finding` asserted that a `fix:` half a day old is not
+a finding. That is the behaviour being replaced; it is now
+`test_recent_housekeeping_is_not_a_finding` and asserts the same thing about a
+`docs:` commit, which still holds. `test_offline_is_declared_and_not_a_failure`
+now tags its fixture repository: `--offline` not being a failure is the only
+property it tests, and an untagged repository raises `NO_TAGS` on its own.
+
+Suite: 525 tests in 26 files → 605 in 26.
+
+
 ### Removed — the `release_gap.py` compatibility shim
 
 The shim existed to unbreak callers outside this repository after the merge

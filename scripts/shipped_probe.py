@@ -151,6 +151,9 @@ DEFAULT_INDEX = "https://pypi.org/simple"
 DEFAULT_INSTALL_TIMEOUT = 600
 DEFAULT_RUN_TIMEOUT = 120
 DEFAULT_MAX_AGE_DAYS = 7.0
+# Kind beats age: user-facing work is reported the moment it is unreleased.
+# Housekeeping keeps the seven-day clock. See `metadata_findings`.
+DEFAULT_USER_FACING_AGE_DAYS = 0.0
 
 PYPI_JSON = "https://pypi.org/pypi/{dist}/json"
 # PEP 691 first, HTML second, and the HTML is not a formality: the JSON flavour
@@ -164,7 +167,10 @@ TAG = re.compile(r"^v?(\d+(?:\.\d+)*.*)$")
 CHANGELOG_UNRELEASED = re.compile(r"^##\s*\[?Unreleased\]?", re.IGNORECASE)
 CHANGELOG_HEADING = re.compile(r"^##\s")
 # `fix:`, `feat(scope)!:`, `chore(deps):` — the prefix, not the scope.
-CONVENTIONAL = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?!?:")
+CONVENTIONAL = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?(?P<bang>!)?:")
+# Conventional Commits' two spellings of a breaking change. The `!` is captured
+# above; this catches the footer spelling when it lands in the subject line.
+BREAKING_TEXT = re.compile(r"\bBREAKING[ -]CHANGE\b")
 
 # Commit types whose delay is felt by users. Everything else is housekeeping.
 USER_FACING = frozenset({"fix", "feat", "perf", "revert"})
@@ -218,6 +224,41 @@ class Versions:
 
 
 @dataclass
+class TreeDiff:
+    """The published artifact's Python sources against the checkout's.
+
+    THE GAP THIS CLOSES. Every other comparison in this file is between VERSION
+    NUMBERS, and numbers agree in exactly the case that matters most: the
+    artifact on the index and the tree in the repository both say 0.3.3 and are
+    not the same code. That happens whenever something was edited after a
+    release without a bump, or the release was built from a different tree than
+    the one anybody is reading. Numbers cannot see it. Content can.
+    """
+
+    checked: bool = False
+    compared: int = 0
+    differs: list[str] = field(default_factory=list)
+    missing_in_artifact: list[str] = field(default_factory=list)
+    # In the wheel and not in the tree. Reported, but NOT on its own a finding:
+    # a generated `_version.py` from setuptools-scm lives exactly here, and
+    # calling that a stale artifact would be a false accusation on every target
+    # that uses dynamic versioning.
+    extra_in_artifact: list[str] = field(default_factory=list)
+    truncated: bool = False
+    detail: str = ""
+
+    @property
+    def diverged(self) -> bool:
+        return bool(self.differs or self.missing_in_artifact)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"checked": self.checked, "compared": self.compared,
+                "differs": self.differs, "missing_in_artifact": self.missing_in_artifact,
+                "extra_in_artifact": self.extra_in_artifact,
+                "truncated": self.truncated, "detail": self.detail}
+
+
+@dataclass
 class ToolCall:
     ran: bool = False
     name: str = ""
@@ -238,6 +279,7 @@ class Report:
     entrypoint: str = ""
     tools: int | None = None
     tool_call: ToolCall = field(default_factory=ToolCall)
+    tree: TreeDiff = field(default_factory=TreeDiff)
     harness_error: str = ""
 
     # ---- phase 1: the repository and the index ----------------------------
@@ -265,12 +307,14 @@ class Report:
     def as_dict(self) -> dict[str, Any]:
         return {
             # Bumped from 1: the report gained the whole phase-1 block, and
-            # findings gained `severity`. Additive, but a consumer pinning the
+            # findings gained `severity`. Bumped to 3 for `tree`, the artifact
+            # content comparison. Additive both times, but a consumer pinning the
             # shape deserves to see the number move.
-            "schema": 2, "dist": self.dist, "publication": self.publication,
+            "schema": 3, "dist": self.dist, "publication": self.publication,
             "depth": self.depth,
             "versions": self.versions.as_dict(), "entrypoint": self.entrypoint,
             "tools": self.tools, "tool_call": self.tool_call.as_dict(),
+            "tree": self.tree.as_dict(),
             "harness_error": self.harness_error,
             "index_url": self.index_url,
             "index_version": self.index_version,
@@ -394,12 +438,32 @@ def git(root: Path, *args: str) -> str | None:
     return res.stdout.strip()
 
 
+def is_shallow(root: Path) -> bool:
+    """Is this checkout a shallow clone?
+
+    Load-bearing for ``NO_TAGS``. ``git clone --depth 1`` fetches no tags, and
+    ``git tag --list`` then SUCCEEDS with empty output — indistinguishable from a
+    repository that has never cut a release, unless this is asked. Reporting
+    "this project has no tags" about a repository whose tags simply were not
+    fetched is the same class of mistake as reporting "no User-Agent" for one the
+    probe could not parse.
+    """
+    return (git(root, "rev-parse", "--is-shallow-repository") or "").strip() == "true"
+
+
 def release_tags(root: Path) -> list[str] | None:
-    """Tags that look like releases, newest first. None when undeterminable."""
+    """Tags that look like releases, newest first. None when undeterminable.
+
+    An EMPTY list from a shallow clone is undeterminable, not empty — see
+    ``is_shallow``. Only a full checkout that lists no tags is entitled to the
+    claim that there are none.
+    """
     out = git(root, "tag", "--list", "--sort=-v:refname")
     if out is None:
         return None
     tags = [t for t in out.splitlines() if TAG.match(t.strip())]
+    if not tags and is_shallow(root):
+        return None
     return tags
 
 
@@ -810,6 +874,8 @@ def commits_since(root: Path, ref: str | None) -> list[dict[str, str]]:
                 "date": when,
                 "subject": subject,
                 "type": m.group("type") if m else "other",
+                "breaking": "yes" if ((m and m.group("bang"))
+                                      or BREAKING_TEXT.search(subject)) else "",
             }
         )
     return commits
@@ -896,6 +962,69 @@ def compare_versions(v: Versions) -> list[Finding]:
                     "index is not behind the tag, so the two were cut from "
                     "different places"))
     return out
+
+
+def find_repo_package(target: Path, top: str) -> Path | None:
+    """Where a top-level import package lives in the checkout, or None.
+
+    Only the two layouts this portfolio actually uses. A layout that is neither
+    returns None and the comparison reports itself as not made, rather than
+    walking the whole repository looking for something that looks close enough.
+    """
+    for candidate in (target / "src" / top, target / top):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _source_bytes(path: Path) -> bytes | None:
+    """File contents with line endings normalised, or None if unreadable.
+
+    Normalised because a wheel built on one platform and a checkout on another
+    legitimately differ in exactly that byte and in nothing else — a diff this
+    probe reported for it would be true and useless.
+    """
+    try:
+        return path.read_bytes().replace(b"\r\n", b"\n")
+    except OSError:
+        return None
+
+
+def compare_trees(artifact: Path, repo: Path, cap: int = 800) -> TreeDiff:
+    """The installed package's ``*.py`` against the checkout's. Pure.
+
+    ONLY ``*.py``: the code is what runs, and it is the part whose divergence is
+    a defect rather than a build detail. Data files, compiled caches and
+    packaging metadata differ between an sdist build and a working tree for
+    reasons that say nothing about whether the published code is the published
+    code.
+    """
+    diff = TreeDiff(checked=True)
+
+    def sources(root: Path) -> dict[str, Path]:
+        out: dict[str, Path] = {}
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            out[path.relative_to(root).as_posix()] = path
+        return out
+
+    left, right = sources(artifact), sources(repo)
+    for rel in sorted(set(left) | set(right)):
+        if diff.compared >= cap:
+            diff.truncated = True
+            break
+        if rel not in left:
+            diff.missing_in_artifact.append(rel)
+            continue
+        if rel not in right:
+            diff.extra_in_artifact.append(rel)
+            continue
+        diff.compared += 1
+        a, b = _source_bytes(left[rel]), _source_bytes(right[rel])
+        if a is None or b is None or a != b:
+            diff.differs.append(rel)
+    return diff
 
 
 # Failures whose text says "the sandbox stopped me", not "the artifact is broken".
@@ -1060,6 +1189,7 @@ def metadata_findings(
     repo_version: str,
     max_age_days: float,
     now: datetime | None = None,
+    user_facing_age: float = 0.0,
 ) -> list[Finding]:
     """Phase 1b — everything answerable from the index and git, no install.
 
@@ -1069,6 +1199,24 @@ def metadata_findings(
     """
     out: list[Finding] = []
     latest_tag = report.tags[0] if report.tags else None
+
+    # 0. NO_TAGS — nothing to measure the rest against.
+    #
+    # `report.tags == []` is a full checkout that has never cut a release; a
+    # shallow clone comes back as None instead (see `release_tags`), because
+    # "the tags were not fetched" is a different statement. Reported as its own
+    # finding rather than left implicit, because half the checks below quietly
+    # do nothing without a tag and the run then reads as a clean bill of health
+    # for comparisons that never happened.
+    if report.tags == []:
+        out.append(Finding(
+            "NO_TAGS",
+            "the repository has no release tags at all. PUBLISH_GAP, TAG_NOT_ON_INDEX "
+            "and UNTAGGED_VERSION all measure against the last tag and therefore "
+            "measured nothing here, and UNRELEASED counted every commit in history "
+            "rather than the ones past a release. A green run on an untagged "
+            "repository is a statement about how little was compared",
+            severity="medium"))
 
     # 1. PUBLISH_GAP — a cut release that never landed on the index.
     #
@@ -1123,24 +1271,51 @@ def metadata_findings(
                else "have no newer release to fall back to.")))
 
     # 3. UNRELEASED — work on main beyond the last release.
+    #
+    # KIND BEATS AGE. This used to be a single age threshold, and a `fix:` that
+    # had sat unreleased for six days was reported as nothing at all, exactly
+    # like a `docs:` — while every one of those days is a day users run the
+    # behaviour the fix removed. The two are not the same fact and they no
+    # longer share a clock:
+    #
+    #   breaking (`feat!:`, `BREAKING CHANGE`)  reported at any age
+    #   user-facing (fix/feat/perf/revert)      reported past user_facing_age,
+    #                                           which defaults to 0 — immediately
+    #   housekeeping                            still waits for max_age_days
+    #
+    # `--max-age-days-user-facing` exists for anyone who wants a grace period
+    # after a merge rather than none; the default says the delay itself is the
+    # thing worth seeing.
     if report.unreleased_commits:
         oldest = min(report.unreleased_commits, key=lambda c: c["date"])
         report.oldest_unreleased_age_days = age_days(oldest["date"], now)
         user_facing = [c for c in report.unreleased_commits if c["type"] in USER_FACING]
-        if report.oldest_unreleased_age_days > max_age_days:
+        breaking = [c for c in report.unreleased_commits if c.get("breaking")]
+        age = report.oldest_unreleased_age_days
+        due = (bool(breaking)
+               or (bool(user_facing) and age > user_facing_age)
+               or age > max_age_days)
+        if due:
             kinds: dict[str, int] = {}
             for c in report.unreleased_commits:
                 kinds[c["type"]] = kinds.get(c["type"], 0) + 1
             breakdown = ", ".join(f"{n}× {t}" for t, n in sorted(kinds.items()))
+            if breaking:
+                why = (f" {len(breaking)} of them BREAKING "
+                       f"({breaking[0]['subject'][:60]!r}) — a breaking change that is "
+                       "not released is a change nobody can plan around, whatever its "
+                       "age.")
+            elif user_facing:
+                why = (f" {len(user_facing)} of them user-facing — every day of delay "
+                       "is a day users run the old behaviour.")
+            else:
+                why = " None user-facing; housekeeping only."
             out.append(Finding(
                 "UNRELEASED",
                 f"{len(report.unreleased_commits)} commit(s) beyond "
                 f"{latest_tag or 'the start of history'}, oldest "
-                f"{report.oldest_unreleased_age_days:.1f} days old ({breakdown})."
-                + (f" {len(user_facing)} of them user-facing — every day of delay is "
-                   "a day users run the old behaviour."
-                   if user_facing else " None user-facing; housekeeping only."),
-                severity="high" if user_facing else "low"))
+                f"{age:.1f} days old ({breakdown})." + why,
+                severity="high" if (breaking or user_facing) else "low"))
 
     # 4. UNTAGGED_VERSION — pyproject bumped without a matching tag.
     if report.tags is not None and repo_version not in ("(dynamic)", ""):
@@ -1186,6 +1361,26 @@ def build_findings(report: Report) -> list[Finding]:
 
     out.extend(compare_versions(report.versions))
 
+    # STALE_ARTIFACT — the one comparison the version numbers cannot make.
+    # Only raised when the numbers AGREE, because that is the whole gap: two
+    # things called 0.3.3 that are not the same code. Where the numbers already
+    # disagree, STALE_ON_INDEX above says it more directly and a content diff
+    # would just be the same news with more lines.
+    if report.tree.checked and report.tree.diverged:
+        shown = ", ".join((report.tree.differs + report.tree.missing_in_artifact)[:5])
+        more = len(report.tree.differs) + len(report.tree.missing_in_artifact) - 5
+        out.append(Finding(
+            "STALE_ARTIFACT",
+            f"the index serves {report.versions.installed} and the checkout says the "
+            f"same, but {len(report.tree.differs)} installed source file(s) differ "
+            f"from the checkout and {len(report.tree.missing_in_artifact)} are absent "
+            f"from the artifact entirely ({shown}"
+            + (f", +{more} more" if more > 0 else "")
+            + "). One version number, two different bodies of code — a version "
+              "comparison cannot see this, which is why it went unseen. Either the "
+              "release was built from a tree nobody is reading, or the tree moved "
+              "after the release without the version moving with it"))
+
     if not report.entrypoint:
         out.append(Finding(
             "NO_ENTRYPOINT",
@@ -1225,10 +1420,12 @@ class Installed:
     entrypoint: str = ""
     python: str = ""
     detail: str = ""
+    site: str = ""
+    tops: list[str] = field(default_factory=list)
 
 
 def install_from_index(dist: str, workdir: Path, index_url: str,
-                       timeout: float) -> Installed:
+                       timeout: float, pin_version: str = "") -> Installed:
     """A fresh venv and one ``pip install`` from the index.
 
     ``--no-cache-dir`` is not optional: with a warm wheel cache this measures
@@ -1236,6 +1433,15 @@ def install_from_index(dist: str, workdir: Path, index_url: str,
     are trying to catch — the check would then confirm the bug as healthy.
     ``--index-url`` is pinned so a pip.conf mirror cannot quietly answer for
     PyPI either.
+
+    ``pin_version`` makes it ``dist==VERSION``. Unpinned is the DEFAULT and is
+    the right question for a gate — what does a user's ``pip install`` actually
+    resolve to today. It is the wrong question for a re-check immediately after
+    a release: ``--no-cache-dir`` empties pip's cache and not the index's, and
+    an unpinned install was measured serving the PREVIOUS artifact for minutes
+    while the new version was already listed. A re-check that does not pin is a
+    re-check of the release before it. Same propagation window `reconcile`
+    refuses to guess through, on the install side.
     """
     env_dir = workdir / "venv"
     try:
@@ -1247,7 +1453,8 @@ def install_from_index(dist: str, workdir: Path, index_url: str,
     try:
         proc = subprocess.run(
             [str(py), "-m", "pip", "install", "-q", "--no-cache-dir",
-             "--index-url", index_url, dist],
+             "--index-url", index_url,
+             f"{dist}=={pin_version}" if pin_version else dist],
             capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         return Installed(False, detail=f"pip install exceeded {timeout:.0f}s")
@@ -1256,8 +1463,10 @@ def install_from_index(dist: str, workdir: Path, index_url: str,
     if proc.returncode != 0:
         return Installed(False, detail=(proc.stderr or proc.stdout or "").strip()[-400:])
 
+    # `site` and `tops` are what the content comparison needs: where the wheel
+    # unpacked to, and which top-level packages it owns there.
     probe_src = (
-        "import json,sys\n"
+        "import json,sys,sysconfig\n"
         "from importlib import metadata as m\n"
         "d=sys.argv[1]\n"
         "try:\n"
@@ -1269,7 +1478,15 @@ def install_from_index(dist: str, workdir: Path, index_url: str,
         "    for ep in m.distribution(d).entry_points:\n"
         "        if ep.group=='console_scripts': eps.append(ep.name)\n"
         "except Exception: pass\n"
-        "print(json.dumps({'version':v,'scripts':eps}))\n"
+        "tops=set()\n"
+        "try:\n"
+        "    for f in m.files(d) or []:\n"
+        "        p=f.parts\n"
+        "        if len(p)>1 and p[0] not in ('..',) and not p[0].endswith(('.dist-info','.data')):\n"
+        "            tops.add(p[0])\n"
+        "except Exception: pass\n"
+        "print(json.dumps({'version':v,'scripts':eps,'tops':sorted(tops),"
+        "'site':sysconfig.get_paths()['purelib']}))\n"
     )
     try:
         meta = subprocess.run([str(py), "-c", probe_src, dist],
@@ -1289,7 +1506,57 @@ def install_from_index(dist: str, workdir: Path, index_url: str,
             entry = str(candidate)
             break
     return Installed(True, version=str(info.get("version") or ""),
-                     entrypoint=entry, python=str(py))
+                     entrypoint=entry, python=str(py),
+                     site=str(info.get("site") or ""),
+                     tops=[str(t) for t in (info.get("tops") or [])])
+
+
+def compare_content(report: Report, got: Installed, target: Path) -> None:
+    """Fill ``report.tree`` — the artifact's sources against the checkout's.
+
+    Runs only when the two version numbers AGREE, because that is the only case
+    the comparison adds anything to: where they differ, `compare_versions` has
+    already said so from cheaper evidence. Every reason the comparison could not
+    be made is recorded in ``detail`` and leaves ``checked`` false, so a
+    comparison that did not happen never reads as one that came back clean.
+    """
+    tree = report.tree
+    if not (report.versions.installed and report.versions.repo):
+        tree.detail = "no version on one side; nothing to compare content for"
+        return
+    if report.versions.installed != report.versions.repo:
+        tree.detail = (
+            f"the index serves {report.versions.installed} and the checkout says "
+            f"{report.versions.repo} — the numbers already differ, so a content "
+            "comparison would only restate it")
+        return
+    if not got.site or not got.tops:
+        tree.detail = "the installed distribution owns no importable top-level package"
+        return
+
+    merged = TreeDiff(checked=False)
+    compared_any = False
+    for top in got.tops:
+        artifact_dir = Path(got.site) / top
+        repo_dir = find_repo_package(target, top)
+        if not artifact_dir.is_dir():
+            continue
+        if repo_dir is None:
+            merged.detail += (
+                f"{top}: no matching package in the checkout (looked in src/{top} "
+                f"and {top}/); ")
+            continue
+        compared_any = True
+        one = compare_trees(artifact_dir, repo_dir)
+        merged.compared += one.compared
+        merged.truncated = merged.truncated or one.truncated
+        merged.differs += [f"{top}/{p}" for p in one.differs]
+        merged.missing_in_artifact += [f"{top}/{p}" for p in one.missing_in_artifact]
+        merged.extra_in_artifact += [f"{top}/{p}" for p in one.extra_in_artifact]
+    merged.checked = compared_any
+    if not compared_any and not merged.detail:
+        merged.detail = "no top-level package could be paired with the checkout"
+    report.tree = merged
 
 
 def speak_mcp(argv: list[str], timeout: float, cwd: Path,
@@ -1406,6 +1673,8 @@ def probe(dist: str, target: Path, *, tool: str = "",
           metadata_only: bool = False,
           offline: bool = False,
           max_age_days: float = DEFAULT_MAX_AGE_DAYS,
+          user_facing_age: float = DEFAULT_USER_FACING_AGE_DAYS,
+          pin_version: str = "",
           now: datetime | None = None,
           installer: Callable[..., Installed] | None = None,
           speaker: Callable[..., dict[str, Any]] | None = None,
@@ -1451,7 +1720,7 @@ def probe(dist: str, target: Path, *, tool: str = "",
 
     read_index(report, target, 20.0, offline)
     report.findings = metadata_findings(
-        report, target, report.versions.repo, max_age_days, now)
+        report, target, report.versions.repo, max_age_days, now, user_facing_age)
 
     if report.index_status == "unreachable":
         # A comparison that did not happen is not a pass. 127, not 0 and not 2.
@@ -1479,7 +1748,7 @@ def probe(dist: str, target: Path, *, tool: str = "",
     phase1 = list(report.findings)
 
     with tempfile.TemporaryDirectory(prefix="shipped-probe-") as tmp:
-        got = installer(dist, Path(tmp), index_url, install_timeout)
+        got = installer(dist, Path(tmp), index_url, install_timeout, pin_version)
         if not got.ok:
             report.publication = INSTALL_FAILED
             report.findings = dedupe(phase1 + build_findings(report)
@@ -1488,6 +1757,17 @@ def probe(dist: str, target: Path, *, tool: str = "",
 
         report.versions.installed = got.version or (index_version or "")
         report.entrypoint = got.entrypoint
+        if pin_version and report.versions.installed != pin_version:
+            # The pin is the whole point of a post-release re-check; a venv that
+            # came back holding something else has verified a different release.
+            report.harness_error = (
+                f"pinned to =={pin_version} and the venv reports "
+                f"{report.versions.installed or 'nothing'} — the artifact under test "
+                "is not the one named, so no claim is made about either")
+            return report
+
+        compare_content(report, got, target)
+
         if not got.entrypoint:
             report.findings = dedupe(phase1 + build_findings(report))
             return report
@@ -1565,6 +1845,16 @@ def render(r: Report) -> str:
     if r.tags is None:
         lines += ["", "ℹ️ tags could not be listed (a `--depth 1` clone fetches none) — "
                       "'no releases' cannot be concluded from this."]
+    if r.depth == "full":
+        if r.tree.checked:
+            extra = (f", {len(r.tree.extra_in_artifact)} file(s) only in the artifact "
+                     "(a generated version module lives here)"
+                     if r.tree.extra_in_artifact else "")
+            lines += ["", f"ℹ️ content: {r.tree.compared} source file(s) compared "
+                          f"against the checkout{extra}"
+                          + (" — TRUNCATED at the cap" if r.tree.truncated else "") + "."]
+        elif r.tree.detail:
+            lines += ["", f"ℹ️ content comparison not made — {r.tree.detail.rstrip('; ')}."]
     if r.yanked:
         shown = sorted(r.yanked, key=lambda v: release_key(v) or ())
         lines += ["", f"ℹ️ {len(shown)} yanked release(s) on the index: "
@@ -1602,8 +1892,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--offline", action="store_true",
                    help="git-only, and the report says so. Implies --metadata-only")
     p.add_argument("--max-age-days", type=float, default=DEFAULT_MAX_AGE_DAYS,
-                   help="how long unreleased work may sit before it is a finding "
-                        f"(default: {DEFAULT_MAX_AGE_DAYS:g})")
+                   help="how long unreleased HOUSEKEEPING may sit before it is a "
+                        f"finding (default: {DEFAULT_MAX_AGE_DAYS:g})")
+    p.add_argument("--max-age-days-user-facing", type=float,
+                   default=DEFAULT_USER_FACING_AGE_DAYS,
+                   help="the same clock for unreleased fix/feat/perf/revert work "
+                        f"(default: {DEFAULT_USER_FACING_AGE_DAYS:g} — reported "
+                        "immediately). A breaking change is reported at any age and "
+                        "ignores both")
+    p.add_argument("--pin-version", default="",
+                   help="install `dist==VERSION` instead of whatever the index "
+                        "resolves to. Use it for every re-check after a release: an "
+                        "unpinned install was measured serving the previous artifact "
+                        "for minutes after the new one was listed, --no-cache-dir and "
+                        "all")
     p.add_argument("--install-timeout", type=float, default=DEFAULT_INSTALL_TIMEOUT)
     p.add_argument("--run-timeout", type=float, default=DEFAULT_RUN_TIMEOUT)
     p.add_argument("--report", default="", help="write the machine-readable report here")
@@ -1643,6 +1945,8 @@ def main(argv: list[str] | None = None) -> int:
                        metadata_only=args.metadata_only or args.offline,
                        offline=args.offline,
                        max_age_days=args.max_age_days,
+                       user_facing_age=args.max_age_days_user_facing,
+                       pin_version=args.pin_version,
                        install_timeout=args.install_timeout,
                        run_timeout=args.run_timeout)
     except Exception as exc:  # noqa: BLE001 - the harness itself failed

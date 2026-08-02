@@ -1,6 +1,6 @@
 ---
 name: published-probe
-description: Measure what the package on PyPI actually sends as User-Agent — install it into a throwaway venv and read the value, rather than reading the repository. Use when a fix is merged and you need to know whether it reached users. Deterministic; run it, do not reason about it.
+description: Measure what the package on PyPI actually does — install it into a throwaway venv, read the User-Agent it puts on the wire, check that every module imports, start its console script, and check its declared dependency ranges for a missing upper bound. Use when a fix is merged and you need to know whether it reached users, or after a release. Deterministic; run it, do not reason about it.
 requires:
   bins: [python]
 ---
@@ -24,27 +24,105 @@ Run:
 python scripts/published_probe.py lobbywatch-mcp
 python scripts/published_probe.py --format json bakom-mcp srgssr-mcp
 python scripts/published_probe.py --constraint 'mcp<2' swiss-statistics-mcp
+python scripts/published_probe.py --version 0.3.4 swiss-energy-mcp   # after a release
 ```
 
-Exit `0` clean, `1` drift or unresolved, `2` the distribution would not install.
+Exit `0` clean, `1` a finding, `2` the distribution would not install (or
+`--version` was pinned and the venv came back holding something else).
 
 Each run creates a throwaway venv per distribution and removes it afterwards.
 Expect roughly a minute per package; this is not a fast check and is not meant
 to run on every commit. Its place is after a release, and in a periodic sweep.
 
+## Always pass `--version` after a release
+
+`pip install <dist>` was measured serving the PREVIOUS artifact for minutes
+after the new version was already listed on the index — `--no-cache-dir` empties
+pip's cache and not the index's. **A re-check after a release that does not pin
+the version is a re-check of the release before it.** `--version 0.3.4` makes it
+`dist==0.3.4`, and a venv that comes back holding anything else exits `2` rather
+than quietly measuring the wrong artifact.
+
+`shipped_probe.py --pin-version` is the same flag on the same reasoning. Its
+default stays unpinned, because a *gate* is asking what a user's `pip install`
+resolves to today; a *re-check* is asking about one named release.
+
 ## Reading the output
 
 | Line | Means |
 |---|---|
-| `OK` | Every resolved User-Agent carries the installed version. |
+| `OK` | Every resolved User-Agent carries the installed version; everything imports and the entrypoint announced its start. |
 | `DRIFT` | A User-Agent announces a version the package is not. This is what upstreams see. |
 | `FOREIGN-UA` | The User-Agent is not this package's identity at all — see below. |
 | `NO-UA` | No custom User-Agent anywhere — requests go out under the HTTP client default. Not drift, but the server is anonymous to every upstream. |
+| `BROKEN-IMP` | A module does not import from the installed distribution, with the package root imported first. **Not an import-order artefact — see below.** |
+| `IMPORT-ORD` | A module fails only as the very first import of a process. Reported, deliberately **not** a finding. |
+| `IMPORT-OPT` | A module needs something declared only behind an extra. Not installed by `pip install`, and not meant to be. |
+| `SMOKE-FAIL` | The installed console script crashed within seconds of starting. |
+| `SMOKE-?` | It ran, did not crash, and never announced `server.start`. **Not a pass.** |
+| `SMOKE-NONE` | The distribution declares no console script — nothing to start. |
+| `UNCAPPED` | An import-critical dependency has no upper bound and the index already serves a higher major. |
 | `UNVERIFIED` | The source mentions a User-Agent and no strategy could resolve a value. **Not a pass.** |
-| `INSTALL` | The published distribution would not install or import. |
+| `INSTALL` | The published distribution would not install. |
 
-`UNVERIFIED` is the line to take seriously, and the reason the probe is built
-the way it is. See below.
+`UNVERIFIED` and `SMOKE-?` are the lines to take seriously, and the reason the
+probe is built the way it is. See below.
+
+Every layer gets its own line. Only one of them can be the *status*, so a
+package that is drifting **and** has a broken import **and** carries an open
+dependency range prints all three — hiding two true facts behind a precedence
+rule is not a summary.
+
+## Import errors: the root first, then the submodules
+
+`bag-health-mcp` was reported as having a circular import. It has none.
+`import bag_health_mcp.server` runs cleanly in a fresh venv. What failed was
+importing the private submodule as the *very first import of the process*,
+before its own package root had initialised — an artefact of the order the probe
+walked the modules in.
+
+So the rule is: **import the package root first, then the submodules, and
+whatever still fails after that is real.** Every failure the bulk scan sees is
+re-measured in two fresh interpreters — `cold` (the submodule first) and `warm`
+(the root, then the submodule). `warm` is what a user's code does and is what
+decides. A verification that could not be run at all counts as real: absence of
+proof is not a pass.
+
+## Start is not import
+
+A package can import perfectly and still not start — `parlament-mcp#29` raised
+`ValueError: "Settings" object has no field "host"` at start and the process
+never came up. So the probe runs the installed **console script** with stdin
+closed for a few seconds and expects two things: a `server.start` event, and no
+crash.
+
+stdin closed is deliberate: a stdio server reads EOF and shuts down cleanly, so
+the exit code is not the signal — the announcement before it is. A clean exit
+that announced nothing is `SMOKE-?`, not a pass, for the same reason
+`UNVERIFIED` exists: not seeing the server reach serving is not evidence that it
+did. Use `--start-event` if a server announces something else, `--no-smoke` to
+skip the stage.
+
+## Upper bounds are part of the published metadata
+
+`swiss-energy-mcp` 0.3.3 shipped `mcp[cli]>=1.20.0` with no upper bound. The day
+`mcp` 2.0.0 was published, every fresh install of that release died on import.
+The artifact did not change; the resolver's answer did.
+
+So `requires_dist` of the installed artifact is read, and a missing upper bound
+is reported for the dependencies that are **import-critical — measured**, from
+the modules that actually appear in `sys.modules` after importing the package,
+not from a list of names somebody thought looked important. Two tiers, because
+they are two different days:
+
+* `UNCAPPED` — the index **already** serves a higher major than the declared
+  floor. The next fresh install can take it. A finding, and one that arrives
+  before the break rather than after it.
+* *armed* (reported in `--format json`, no line, not a finding) — no higher
+  major is published yet. The trap is set and has not sprung.
+
+An index that could not be read is `unknown`, never `capped`: a bound this probe
+failed to check is not a bound.
 
 ## `FOREIGN-UA`: not drift, and worth more attention
 

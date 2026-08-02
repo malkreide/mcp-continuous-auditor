@@ -252,8 +252,16 @@ class UnreachablePypiTest(unittest.TestCase):
 
 class OfflineTest(unittest.TestCase):
     def test_offline_is_declared_and_not_a_failure(self):
+        """The repo is TAGGED here on purpose.
+
+        `--offline` not being a failure is the only property under test, and an
+        untagged repository now raises `NO_TAGS` on its own — a true finding
+        about that repository, and one that would make this assertion pass or
+        fail for a reason that has nothing to do with offline mode.
+        """
         with tempfile.TemporaryDirectory() as d:
-            repo = make_repo(Path(d))
+            repo = make_repo(Path(d), version="0.1.0")
+            run(repo, "git", "tag", "v0.1.0")
             report = probe_metadata(repo, max_age_days=7, offline=True, timeout=1)
             self.assertEqual(report.index_status, "skipped")
             self.assertTrue(report.ok)
@@ -290,12 +298,16 @@ class UnreleasedCommitsTest(unittest.TestCase):
         with stub_index(simple_payload(["0.1.0"]), json_payload(["0.1.0"])):
             return probe_metadata(repo, max_age_days=max_age_days, offline=False, timeout=1)
 
-    def test_recent_work_is_not_a_finding(self):
-        """Every repo is ahead of PyPI right after a merge. That is not news."""
+    def test_recent_housekeeping_is_not_a_finding(self):
+        """Every repo is ahead of PyPI right after a merge. That is not news.
+
+        It stopped being true of every KIND of commit — see the class below.
+        Housekeeping keeps the seven-day clock, which is what this asserts.
+        """
         with tempfile.TemporaryDirectory() as d:
             repo = make_repo(Path(d), version="0.1.0")
             run(repo, "git", "tag", "v0.1.0")
-            commit(repo, "fix: something", days_ago=0.5)
+            commit(repo, "docs: tidy something", days_ago=0.5)
             report = self._probe(repo)
             self.assertNotIn("UNRELEASED", {f.code for f in report.findings})
 
@@ -322,8 +334,111 @@ class UnreleasedCommitsTest(unittest.TestCase):
             self.assertEqual(codes["UNRELEASED"].severity, "low")
 
 
+class CommitKindBeatsAgeTest(unittest.TestCase):
+    """A `fix:` and a `docs:` sitting unreleased are not the same fact.
+
+    They used to share one seven-day clock, which meant a fix that had been
+    merged and not released for six days was reported as nothing at all — while
+    every one of those days is a day users run the behaviour the fix removed.
+    """
+
+    def _probe(self, repo: Path, **over):
+        with stub_index(simple_payload(["0.1.0"]), json_payload(["0.1.0"])):
+            return probe_metadata(repo, max_age_days=7.0, offline=False, timeout=1,
+                                  **over)
+
+    def _repo(self, tmp: str, subject: str, days_ago: float) -> Path:
+        repo = make_repo(Path(tmp), version="0.1.0")
+        run(repo, "git", "tag", "v0.1.0")
+        commit(repo, subject, days_ago=days_ago)
+        return repo
+
+    def test_a_fresh_fix_does_not_wait_for_the_seven_day_threshold(self):
+        with tempfile.TemporaryDirectory() as d:
+            report = self._probe(self._repo(d, "fix: a 404 on every station", 0.5))
+            codes = {f.code: f for f in report.findings}
+            self.assertIn("UNRELEASED", codes)
+            self.assertEqual(codes["UNRELEASED"].severity, "high")
+
+    def test_a_fresh_docs_commit_still_waits(self):
+        with tempfile.TemporaryDirectory() as d:
+            report = self._probe(self._repo(d, "docs: fix a typo", 0.5))
+            self.assertNotIn("UNRELEASED", {f.code for f in report.findings})
+
+    def test_a_breaking_change_is_reported_at_any_age_and_says_so(self):
+        """`feat!:` ignores both clocks: an unreleased breaking change is a
+        change nobody downstream can plan around."""
+        with tempfile.TemporaryDirectory() as d:
+            report = self._probe(self._repo(d, "feat!: drop the v1 tool names", 0.01),
+                                 )
+            codes = {f.code: f for f in report.findings}
+            self.assertIn("UNRELEASED", codes)
+            self.assertEqual(codes["UNRELEASED"].severity, "high")
+            self.assertIn("BREAKING", codes["UNRELEASED"].detail)
+
+    def test_the_footer_spelling_of_breaking_counts_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            report = self._probe(self._repo(d, "refactor: rework BREAKING CHANGE api", 0.01))
+            codes = {f.code: f for f in report.findings}
+            self.assertIn("UNRELEASED", codes)
+            self.assertIn("BREAKING", codes["UNRELEASED"].detail)
+
+    def test_a_grace_period_can_be_asked_for_explicitly(self):
+        """The knob exists so the policy is a choice, not a hard-coded opinion."""
+        with tempfile.TemporaryDirectory() as d:
+            repo = self._repo(d, "fix: something", 0.5)
+            with stub_index(simple_payload(["0.1.0"]), json_payload(["0.1.0"])):
+                dist = rg.read_project(repo).get("name", repo.name)
+                report = rg.probe(dist, repo, metadata_only=True, max_age_days=7.0,
+                                  user_facing_age=1.0)
+            self.assertNotIn("UNRELEASED", {f.code for f in report.findings})
+
+
 class NoTagsTest(unittest.TestCase):
-    """A --depth 1 clone fetches no tags. That is unknown, not zero."""
+    """A --depth 1 clone fetches no tags. That is unknown, not zero.
+
+    And a repository that genuinely has none is a third thing again: half the
+    checks in this file measure against the last tag, so without one they
+    measured nothing and the run said "OK" about comparisons that never
+    happened.
+    """
+
+    def test_a_repository_with_no_tags_at_all_is_a_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = make_repo(Path(d), version="0.1.0")
+            report = probe_metadata(repo, max_age_days=7, offline=True, timeout=1)
+            codes = {f.code: f for f in report.findings}
+            self.assertIn("NO_TAGS", codes)
+            self.assertEqual(codes["NO_TAGS"].severity, "medium")
+            self.assertFalse(report.ok, "an unanchored repository must not read as OK")
+
+    def test_a_tagged_repository_raises_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = make_repo(Path(d), version="0.1.0")
+            run(repo, "git", "tag", "v0.1.0")
+            report = probe_metadata(repo, max_age_days=7, offline=True, timeout=1)
+            self.assertNotIn("NO_TAGS", {f.code for f in report.findings})
+
+    def test_a_shallow_clone_is_undeterminable_and_not_a_finding(self):
+        """`git tag --list` SUCCEEDS with empty output in a --depth 1 clone.
+
+        Without asking whether the checkout is shallow, that is indistinguishable
+        from a repository that never cut a release — and NO_TAGS would then
+        accuse every shallow clone in the fan-out.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "origin").mkdir()
+            origin = make_repo(Path(d) / "origin", version="0.1.0")
+            run(origin, "git", "tag", "v0.1.0")
+            clone = Path(d) / "clone"
+            subprocess.run(["git", "clone", "-q", "--depth", "1", "--no-tags",
+                            "file://" + str(origin), str(clone)],
+                           check=True, capture_output=True)
+            self.assertTrue(rg.is_shallow(clone))
+            self.assertIsNone(rg.release_tags(clone))
+            report = probe_metadata(clone, max_age_days=7, offline=True, timeout=1)
+            self.assertNotIn("NO_TAGS", {f.code for f in report.findings})
+            self.assertIn("cannot be concluded", rg.render(report))
 
     def test_missing_tags_are_reported_as_unknown(self):
         with tempfile.TemporaryDirectory() as d:
@@ -863,6 +978,183 @@ class JsonOutputTest(unittest.TestCase):
         self.assertEqual(out["yank_source"], "simple")
         self.assertIn("0.5.1", out["yanked"])
         self.assertEqual(out["index_views"]["simple"]["latest_installable"], "0.7.0")
+
+
+class StaleArtifactTest(unittest.TestCase):
+    """One version number, two different bodies of code.
+
+    Every other comparison in this file is between version NUMBERS, and numbers
+    agree in exactly the case that matters most: the artifact on the index and
+    the tree in the repository both say 0.3.3 and are not the same code.
+    """
+
+    def _dirs(self, tmp: Path) -> tuple[Path, Path]:
+        artifact, repo = tmp / "site" / "demo_mcp", tmp / "repo" / "src" / "demo_mcp"
+        artifact.mkdir(parents=True)
+        repo.mkdir(parents=True)
+        return artifact, repo
+
+    def test_identical_trees_do_not_diverge(self):
+        with tempfile.TemporaryDirectory() as d:
+            artifact, repo = self._dirs(Path(d))
+            for root in (artifact, repo):
+                (root / "server.py").write_text("VERSION = '0.3.3'\n", encoding="utf-8")
+            diff = rg.compare_trees(artifact, repo)
+            self.assertFalse(diff.diverged)
+            self.assertEqual(diff.compared, 1)
+
+    def test_a_changed_file_under_the_same_version_is_the_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            artifact, repo = self._dirs(Path(d))
+            (artifact / "server.py").write_text("TIMEOUT = 5\n", encoding="utf-8")
+            (repo / "server.py").write_text("TIMEOUT = 30\n", encoding="utf-8")
+            diff = rg.compare_trees(artifact, repo)
+            self.assertEqual(diff.differs, ["server.py"])
+            self.assertTrue(diff.diverged)
+
+    def test_a_file_absent_from_the_artifact_is_a_divergence(self):
+        with tempfile.TemporaryDirectory() as d:
+            artifact, repo = self._dirs(Path(d))
+            (repo / "tools.py").write_text("def x(): ...\n", encoding="utf-8")
+            diff = rg.compare_trees(artifact, repo)
+            self.assertEqual(diff.missing_in_artifact, ["tools.py"])
+            self.assertTrue(diff.diverged)
+
+    def test_a_generated_module_only_in_the_wheel_is_not_a_divergence(self):
+        """setuptools-scm writes `_version.py` into the wheel and not the tree.
+
+        Calling that a stale artifact would be a false accusation against every
+        target using dynamic versioning — so it is reported and does not decide.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            artifact, repo = self._dirs(Path(d))
+            (artifact / "_version.py").write_text("__version__='0.3.3'\n", encoding="utf-8")
+            diff = rg.compare_trees(artifact, repo)
+            self.assertEqual(diff.extra_in_artifact, ["_version.py"])
+            self.assertFalse(diff.diverged)
+
+    def test_line_endings_alone_are_not_a_divergence(self):
+        """True and useless: a wheel built on one platform, a checkout on another."""
+        with tempfile.TemporaryDirectory() as d:
+            artifact, repo = self._dirs(Path(d))
+            (artifact / "server.py").write_bytes(b"x = 1\r\ny = 2\r\n")
+            (repo / "server.py").write_bytes(b"x = 1\ny = 2\n")
+            self.assertFalse(rg.compare_trees(artifact, repo).diverged)
+
+    def test_pycache_is_not_compared(self):
+        with tempfile.TemporaryDirectory() as d:
+            artifact, repo = self._dirs(Path(d))
+            (artifact / "__pycache__").mkdir()
+            (artifact / "__pycache__" / "server.py").write_text("junk\n", encoding="utf-8")
+            self.assertFalse(rg.compare_trees(artifact, repo).diverged)
+
+    def _report(self, tree: rg.TreeDiff, installed="0.3.3", repo_v="0.3.3"):
+        report = rg.Report(dist="demo-mcp")
+        report.versions = rg.Versions(installed=installed, repo=repo_v, tag="")
+        report.entrypoint = "demo-mcp"
+        report.tools = 1
+        report.tree = tree
+        return report
+
+    def test_a_diverged_tree_raises_stale_artifact(self):
+        report = self._report(rg.TreeDiff(checked=True, compared=4,
+                                          differs=["demo_mcp/server.py"]))
+        codes = {f.code: f for f in rg.build_findings(report)}
+        self.assertIn("STALE_ARTIFACT", codes)
+        self.assertIn("demo_mcp/server.py", codes["STALE_ARTIFACT"].detail)
+
+    def test_a_comparison_that_did_not_happen_raises_nothing(self):
+        """`checked` false is never read as `clean`."""
+        report = self._report(rg.TreeDiff(checked=False, detail="no matching package"))
+        self.assertNotIn("STALE_ARTIFACT", {f.code for f in rg.build_findings(report)})
+
+    def test_the_comparison_is_skipped_when_the_numbers_already_differ(self):
+        """STALE_ON_INDEX says it more directly from cheaper evidence."""
+        report = rg.Report(dist="demo-mcp")
+        report.versions = rg.Versions(installed="0.3.2", repo="0.3.3")
+        rg.compare_content(report, rg.Installed(True, version="0.3.2", site="/x",
+                                                tops=["demo_mcp"]), Path("."))
+        self.assertFalse(report.tree.checked)
+        self.assertIn("already differ", report.tree.detail)
+
+    def test_the_checkout_layout_is_looked_for_in_both_places(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "src" / "demo_mcp").mkdir(parents=True)
+            self.assertEqual(rg.find_repo_package(root, "demo_mcp"),
+                             root / "src" / "demo_mcp")
+            (root / "flat_mcp").mkdir()
+            self.assertEqual(rg.find_repo_package(root, "flat_mcp"), root / "flat_mcp")
+            self.assertIsNone(rg.find_repo_package(root, "absent_mcp"))
+
+    def test_an_unpairable_package_reports_itself_as_not_compared(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            site = root / "site" / "demo_mcp"
+            site.mkdir(parents=True)
+            report = rg.Report(dist="demo-mcp")
+            report.versions = rg.Versions(installed="0.3.3", repo="0.3.3")
+            rg.compare_content(report, rg.Installed(True, version="0.3.3",
+                                                    site=str(root / "site"),
+                                                    tops=["demo_mcp"]), root)
+            self.assertFalse(report.tree.checked)
+            self.assertIn("no matching package", report.tree.detail)
+
+
+class PinnedVersionTest(unittest.TestCase):
+    """`pip install <dist>` served the PREVIOUS artifact for minutes after a
+    release landed, --no-cache-dir and all: the index's own cache had not caught
+    up. A re-check after a release that does not pin is a re-check of the
+    release before it.
+    """
+
+    def _probe(self, repo: Path, installer, pin: str):
+        with stub_index(simple_payload(["0.1.0", "0.2.0"]),
+                        json_payload(["0.1.0", "0.2.0"], "0.2.0")):
+            return rg.probe("demo-mcp", repo, pin_version=pin, installer=installer,
+                            speaker=lambda *a, **k: {"tools": [], "error": ""})
+
+    def test_the_pin_reaches_the_installer(self):
+        seen = {}
+
+        def installer(dist, workdir, index_url, timeout, pin_version=""):
+            seen["pin"] = pin_version
+            return rg.Installed(True, version="0.2.0", entrypoint="/bin/demo",
+                                site="", tops=[])
+
+        with tempfile.TemporaryDirectory() as d:
+            repo = make_repo(Path(d), version="0.2.0")
+            run(repo, "git", "tag", "v0.2.0")
+            self._probe(repo, installer, "0.2.0")
+        self.assertEqual(seen["pin"], "0.2.0")
+
+    def test_a_venv_holding_another_version_makes_no_claim_at_all(self):
+        """127, not 0 and not 2: the artifact under test is not the one named."""
+        def installer(dist, workdir, index_url, timeout, pin_version=""):
+            return rg.Installed(True, version="0.1.0", entrypoint="/bin/demo",
+                                site="", tops=[])
+
+        with tempfile.TemporaryDirectory() as d:
+            repo = make_repo(Path(d), version="0.2.0")
+            run(repo, "git", "tag", "v0.2.0")
+            report = self._probe(repo, installer, "0.2.0")
+        self.assertEqual(report.exit_code(), 127)
+        self.assertIn("not the one named", report.harness_error)
+
+    def test_the_default_stays_unpinned(self):
+        """Unpinned is the right question for a GATE: what does a user's
+        `pip install` resolve to today."""
+        seen = {}
+
+        def installer(dist, workdir, index_url, timeout, pin_version=""):
+            seen["pin"] = pin_version
+            return rg.Installed(True, version="0.2.0", entrypoint="", site="", tops=[])
+
+        with tempfile.TemporaryDirectory() as d:
+            repo = make_repo(Path(d), version="0.2.0")
+            run(repo, "git", "tag", "v0.2.0")
+            self._probe(repo, installer, "")
+        self.assertEqual(seen["pin"], "")
 
 
 class NonPythonTargetTest(unittest.TestCase):

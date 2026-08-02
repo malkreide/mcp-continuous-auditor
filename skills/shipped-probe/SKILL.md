@@ -1,6 +1,6 @@
 ---
 name: shipped-probe
-description: Verify that the fix on main is the fix users install — index version, yank status, release tags and unreleased commits against the repository, and optionally install the artifact and make it run. Deterministic; run it, do not reason about it.
+description: Verify that the fix on main is the fix users install — index version, yank status, release tags and unreleased commits against the repository, and optionally install the artifact, compare its sources against the checkout, and make it run. Deterministic; run it, do not reason about it.
 requires:
   bins: [python, git]
 ---
@@ -31,6 +31,9 @@ python scripts/shipped_probe.py --dist <name> --target <path> --tool health --fo
 
 # any PEP 503 index, as pip takes it
 python scripts/shipped_probe.py --target <path> --index-url https://pypi.example.com/simple
+
+# a re-check after a release: pin the version, or you re-check the one before it
+python scripts/shipped_probe.py --dist <name> --target <path> --pin-version 0.3.4
 ```
 
 `--dist` defaults to the `[project] name` in the target's `pyproject.toml`.
@@ -86,7 +89,9 @@ Run against a reconstruction of that state, the probe reports
 | `PUBLISH_GAP` | A release tag exists that PyPI does not have. Someone cut a release and it did not land — a failed workflow, or a pending environment approval. The sharpest finding here, because the maintainer already believes it shipped. Raised only when the tag is ahead of **both** index APIs. |
 | `RELEASE_YANKED` | The release this repository treats as current is on PyPI and **withdrawn**. Every other check reads healthy — the version exists, the tag matches, CI is green — while `pip install` quietly resolves to something older. Older yanked releases are listed as a `NOTE`, not as a finding. |
 | `UNCONFIRMED` | PyPI's two index APIs disagree — about the latest version, or about a yank flag. Nothing is claimed from it and the run does not go red. See below. |
-| `UNRELEASED` | Commits beyond the last release, with the age of the oldest and a breakdown by Conventional-Commit type. `high` when any are user-facing (`fix`, `feat`, `perf`, `revert`), `low` when it is housekeeping. |
+| `NO_TAGS` | The repository has no release tags at all. Half the checks here measure against the last tag and therefore measured nothing — a green run on an untagged repository is a statement about how little was compared. A **shallow clone** is not this: it is reported as *unknown*. |
+| `UNRELEASED` | Commits beyond the last release, with the age of the oldest and a breakdown by Conventional-Commit type. **Kind beats age** — see below. |
+| `STALE_ARTIFACT` | The index and the checkout agree on the version number and disagree on the code. Content, not numbers — the one gap a version comparison structurally cannot see. |
 | `UNTAGGED_VERSION` | `pyproject.toml` was bumped, no tag matches. The ordinary state of a prepared release — a finding only once it ages. |
 | `CHANGELOG_UNRELEASED` | An `[Unreleased]` section with entries. Weakest signal, reported last: prose lags. |
 | `UNKNOWN` | PyPI could not be reached. The comparison that matters **did not happen**. |
@@ -150,15 +155,52 @@ RELEASE_GAP_LIVE=1 python3 -m unittest tests.test_release_metadata.LiveDivergenc
    inverts the finding. If you need this probe to be conclusive, clone with
    tags or `git fetch --tags` first.
 
-3. **Age is the finding, not the gap.** Every repository is ahead of PyPI for
-   the minutes after a merge. Firing on that gets the check muted, and a muted
-   check catches nothing — the same reasoning that keeps recall floors at half
-   the observed count. `--max-age-days` defaults to 7.
+3. **Age is the finding for housekeeping — and not for a fix.** Every
+   repository is ahead of PyPI for the minutes after a merge, and firing on all
+   of it gets the check muted. But a `fix:` that has sat unreleased for six days
+   used to be reported as nothing at all, exactly like a `docs:`, while every
+   one of those days is a day users run the behaviour the fix removed. So the
+   two no longer share a clock: `--max-age-days` (default 7) governs
+   housekeeping, `--max-age-days-user-facing` (default **0** — reported
+   immediately) governs `fix`/`feat`/`perf`/`revert`, and a breaking change
+   (`feat!:`, `BREAKING CHANGE`) is reported at any age and ignores both. Raise
+   `--max-age-days-user-facing` to buy back a grace period after a merge.
 
 4. **`UNCONFIRMED` is not "probably fine".** It means the two indexes were
    asked and gave different answers. Re-run it a minute later — propagation is
    measured in seconds — and if it persists, that is worth a look at PyPI
    rather than at the target.
+
+## `STALE_ARTIFACT`: content, not numbers
+
+Every other comparison in this probe is between version *numbers*, and numbers
+agree in exactly the case that matters most: the artifact on the index and the
+tree in the repository both say `0.3.3` and are not the same code. It happens
+whenever something was edited after a release without a bump, or the release was
+built from a tree nobody is reading.
+
+At the full depth the probe therefore compares the installed package's `*.py`
+against the checkout's, and only when the two version numbers **agree** — where
+they differ, `STALE_ON_INDEX` says it more directly from cheaper evidence.
+
+Only `*.py`, with line endings normalised: the code is what runs, and it is the
+part whose divergence is a defect rather than a build detail. A file present in
+the wheel and absent from the tree is reported and is **not** on its own a
+finding — a generated `_version.py` from setuptools-scm lives exactly there, and
+calling that a stale artifact would accuse every target using dynamic
+versioning. A comparison that could not be made is recorded as not made, never
+as one that came back clean.
+
+## After a release, pin the version
+
+`pip install <dist>` was measured serving the PREVIOUS artifact for minutes
+after the new version was already listed — `--no-cache-dir` empties pip's cache
+and not the index's. `--pin-version 0.3.4` installs `dist==0.3.4`, and a venv
+that comes back holding anything else exits `127` with the reason, rather than
+quietly making claims about a different release.
+
+The default stays **unpinned** on purpose: a gate is asking what a user's
+`pip install` resolves to today, which is a different and equally real question.
 
 ## Why the commit type matters
 
