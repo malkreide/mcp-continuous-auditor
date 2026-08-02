@@ -15,6 +15,7 @@ closing stdin early fabricates a failure, and a test asserts exactly that.
 
 Stdlib-only and offline: no index is contacted, no venv is built.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -48,6 +49,7 @@ def codes(findings: list[sp.Finding]) -> list[str]:
 # ---------------------------------------------------------------------------
 # version comparison — pure
 # ---------------------------------------------------------------------------
+
 
 class CompareVersionsTest(unittest.TestCase):
     def test_everything_agreeing_is_silent(self) -> None:
@@ -93,6 +95,7 @@ class CompareVersionsTest(unittest.TestCase):
 # publication states — absent is not stale
 # ---------------------------------------------------------------------------
 
+
 class PublicationStateTest(unittest.TestCase):
     def test_never_published_says_there_is_no_process_to_repair(self) -> None:
         r = sp.Report(dist="ghost-mcp", publication=sp.NOT_PUBLISHED)
@@ -114,8 +117,9 @@ class PublicationStateTest(unittest.TestCase):
         self.assertEqual(codes(sp.build_findings(r)), ["NO_ENTRYPOINT"])
 
     def test_no_tools_list_answer_is_does_not_run(self) -> None:
-        r = sp.Report(dist="x", versions=V("1.0.0", "1.0.0"),
-                      entrypoint="/venv/bin/x", tools=None)
+        r = sp.Report(
+            dist="x", versions=V("1.0.0", "1.0.0"), entrypoint="/venv/bin/x", tools=None
+        )
         self.assertEqual(codes(sp.build_findings(r)), ["DOES_NOT_RUN"])
 
 
@@ -123,10 +127,12 @@ class PublicationStateTest(unittest.TestCase):
 # tool results — answering and working are different claims
 # ---------------------------------------------------------------------------
 
+
 class ToolResultTest(unittest.TestCase):
     def test_content_is_ok(self) -> None:
         got = sp.classify_tool_result(
-            {"result": {"content": [{"type": "text", "text": "42"}]}})
+            {"result": {"content": [{"type": "text", "text": "42"}]}}
+        )
         self.assertEqual(got.status, "ok")
 
     def test_an_empty_content_list_is_the_incident(self) -> None:
@@ -147,21 +153,39 @@ class ToolResultTest(unittest.TestCase):
     def test_an_error_that_reads_like_the_sandbox_is_not_a_finding(self) -> None:
         # A gate that fires on every target whose upstream nobody has allowlisted
         # yet gets muted, and a muted gate catches nothing.
-        for text in ("Connection refused", "getaddrinfo failed",
-                     "Tunnel connection failed: 403 Forbidden", "read timed out"):
+        for text in (
+            "Connection refused",
+            "getaddrinfo failed",
+            "Tunnel connection failed: 403 Forbidden",
+            "read timed out",
+        ):
             with self.subTest(text=text):
                 got = sp.classify_tool_result(
-                    {"result": {"isError": True,
-                                "content": [{"type": "text", "text": text}]}})
+                    {
+                        "result": {
+                            "isError": True,
+                            "content": [{"type": "text", "text": text}],
+                        }
+                    }
+                )
                 self.assertEqual(got.status, "blocked")
-                r = sp.Report(dist="x", versions=V("1.0.0", "1.0.0"),
-                              entrypoint="/v/bin/x", tools=2, tool_call=got)
-                self.assertEqual(sp.build_findings(r), [],
-                                 "an unattributable failure must not raise a finding")
+                r = sp.Report(
+                    dist="x",
+                    versions=V("1.0.0", "1.0.0"),
+                    entrypoint="/v/bin/x",
+                    tools=2,
+                    tool_call=got,
+                )
+                self.assertEqual(
+                    sp.build_findings(r),
+                    [],
+                    "an unattributable failure must not raise a finding",
+                )
 
     def test_a_blocked_jsonrpc_error_is_also_unattributable(self) -> None:
         got = sp.classify_tool_result(
-            {"error": {"code": -32000, "message": "upstream DNS lookup failed"}})
+            {"error": {"code": -32000, "message": "upstream DNS lookup failed"}}
+        )
         self.assertEqual(got.status, "blocked")
 
     def test_an_empty_result_is_never_excused_as_the_sandbox(self) -> None:
@@ -169,14 +193,24 @@ class ToolResultTest(unittest.TestCase):
         # excusing it would delete the entire reason this gate exists.
         got = sp.classify_tool_result({"result": {"content": []}})
         self.assertEqual(got.status, "empty")
-        r = sp.Report(dist="x", versions=V("1.0.0", "1.0.0"),
-                      entrypoint="/v/bin/x", tools=2, tool_call=got)
+        r = sp.Report(
+            dist="x",
+            versions=V("1.0.0", "1.0.0"),
+            entrypoint="/v/bin/x",
+            tools=2,
+            tool_call=got,
+        )
         self.assertEqual(codes(sp.build_findings(r)), ["TOOL_EMPTY"])
 
     def test_a_real_defect_message_is_still_a_finding(self) -> None:
         got = sp.classify_tool_result(
-            {"result": {"isError": True,
-                        "content": [{"type": "text", "text": "KeyError: 'results'"}]}})
+            {
+                "result": {
+                    "isError": True,
+                    "content": [{"type": "text", "text": "KeyError: 'results'"}],
+                }
+            }
+        )
         self.assertEqual(got.status, "error")
 
     def test_a_jsonrpc_error_is_an_error(self) -> None:
@@ -186,17 +220,24 @@ class ToolResultTest(unittest.TestCase):
 
     def test_no_reply_at_all_is_not_silently_ok(self) -> None:
         self.assertEqual(sp.classify_tool_result(None).status, "no-answer")
-        self.assertEqual(sp.classify_tool_result({"result": "nope"}).status, "no-answer")
+        self.assertEqual(
+            sp.classify_tool_result({"result": "nope"}).status, "no-answer"
+        )
 
 
 class PickToolTest(unittest.TestCase):
     def test_the_first_argument_free_tool_is_chosen(self) -> None:
-        tools = [{"name": "search", "inputSchema": {"required": ["q"]}},
-                 {"name": "health", "inputSchema": {"type": "object"}}]
+        tools = [
+            {"name": "search", "inputSchema": {"required": ["q"]}},
+            {"name": "health", "inputSchema": {"type": "object"}},
+        ]
         self.assertEqual(sp.pick_tool(tools), ("health", ""))
 
     def test_a_requested_tool_wins(self) -> None:
-        tools = [{"name": "health", "inputSchema": {}}, {"name": "count", "inputSchema": {}}]
+        tools = [
+            {"name": "health", "inputSchema": {}},
+            {"name": "count", "inputSchema": {}},
+        ]
         self.assertEqual(sp.pick_tool(tools, "count"), ("count", ""))
 
     def test_a_requested_tool_that_is_absent_says_so(self) -> None:
@@ -206,7 +247,9 @@ class PickToolTest(unittest.TestCase):
 
     def test_arguments_are_never_invented(self) -> None:
         # Guessing a value for a required parameter would test the guess.
-        name, why = sp.pick_tool([{"name": "search", "inputSchema": {"required": ["q"]}}])
+        name, why = sp.pick_tool(
+            [{"name": "search", "inputSchema": {"required": ["q"]}}]
+        )
         self.assertEqual(name, "")
         self.assertIn("--tool", why)
 
@@ -214,6 +257,7 @@ class PickToolTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # the probe, with the three impure seams injected
 # ---------------------------------------------------------------------------
+
 
 class ReadIndexTest(unittest.TestCase):
     """The existence check, which used to ask a different cache than pip resolves.
@@ -258,15 +302,18 @@ class ReadIndexTest(unittest.TestCase):
             "meta": {"api-version": "1.4"},
             "versions": list(versions),
             "files": [
-                {"filename": f"demo_mcp-{v}.tar.gz", "yanked": v in yanked} for v in versions
+                {"filename": f"demo_mcp-{v}.tar.gz", "yanked": v in yanked}
+                for v in versions
             ],
         }
 
     def _json(self, versions, latest=None):
         return {
             "info": {"version": latest or list(versions)[-1]},
-            "releases": {v: [{"filename": f"demo_mcp-{v}.tar.gz", "yanked": False}]
-                         for v in versions},
+            "releases": {
+                v: [{"filename": f"demo_mcp-{v}.tar.gz", "yanked": False}]
+                for v in versions
+            },
         }
 
     def test_both_apis_are_read_on_pypi_and_the_simple_one_decides(self) -> None:
@@ -288,7 +335,9 @@ class ReadIndexTest(unittest.TestCase):
     def test_a_disagreement_between_the_two_reaches_the_shipped_gate_too(self) -> None:
         """The cross-check was release_gap's; after the merge it guards this
         gate as well, which is the point of having one probe."""
-        self._serve(self._simple(["0.5.0", "0.6.0"]), self._json(["0.5.0"], latest="0.5.0"))
+        self._serve(
+            self._simple(["0.5.0", "0.6.0"]), self._json(["0.5.0"], latest="0.5.0")
+        )
         report = self._read()
         self.assertEqual(report.index_status, "unconfirmed")
 
@@ -326,8 +375,9 @@ class ReadIndexTest(unittest.TestCase):
         self._serve(404, 404)
         report = sp.Report(dist="ghost-mcp")
         sp.read_index(report, Path("."), 5.0, offline=False)
-        self.assertEqual((report.index_version, report.index_status),
-                         (None, "not_published"))
+        self.assertEqual(
+            (report.index_version, report.index_status), (None, "not_published")
+        )
         self.assertIn("ghost-mcp", report.index_detail)
 
     def test_the_index_url_is_the_one_asked(self) -> None:
@@ -342,7 +392,8 @@ class ReadIndexTest(unittest.TestCase):
         self._read("https://pypi.example.com/simple")
         self.assertEqual(len(asked), 1)
         self.assertTrue(
-            asked[0].startswith("https://pypi.example.com/simple/demo-mcp/"), asked[0])
+            asked[0].startswith("https://pypi.example.com/simple/demo-mcp/"), asked[0]
+        )
 
     def test_a_private_index_gets_no_pypi_fallback(self) -> None:
         """Falling back to pypi.org would answer about a different package.
@@ -360,16 +411,19 @@ class ReadIndexTest(unittest.TestCase):
     def test_a_private_index_404_is_believed(self) -> None:
         self._serve(404, None)
         report = self._read("https://pypi.example.com/simple")
-        self.assertEqual((report.index_version, report.index_status),
-                         (None, "not_published"))
+        self.assertEqual(
+            (report.index_version, report.index_status), (None, "not_published")
+        )
         self.assertIn("pypi.example.com", report.index_detail)
 
     def test_is_pypi_matches_on_host_not_on_prefix(self) -> None:
         for url in ("https://pypi.org/simple", "https://pypi.org/simple/"):
             self.assertTrue(sp.is_pypi(url), url)
-        for url in ("https://pypi.example.com/simple",
-                    "https://mirror.local/pypi.org/simple",
-                    "http://localhost:8080/simple"):
+        for url in (
+            "https://pypi.example.com/simple",
+            "https://mirror.local/pypi.org/simple",
+            "http://localhost:8080/simple",
+        ):
             self.assertFalse(sp.is_pypi(url), url)
 
 
@@ -377,11 +431,15 @@ class ProbeWiringTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.target = Path(self.tmp.name)
-        (self.target / "pyproject.toml").write_text(textwrap.dedent('''
+        (self.target / "pyproject.toml").write_text(
+            textwrap.dedent("""
             [project]
             name = "demo-mcp"
             version = "0.6.0"
-        ''').strip() + "\n", encoding="utf-8")
+        """).strip()
+            + "\n",
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -396,36 +454,70 @@ class ProbeWiringTest(unittest.TestCase):
         play rather than mocking past them.
         """
         version, status, _detail = index
+
         def fake(url: str, timeout: float, accept: str | None = None):
             if status == "unreachable":
                 return None, "unreachable", "index unreachable: simulated"
             if status == "not_published":
                 return None, "not_published", "not on the index (HTTP 404)"
             if "/simple/" in url:
-                return {"meta": {"api-version": "1.4"}, "versions": [version],
-                        "files": [{"filename": f"demo_mcp-{version}.tar.gz",
-                                   "yanked": False}]}, "ok", ""
-            return {"info": {"version": version},
-                    "releases": {version: [{"filename": f"demo_mcp-{version}.tar.gz",
-                                            "yanked": False}]}}, "ok", ""
+                return (
+                    {
+                        "meta": {"api-version": "1.4"},
+                        "versions": [version],
+                        "files": [
+                            {"filename": f"demo_mcp-{version}.tar.gz", "yanked": False}
+                        ],
+                    },
+                    "ok",
+                    "",
+                )
+            return (
+                {
+                    "info": {"version": version},
+                    "releases": {
+                        version: [
+                            {"filename": f"demo_mcp-{version}.tar.gz", "yanked": False}
+                        ]
+                    },
+                },
+                "ok",
+                "",
+            )
+
         return fake
 
-    def _probe(self, *, index=("0.5.0", "ok", ""), installed=None, spoke=None,
-               tool="", dist="demo-mcp") -> sp.Report:
-        installed = installed or sp.Installed(True, version="0.5.0",
-                                              entrypoint="/venv/bin/demo-mcp")
-        spoke = spoke if spoke is not None else {
-            "tools": [{"name": "health", "inputSchema": {"type": "object"}}],
-            "call": {"result": {"content": [{"type": "text", "text": "ok"}]}},
-            "error": "",
-        }
+    def _probe(
+        self,
+        *,
+        index=("0.5.0", "ok", ""),
+        installed=None,
+        spoke=None,
+        tool="",
+        dist="demo-mcp",
+    ) -> sp.Report:
+        installed = installed or sp.Installed(
+            True, version="0.5.0", entrypoint="/venv/bin/demo-mcp"
+        )
+        spoke = (
+            spoke
+            if spoke is not None
+            else {
+                "tools": [{"name": "health", "inputSchema": {"type": "object"}}],
+                "call": {"result": {"content": [{"type": "text", "text": "ok"}]}},
+                "error": "",
+            }
+        )
         original = sp._get
         sp._get = self._serve_index(index)
         try:
             return sp.probe(
-                dist, self.target, tool=tool,
+                dist,
+                self.target,
+                tool=tool,
                 installer=lambda *a, **k: installed,
-                speaker=lambda *a, **k: spoke)
+                speaker=lambda *a, **k: spoke,
+            )
         finally:
             sp._get = original
 
@@ -437,9 +529,12 @@ class ProbeWiringTest(unittest.TestCase):
         self.assertEqual(r.versions.repo, "0.6.0")
 
     def test_everything_in_sync_and_running_is_green(self) -> None:
-        r = self._probe(index=("0.6.0", "ok", ""),
-                        installed=sp.Installed(True, version="0.6.0",
-                                               entrypoint="/venv/bin/demo-mcp"))
+        r = self._probe(
+            index=("0.6.0", "ok", ""),
+            installed=sp.Installed(
+                True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"
+            ),
+        )
         self.assertEqual(r.findings, [])
         self.assertEqual(r.exit_code(), sp.EXIT_GREEN)
         self.assertEqual(r.tool_call.status, "ok")
@@ -459,8 +554,12 @@ class ProbeWiringTest(unittest.TestCase):
             calls.append("installed")
             return sp.Installed(False)
 
-        r = self._probe(dist="ghost-mcp", index=(None, "not_published", "404"),
-                        installed=sp.Installed(False), spoke={})
+        r = self._probe(
+            dist="ghost-mcp",
+            index=(None, "not_published", "404"),
+            installed=sp.Installed(False),
+            spoke={},
+        )
         self.assertEqual(codes(r.findings), ["NOT_ON_INDEX"])
         self.assertEqual(calls, [], "nothing to install — do not try")
 
@@ -475,22 +574,33 @@ class ProbeWiringTest(unittest.TestCase):
 
         def fake(url: str, timeout: float, accept: str | None = None):
             asked.append(url)
-            return {"meta": {"api-version": "1.4"}, "versions": ["0.6.0"],
-                    "files": [{"filename": "demo_mcp-0.6.0.tar.gz",
-                               "yanked": False}]}, "ok", ""
+            return (
+                {
+                    "meta": {"api-version": "1.4"},
+                    "versions": ["0.6.0"],
+                    "files": [{"filename": "demo_mcp-0.6.0.tar.gz", "yanked": False}],
+                },
+                "ok",
+                "",
+            )
 
         sp._get = fake
         try:
             r = sp.probe(
-                "demo-mcp", self.target, index_url="https://pypi.example.com/simple",
+                "demo-mcp",
+                self.target,
+                index_url="https://pypi.example.com/simple",
                 installer=lambda *a, **k: sp.Installed(
-                    True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"),
-                speaker=lambda *a, **k: {"tools": [], "call": {}, "error": ""})
+                    True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"
+                ),
+                speaker=lambda *a, **k: {"tools": [], "call": {}, "error": ""},
+            )
         finally:
             sp._get = original
         self.assertEqual(len(asked), 1, "a private index has no JSON API to also ask")
-        self.assertTrue(asked[0].startswith("https://pypi.example.com/simple/demo-mcp/"),
-                        asked[0])
+        self.assertTrue(
+            asked[0].startswith("https://pypi.example.com/simple/demo-mcp/"), asked[0]
+        )
         self.assertEqual(r.versions.installed, "0.6.0")
 
     def test_an_install_failure_carries_pips_own_words(self) -> None:
@@ -499,29 +609,45 @@ class ProbeWiringTest(unittest.TestCase):
         self.assertTrue(any("ResolutionImpossible" in f.detail for f in r.findings))
 
     def test_a_server_that_does_not_start_is_a_finding_about_the_artifact(self) -> None:
-        r = self._probe(spoke={"tools": None, "call": None,
-                               "error": "could not start the installed entrypoint"})
+        r = self._probe(
+            spoke={
+                "tools": None,
+                "call": None,
+                "error": "could not start the installed entrypoint",
+            }
+        )
         self.assertIn("DOES_NOT_RUN", codes(r.findings))
 
     def test_an_empty_tool_answer_surfaces_as_its_own_code(self) -> None:
-        r = self._probe(index=("0.6.0", "ok", ""),
-                        installed=sp.Installed(True, version="0.6.0",
-                                               entrypoint="/venv/bin/demo-mcp"),
-                        spoke={"tools": [{"name": "health", "inputSchema": {}}],
-                               "call": {"result": {"content": []}}, "error": ""},
-                        tool="health")
+        r = self._probe(
+            index=("0.6.0", "ok", ""),
+            installed=sp.Installed(
+                True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"
+            ),
+            spoke={
+                "tools": [{"name": "health", "inputSchema": {}}],
+                "call": {"result": {"content": []}},
+                "error": "",
+            },
+            tool="health",
+        )
         self.assertEqual(codes(r.findings), ["TOOL_EMPTY"])
 
     def test_a_target_with_no_callable_tool_is_recorded_not_guessed(self) -> None:
-        r = self._probe(index=("0.6.0", "ok", ""),
-                        installed=sp.Installed(True, version="0.6.0",
-                                               entrypoint="/venv/bin/demo-mcp"),
-                        spoke={"tools": [{"name": "search",
-                                          "inputSchema": {"required": ["q"]}}],
-                               "call": None, "error": ""})
+        r = self._probe(
+            index=("0.6.0", "ok", ""),
+            installed=sp.Installed(
+                True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"
+            ),
+            spoke={
+                "tools": [{"name": "search", "inputSchema": {"required": ["q"]}}],
+                "call": None,
+                "error": "",
+            },
+        )
         self.assertFalse(r.tool_call.ran)
         self.assertEqual(r.tool_call.status, "skipped")
-        self.assertEqual(r.findings, [])   # not a defect, just not exercisable
+        self.assertEqual(r.findings, [])  # not a defect, just not exercisable
 
     @unittest.skipUnless(shutil.which("git"), "git missing")
     def test_the_latest_tag_is_used_not_the_oldest(self) -> None:
@@ -530,17 +656,28 @@ class ProbeWiringTest(unittest.TestCase):
         # behind and therefore always "a finding" — a gate that is right by
         # accident on every repository. This pins the direction.
         run = lambda *a: subprocess.run(  # noqa: E731
-            ["git", "-C", str(self.target), *a], capture_output=True, check=True,
-            env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e",
-                 "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"})
+            ["git", "-C", str(self.target), *a],
+            capture_output=True,
+            check=True,
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@e",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@e",
+            },
+        )
         run("init", "-q")
         run("add", "-A")
         run("commit", "-qm", "init")
         for tag in ("v0.4.0", "v0.5.0", "v0.6.0"):
             run("tag", tag)
-        r = self._probe(index=("0.6.0", "ok", ""),
-                        installed=sp.Installed(True, version="0.6.0",
-                                               entrypoint="/venv/bin/demo-mcp"))
+        r = self._probe(
+            index=("0.6.0", "ok", ""),
+            installed=sp.Installed(
+                True, version="0.6.0", entrypoint="/venv/bin/demo-mcp"
+            ),
+        )
         self.assertEqual(r.versions.tag, "v0.6.0")
         self.assertEqual(r.findings, [], msg=str([f.as_dict() for f in r.findings]))
 
@@ -554,12 +691,19 @@ class ProbeWiringTest(unittest.TestCase):
 # the stdio conversation — real subprocess, because the trap is a timing bug
 # ---------------------------------------------------------------------------
 
+
 class SpeakMcpTest(unittest.TestCase):
     def _speak(self, mode: str, tool: str = "health", **kw) -> dict:
         env = dict(os.environ)
         env["SHIPPED_FIXTURE_MODE"] = mode
-        return sp.speak_mcp([sys.executable, str(SERVER)], timeout=25,
-                            cwd=FIXTURES, tool=tool, env=env, **kw)
+        return sp.speak_mcp(
+            [sys.executable, str(SERVER)],
+            timeout=25,
+            cwd=FIXTURES,
+            tool=tool,
+            env=env,
+            **kw,
+        )
 
     def test_a_healthy_server_answers_all_three(self) -> None:
         got = self._speak("ok")
@@ -578,7 +722,8 @@ class SpeakMcpTest(unittest.TestCase):
         self.assertEqual(sp.classify_tool_result(healthy["call"]).status, "ok")
         self.assertTrue(
             broken["error"] or sp.classify_tool_result(broken["call"]).status != "ok",
-            "closing stdin early must be observable, or the trap is not pinned")
+            "closing stdin early must be observable, or the trap is not pinned",
+        )
 
     def test_an_empty_answer_is_carried_through_end_to_end(self) -> None:
         got = self._speak("empty")
@@ -634,26 +779,34 @@ class EgressAllowlistTest(unittest.TestCase):
     REPO = Path(__file__).resolve().parents[1]
 
     def test_the_worker_may_reach_the_index(self) -> None:
-        text = (self.REPO / "deploy" / "microvm" / "forward-proxy"
-                / "worker-allow.txt").read_text(encoding="utf-8")
+        text = (
+            self.REPO / "deploy" / "microvm" / "forward-proxy" / "worker-allow.txt"
+        ).read_text(encoding="utf-8")
         self.assertIn(r"(^|\.)pypi\.org$", text)
         self.assertIn(r"(^|\.)files\.pythonhosted\.org$", text)
 
     def test_the_credential_side_is_not_widened_to_match(self) -> None:
         # The Broker holds the tokens and never installs anything. Mirroring the
         # entries there would widen the one side that matters, to buy nothing.
-        text = (self.REPO / "deploy" / "microvm" / "forward-proxy"
-                / "broker-allow.txt").read_text(encoding="utf-8")
-        entries = [ln for ln in text.splitlines()
-                   if ln.strip() and not ln.lstrip().startswith("#")]
-        self.assertFalse([e for e in entries if "pypi" in e or "pythonhosted" in e],
-                         "the Broker must not be given index egress it has no use for")
+        text = (
+            self.REPO / "deploy" / "microvm" / "forward-proxy" / "broker-allow.txt"
+        ).read_text(encoding="utf-8")
+        entries = [
+            ln
+            for ln in text.splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+        self.assertFalse(
+            [e for e in entries if "pypi" in e or "pythonhosted" in e],
+            "the Broker must not be given index egress it has no use for",
+        )
 
     def test_the_nft_layer_still_permits_443(self) -> None:
         # The port layer cannot express per-domain rules — that is the proxy's
         # job — so all it has to keep doing is not blocking HTTPS.
-        text = (self.REPO / "deploy" / "microvm"
-                / "egress-allowlist.nft").read_text(encoding="utf-8")
+        text = (self.REPO / "deploy" / "microvm" / "egress-allowlist.nft").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("tcp dport { 80, 443 } accept", text)
 
 

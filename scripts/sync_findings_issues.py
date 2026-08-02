@@ -18,6 +18,7 @@ fine-grained PAT with issues:write) from the environment; the token is never
 logged. All inputs are untrusted; the report body was already control-char
 stripped at the sink (nightly_audit_report.py, Analysis S-D).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -69,7 +70,9 @@ def finding_classes(summary: dict[str, Any]) -> list[dict[str, str]]:
     seen: set[str] = set()
     for key, label, title in _CLASSES:
         if summary.get(key) and label not in seen:
-            out.append({"key": key, "label": label, "marker": _marker(label), "title": title})
+            out.append(
+                {"key": key, "label": label, "marker": _marker(label), "title": title}
+            )
             seen.add(label)
     return out
 
@@ -105,11 +108,16 @@ def _ensure_label(repo: str, label: str, token: str) -> None:
     except urllib.error.HTTPError as e:
         if e.code != 404:
             raise
-        _req("POST", f"{_API}/repos/{repo}/labels", token, {
-            "name": label,
-            "color": _LABEL_COLORS.get(label, "ededed"),
-            "description": "Opened by the nightly audit (deterministic routing)",
-        })
+        _req(
+            "POST",
+            f"{_API}/repos/{repo}/labels",
+            token,
+            {
+                "name": label,
+                "color": _LABEL_COLORS.get(label, "ededed"),
+                "description": "Opened by the nightly audit (deterministic routing)",
+            },
+        )
 
 
 def _open_issues(repo: str, label: str, token: str) -> list[dict[str, Any]]:
@@ -130,24 +138,44 @@ def sync(repo: str, cls: dict[str, str], body: str, token: str, dry_run: bool) -
     action, number = decide(existing, marker)
     if dry_run:
         return f"[dry-run] {action} issue for label '{cls['label']}'" + (
-            f" #{number}" if number else "")
+            f" #{number}" if number else ""
+        )
     if action == "comment":
-        _req("POST", f"{_API}/repos/{repo}/issues/{number}/comments", token,
-             {"body": f"Still present on the latest nightly:\n\n{body}"})
+        _req(
+            "POST",
+            f"{_API}/repos/{repo}/issues/{number}/comments",
+            token,
+            {"body": f"Still present on the latest nightly:\n\n{body}"},
+        )
         return f"commented on #{number} ({cls['label']})"
-    created = _req("POST", f"{_API}/repos/{repo}/issues", token, {
-        "title": cls["title"], "body": full_body, "labels": [cls["label"]],
-    })
+    created = _req(
+        "POST",
+        f"{_API}/repos/{repo}/issues",
+        token,
+        {
+            "title": cls["title"],
+            "body": full_body,
+            "labels": [cls["label"]],
+        },
+    )
     return f"opened #{created.get('number')} ({cls['label']})"
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--summary", required=True, help="path to nightly-summary.json")
-    p.add_argument("--report", required=True, help="path to nightly-report.md (issue body)")
-    p.add_argument("--target", default="", help="owner/repo (else taken from the summary)")
-    p.add_argument("--token-env", default="GITHUB_TOKEN", help="env var holding the PAT")
-    p.add_argument("--dry-run", action="store_true", help="print the plan, touch nothing")
+    p.add_argument(
+        "--report", required=True, help="path to nightly-report.md (issue body)"
+    )
+    p.add_argument(
+        "--target", default="", help="owner/repo (else taken from the summary)"
+    )
+    p.add_argument(
+        "--token-env", default="GITHUB_TOKEN", help="env var holding the PAT"
+    )
+    p.add_argument(
+        "--dry-run", action="store_true", help="print the plan, touch nothing"
+    )
     args = p.parse_args(argv)
 
     try:
@@ -158,7 +186,9 @@ def main(argv: list[str] | None = None) -> int:
 
     classes = finding_classes(summary)
     if not classes:
-        print(f"no findings to route (outcome={summary.get('outcome')!r}) — nothing to do")
+        print(
+            f"no findings to route (outcome={summary.get('outcome')!r}) — nothing to do"
+        )
         return 0
 
     repo = args.target or str(summary.get("target") or "")
@@ -166,12 +196,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FATAL: no valid target repo (got {repo!r})", file=sys.stderr)
         return 1
 
-    body = Path(args.report).read_text(encoding="utf-8") if Path(args.report).exists() else \
-        "(nightly report body unavailable)"
+    body = (
+        Path(args.report).read_text(encoding="utf-8")
+        if Path(args.report).exists()
+        else "(nightly report body unavailable)"
+    )
 
     token = os.environ.get(args.token_env, "")
     if not token and not args.dry_run:
-        print(f"FATAL: {args.token_env} not set (issues:write PAT required)", file=sys.stderr)
+        print(
+            f"FATAL: {args.token_env} not set (issues:write PAT required)",
+            file=sys.stderr,
+        )
         return 1
 
     rc = 0
@@ -179,7 +215,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             print(sync(repo, cls, body, token, args.dry_run))
         except urllib.error.HTTPError as e:
-            print(f"ERROR routing '{cls['label']}': HTTP {e.code} {e.reason}", file=sys.stderr)
+            print(
+                f"ERROR routing '{cls['label']}': HTTP {e.code} {e.reason}",
+                file=sys.stderr,
+            )
             rc = 1
         except urllib.error.URLError as e:
             print(f"ERROR routing '{cls['label']}': {e}", file=sys.stderr)

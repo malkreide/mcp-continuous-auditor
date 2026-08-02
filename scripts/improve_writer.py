@@ -33,6 +33,7 @@ Env:
   IMPROVE_JOURNAL            experiments journal (tail is fed to the prompt)
   ANTHROPIC_BASE_URL         API base override (e.g. a TensorZero gateway)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -101,13 +102,17 @@ def _journal_tail(journal: Path) -> str:
     for line in lines:
         try:
             e = json.loads(line)
-            out.append(f"- {e.get('verdict')}({e.get('grund') or 'ok'}): {e.get('candidate')}")
+            out.append(
+                f"- {e.get('verdict')}({e.get('grund') or 'ok'}): {e.get('candidate')}"
+            )
         except json.JSONDecodeError:
             continue
     return "\n".join(out) or "(no prior experiments this run)"
 
 
-def build_payload(policy: str, config_text: str, journal_summary: str) -> dict[str, Any]:
+def build_payload(
+    policy: str, config_text: str, journal_summary: str
+) -> dict[str, Any]:
     system = (
         "You are the writer of a deterministic improve loop for an MCP-server "
         "audit suite. You PROPOSE exactly one candidate; a committed, "
@@ -156,20 +161,26 @@ def extract_diff(response: dict[str, Any]) -> str | None:
             text = "\n".join(lines[1:-1]).strip()
     if "--- " in text and "+++ " in text:
         return text + ("\n" if not text.endswith("\n") else "")
-    raise RuntimeError(f"writer output is neither a diff nor {NO_PROPOSAL}: {text[:200]!r}")
+    raise RuntimeError(
+        f"writer output is neither a diff nor {NO_PROPOSAL}: {text[:200]!r}"
+    )
 
 
 def _tokens(response: dict[str, Any]) -> int:
     usage = response.get("usage") or {}
     try:
-        return int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+        return int(usage.get("input_tokens") or 0) + int(
+            usage.get("output_tokens") or 0
+        )
     except (TypeError, ValueError):
         return 0
 
 
 def main(argv: list[str] | None = None, transport: Transport | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("target_dir", help="target checkout the candidate is written against")
+    p.add_argument(
+        "target_dir", help="target checkout the candidate is written against"
+    )
     p.add_argument("out_patch", help="path the unified diff is written to")
     args = p.parse_args(argv)
 
@@ -179,9 +190,13 @@ def main(argv: list[str] | None = None, transport: Transport | None = None) -> i
         return EXIT_HARD_FAIL
 
     policy_path = Path(
-        os.environ.get("IMPROVE_POLICY", _repo_root() / "openclaw" / "workspace" / "IMPROVE.md")
+        os.environ.get(
+            "IMPROVE_POLICY", _repo_root() / "openclaw" / "workspace" / "IMPROVE.md"
+        )
     )
-    config_rel = os.environ.get("IMPROVE_CONFIG", "promptfoo/promptfooconfig.determ.yaml")
+    config_rel = os.environ.get(
+        "IMPROVE_CONFIG", "promptfoo/promptfooconfig.determ.yaml"
+    )
     config_path = Path(args.target_dir) / config_rel
     journal = Path(os.environ.get("IMPROVE_JOURNAL", ".audit/experiments.jsonl"))
 
@@ -226,7 +241,10 @@ def main(argv: list[str] | None = None, transport: Transport | None = None) -> i
         return EXIT_NO_PROPOSAL
 
     out_patch.write_text(diff, encoding="utf-8")
-    print(f"WRITER: candidate written to {out_patch} ({_tokens(response)} tokens)", flush=True)
+    print(
+        f"WRITER: candidate written to {out_patch} ({_tokens(response)} tokens)",
+        flush=True,
+    )
     return EXIT_PROPOSED
 
 

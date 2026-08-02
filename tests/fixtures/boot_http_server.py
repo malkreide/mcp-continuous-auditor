@@ -16,6 +16,7 @@ One file, three behaviours, selected by ``BOOT_FIXTURE_MODE``:
 Binds ``HOST``/``PORT`` from the environment — the same variables the probe hands
 to a real target's entrypoint.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,11 +46,18 @@ def _host_name(header: str | None) -> str:
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, fmt: str, *args: object) -> None:  # keep the test output clean
+    def log_message(
+        self, fmt: str, *args: object
+    ) -> None:  # keep the test output clean
         pass
 
-    def _send(self, status: int, body: bytes, ctype: str = "application/json",
-              extra: dict[str, str] | None = None) -> None:
+    def _send(
+        self,
+        status: int,
+        body: bytes,
+        ctype: str = "application/json",
+        extra: dict[str, str] | None = None,
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -94,22 +102,35 @@ class Handler(BaseHTTPRequestHandler):
             self._send(202, b"")
             return
         if method == "initialize":
-            payload = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "boot-fixture", "version": "1"},
-            }}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": msg.get("id"),
+                "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "boot-fixture", "version": "1"},
+                },
+            }
             # Answer as SSE, the way FastMCP's streamable transport does, so the
             # probe's frame parsing is exercised rather than assumed.
             body = f"event: message\ndata: {json.dumps(payload)}\n\n".encode()
-            self._send(200, body, "text/event-stream", {"Mcp-Session-Id": "fixture-session"})
+            self._send(
+                200, body, "text/event-stream", {"Mcp-Session-Id": "fixture-session"}
+            )
             return
         if method == "tools/list":
-            payload = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {"tools": TOOLS}}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": msg.get("id"),
+                "result": {"tools": TOOLS},
+            }
             self._send(200, json.dumps(payload).encode(), "application/json")
             return
-        payload = {"jsonrpc": "2.0", "id": msg.get("id"),
-                   "error": {"code": -32601, "message": f"unknown method {method}"}}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": msg.get("id"),
+            "error": {"code": -32601, "message": f"unknown method {method}"},
+        }
         self._send(200, json.dumps(payload).encode(), "application/json")
 
 

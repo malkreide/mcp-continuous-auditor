@@ -104,7 +104,12 @@ class Report:
     @property
     def ok(self) -> bool:
         runtime_bad = bool(self.runtime and self.runtime.get("status") == "mismatch")
-        return not self.drift and not self.hardcoded and not runtime_bad and not self.unresolved
+        return (
+            not self.drift
+            and not self.hardcoded
+            and not runtime_bad
+            and not self.unresolved
+        )
 
 
 def read_project(root: Path) -> dict[str, Any]:
@@ -165,13 +170,23 @@ def find_hardcoded(root: Path, dist: str) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     for path in sorted(src.rglob("*.py")):
         for lineno, line in enumerate(code_lines(path.read_text(encoding="utf-8")), 1):
-            values = [m.group(2) for m in ANY_UA.finditer(line) if norm(m.group(1)) == norm(dist)]
+            values = [
+                m.group(2)
+                for m in ANY_UA.finditer(line)
+                if norm(m.group(1)) == norm(dist)
+            ]
             values += [
-                m.group(1) for m in dunder.finditer(line) if re.match(r"\d+\.\d", m.group(1))
+                m.group(1)
+                for m in dunder.finditer(line)
+                if re.match(r"\d+\.\d", m.group(1))
             ]
             if any("+" not in v for v in values):
                 hits.append(
-                    {"file": str(path.relative_to(root)), "line": lineno, "code": line.strip()}
+                    {
+                        "file": str(path.relative_to(root)),
+                        "line": lineno,
+                        "code": line.strip(),
+                    }
                 )
     return hits
 
@@ -215,14 +230,21 @@ def collect_declared(root: Path) -> list[dict[str, str]]:
     manifest = root / "server.json"
     if manifest.exists():
         data = json.loads(manifest.read_text(encoding="utf-8"))
-        found.append({"where": "server.json → version", "value": data.get("version", "")})
+        found.append(
+            {"where": "server.json → version", "value": data.get("version", "")}
+        )
         for i, pkg in enumerate(data.get("packages", [])):
             found.append(
-                {"where": f"server.json → packages[{i}].version", "value": pkg.get("version", "")}
+                {
+                    "where": f"server.json → packages[{i}].version",
+                    "value": pkg.get("version", ""),
+                }
             )
     for readme in sorted(root.glob("README*.md")):
         for m in BADGE.finditer(readme.read_text(encoding="utf-8")):
-            found.append({"where": f"{readme.name} → version badge", "value": m.group(1)})
+            found.append(
+                {"where": f"{readme.name} → version badge", "value": m.group(1)}
+            )
     return found
 
 
@@ -275,7 +297,9 @@ def render(report: Report) -> str:
     if report.version == "(dynamic)":
         return f"{report.dist}: dynamic version — identity probe skipped."
     for d in report.drift:
-        out.append(f"DRIFT      {d['where']} = {d['value']!r} (pyproject {report.version!r})")
+        out.append(
+            f"DRIFT      {d['where']} = {d['value']!r} (pyproject {report.version!r})"
+        )
     for h in report.hardcoded:
         out.append(f"HARDCODED  {h['file']}:{h['line']}: {h['code'][:100]}")
     if report.unresolved:
@@ -306,7 +330,10 @@ def main() -> int:
 
     target = Path(args.target).resolve()
     if not (target / "pyproject.toml").exists():
-        print(f"{target}: no pyproject.toml — not a Python MCP server repo", file=sys.stderr)
+        print(
+            f"{target}: no pyproject.toml — not a Python MCP server repo",
+            file=sys.stderr,
+        )
         return 2
 
     report = probe(target, args.installed)

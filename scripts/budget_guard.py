@@ -37,6 +37,7 @@ stdlib-only and side-effect-free except for that one file (matches
 ``scripts/live_probe.py``). All inputs (promptfoo JSON, env) are treated as
 untrusted: we read tokens as ints and never exec anything (AGENTS.md / TOOLS.md).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -93,7 +94,9 @@ class Limits:
         self.tokens_window = _env_int("BUDGET_TOKENS_WINDOW", 2_000_000)
         self.window_seconds = _env_int("BUDGET_WINDOW_SECONDS", 86_400)  # 24h
         self.breaker_threshold = _env_int("BUDGET_BREAKER_THRESHOLD", 3)
-        self.cooldown_seconds = _env_int("BUDGET_BREAKER_COOLDOWN_SECONDS", 21_600)  # 6h
+        self.cooldown_seconds = _env_int(
+            "BUDGET_BREAKER_COOLDOWN_SECONDS", 21_600
+        )  # 6h
         self.max_iterations = _env_int("BUDGET_MAX_ITERATIONS", 25)
         # --- fan-out (scripts/portfolio_scan.py) -----------------------------
         # A portfolio sweep multiplies whatever one target costs. The knobs above
@@ -126,8 +129,9 @@ class Limits:
         }
 
 
-def fanout_refusal(fanout: int, expensive: int, window_used: int,
-                   limits: Limits) -> str | None:
+def fanout_refusal(
+    fanout: int, expensive: int, window_used: int, limits: Limits
+) -> str | None:
     """Why a sweep this wide may not run, or None.
 
     Checked at PREFLIGHT, before a single repository is cloned. The breaker and
@@ -139,20 +143,26 @@ def fanout_refusal(fanout: int, expensive: int, window_used: int,
     if fanout <= 0:
         return None
     if limits.max_fanout and fanout > limits.max_fanout:
-        return (f"fan-out of {fanout} targets exceeds BUDGET_MAX_FANOUT="
-                f"{limits.max_fanout} — refusing to sweep a list this wide. Split "
-                "it, or raise the cap deliberately")
+        return (
+            f"fan-out of {fanout} targets exceeds BUDGET_MAX_FANOUT="
+            f"{limits.max_fanout} — refusing to sweep a list this wide. Split "
+            "it, or raise the cap deliberately"
+        )
     if limits.max_fanout_expensive and expensive > limits.max_fanout_expensive:
-        return (f"{expensive} target(s) opt into an expensive predicate, over "
-                f"BUDGET_MAX_FANOUT_EXPENSIVE={limits.max_fanout_expensive} — each "
-                "one boots a real server, so this is wall-clock and sockets, not "
-                "just CPU")
+        return (
+            f"{expensive} target(s) opt into an expensive predicate, over "
+            f"BUDGET_MAX_FANOUT_EXPENSIVE={limits.max_fanout_expensive} — each "
+            "one boots a real server, so this is wall-clock and sockets, not "
+            "just CPU"
+        )
     projected = fanout * limits.tokens_per_target
     if projected and window_used + projected > limits.tokens_window:
-        return (f"projected {projected} tokens for {fanout} targets would take the "
-                f"rolling window past its cap ({window_used}+{projected} > "
-                f"{limits.tokens_window}) — the sweep is refused BEFORE spending, "
-                "not measured afterwards")
+        return (
+            f"projected {projected} tokens for {fanout} targets would take the "
+            f"rolling window past its cap ({window_used}+{projected} > "
+            f"{limits.tokens_window}) — the sweep is refused BEFORE spending, "
+            "not measured afterwards"
+        )
     return None
 
 
@@ -266,7 +276,9 @@ def cmd_preflight(args: argparse.Namespace, limits: Limits) -> int:
         skip_reason = fanout_refusal(
             int(getattr(args, "fanout", 0) or 0),
             int(getattr(args, "fanout_expensive", 0) or 0),
-            int(state["window"]["tokens_used"]), limits)
+            int(state["window"]["tokens_used"]),
+            limits,
+        )
 
     # Window already over budget is also a skip — a cost circuit, not just a fault one.
     if skip_reason is None and state["window"]["tokens_used"] >= limits.tokens_window:
@@ -345,7 +357,11 @@ def cmd_record(args: argparse.Namespace, limits: Limits) -> int:
     outcome = _OUTCOME_BY_EXIT.get(args.exit_code, "hard-fail")
     tokens = args.tokens
     if tokens < 0:  # not given explicitly — try the promptfoo output.
-        tokens = tokens_from_promptfoo(Path(args.promptfoo_json)) if args.promptfoo_json else 0
+        tokens = (
+            tokens_from_promptfoo(Path(args.promptfoo_json))
+            if args.promptfoo_json
+            else 0
+        )
 
     # Account tokens against the rolling window.
     state["window"]["tokens_used"] = int(state["window"]["tokens_used"]) + int(tokens)
@@ -448,24 +464,44 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument("--target", default=os.environ.get("TARGET_REPO", "unknown"))
     pf.add_argument("--out-report", dest="out_report", default="")
     pf.add_argument("--out-summary", dest="out_summary", default="")
-    pf.add_argument("--fanout", type=int, default=0,
-                    help="how many targets a portfolio sweep will touch. Gated on "
-                         "WIDTH before anything is cloned — the breaker and the "
-                         "token window only ever react to what a run already spent")
-    pf.add_argument("--fanout-expensive", type=int, default=0, dest="fanout_expensive",
-                    help="how many of those targets opt into an expensive predicate "
-                         "(each boots a real server)")
+    pf.add_argument(
+        "--fanout",
+        type=int,
+        default=0,
+        help="how many targets a portfolio sweep will touch. Gated on "
+        "WIDTH before anything is cloned — the breaker and the "
+        "token window only ever react to what a run already spent",
+    )
+    pf.add_argument(
+        "--fanout-expensive",
+        type=int,
+        default=0,
+        dest="fanout_expensive",
+        help="how many of those targets opt into an expensive predicate "
+        "(each boots a real server)",
+    )
     pf.set_defaults(func=cmd_preflight)
 
     rec = sub.add_parser("record", help="record a finished run's outcome + tokens")
     rec.add_argument("--exit-code", type=int, required=True, dest="exit_code")
-    rec.add_argument("--tokens", type=int, default=-1, help="explicit token total (else from --promptfoo-json)")
-    rec.add_argument("--fanout", type=int, default=0,
-                     help="targets touched, stamped into the run record so a wide "
-                          "sweep is visible in the history rather than looking like "
-                          "an ordinary single-target run")
+    rec.add_argument(
+        "--tokens",
+        type=int,
+        default=-1,
+        help="explicit token total (else from --promptfoo-json)",
+    )
+    rec.add_argument(
+        "--fanout",
+        type=int,
+        default=0,
+        help="targets touched, stamped into the run record so a wide "
+        "sweep is visible in the history rather than looking like "
+        "an ordinary single-target run",
+    )
     rec.add_argument("--promptfoo-json", dest="promptfoo_json", default="")
-    rec.add_argument("--strict", action="store_true", help="exit non-zero on a breach / open breaker")
+    rec.add_argument(
+        "--strict", action="store_true", help="exit non-zero on a breach / open breaker"
+    )
     rec.set_defaults(func=cmd_record)
 
     st = sub.add_parser("status", help="print effective limits + current state")
@@ -473,7 +509,9 @@ def main(argv: list[str] | None = None) -> int:
 
     rs = sub.add_parser("reset", help="manually close the breaker")
     rs.add_argument("--reason", default="")
-    rs.add_argument("--clear-window", action="store_true", help="also reset the token window")
+    rs.add_argument(
+        "--clear-window", action="store_true", help="also reset the token window"
+    )
     rs.set_defaults(func=cmd_reset)
 
     args = p.parse_args(argv)

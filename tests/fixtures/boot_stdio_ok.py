@@ -13,6 +13,7 @@ Two deliberate properties, both there to make the stdin trap testable:
     the network-bound work a real server does there. Without a delay the trap
     could pass by luck.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,9 @@ TOOLS = [
 
 
 def reply(ident: object, result: dict) -> None:
-    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": ident, "result": result}) + "\n")
+    sys.stdout.write(
+        json.dumps({"jsonrpc": "2.0", "id": ident, "result": result}) + "\n"
+    )
     sys.stdout.flush()
 
 
@@ -50,21 +53,33 @@ def main() -> int:
 
         method = msg.get("method")
         if method == "initialize":
-            reply(msg.get("id"), {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "boot-fixture", "version": "1"},
-            })
+            reply(
+                msg.get("id"),
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "boot-fixture", "version": "1"},
+                },
+            )
         elif method == "tools/list":
             time.sleep(LATENCY)  # stand-in for the network-bound work
             reply(msg.get("id"), {"tools": TOOLS})
         elif method and method.startswith("notifications/"):
             continue
         elif "id" in msg:
-            sys.stdout.write(json.dumps({
-                "jsonrpc": "2.0", "id": msg["id"],
-                "error": {"code": -32601, "message": f"unknown method {method}"},
-            }) + "\n")
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg["id"],
+                        "error": {
+                            "code": -32601,
+                            "message": f"unknown method {method}",
+                        },
+                    }
+                )
+                + "\n"
+            )
             sys.stdout.flush()
 
 

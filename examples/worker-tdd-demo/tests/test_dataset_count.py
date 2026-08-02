@@ -4,6 +4,7 @@
 No live network — outbound httpx is replaced by an AsyncMock-style stub that
 replays the recorded fixture (fastmcp-testing skill).
 """
+
 from __future__ import annotations
 
 import json

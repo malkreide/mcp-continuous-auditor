@@ -7,6 +7,7 @@ monkeypatched. The invariants pinned here are the ones the audit script relies
 on: no-op without config, best-effort (main() always exits 0), token redaction,
 truncation, and the chat-id resolution order.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -69,7 +70,11 @@ class ConfigTest(unittest.TestCase):
             self.assertIsNone(tn.telegram_config())
 
     def test_announce_to_preferred(self) -> None:
-        with _env(TELEGRAM_BOT_TOKEN="t", TELEGRAM_ANNOUNCE_TO="99", TELEGRAM_ALLOW_FROM="11,22"):
+        with _env(
+            TELEGRAM_BOT_TOKEN="t",
+            TELEGRAM_ANNOUNCE_TO="99",
+            TELEGRAM_ALLOW_FROM="11,22",
+        ):
             self.assertEqual(tn.telegram_config(), ("t", "99"))
 
     def test_falls_back_to_first_allow_from(self) -> None:
@@ -92,7 +97,9 @@ class FormatTest(unittest.TestCase):
         self.assertTrue(msg.endswith(tn.TRUNCATION_MARKER))
 
     def test_redaction(self) -> None:
-        self.assertEqual(tn.redact_token("url/bot SECRET /x", "SECRET"), "url/bot *** /x")
+        self.assertEqual(
+            tn.redact_token("url/bot SECRET /x", "SECRET"), "url/bot *** /x"
+        )
 
 
 class SendTest(unittest.TestCase):
@@ -165,7 +172,9 @@ class MainTest(unittest.TestCase):
             report = Path(d) / "nightly-report.md"
             report.write_text("AUDIT green\n", encoding="utf-8")
             with _env(TELEGRAM_BOT_TOKEN="t", TELEGRAM_ANNOUNCE_TO="1"):
-                with unittest.mock.patch.object(tn.urllib.request, "urlopen", fake_urlopen):
+                with unittest.mock.patch.object(
+                    tn.urllib.request, "urlopen", fake_urlopen
+                ):
                     self.assertEqual(self._run(["--report", str(report)]), 0)
         self.assertEqual(len(sent), 1)
         self.assertIn("AUDIT+green", sent[0])  # urlencoded body

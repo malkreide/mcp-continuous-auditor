@@ -114,9 +114,16 @@ class TelegramClient:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            with urllib.request.urlopen(
+                request, timeout=REQUEST_TIMEOUT_SECONDS
+            ) as response:
                 body = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+        except (
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            OSError,
+            ValueError,
+        ) as exc:
             raise RuntimeError(
                 f"Telegram API call {method} failed: {redact_token(str(exc), self.token)}"
             ) from exc
@@ -134,11 +141,17 @@ class TelegramClient:
 
     def acknowledge(self, last_update_id: int) -> None:
         """Confirm all updates up to *last_update_id* (Telegram-side state)."""
-        self._request("getUpdates", {"offset": last_update_id + 1, "timeout": 0, "limit": 1})
+        self._request(
+            "getUpdates", {"offset": last_update_id + 1, "timeout": 0, "limit": 1}
+        )
 
-    def send_message(self, chat_id: int | str, text: str, reply_to: int | None = None) -> None:
+    def send_message(
+        self, chat_id: int | str, text: str, reply_to: int | None = None
+    ) -> None:
         if len(text) > MAX_MESSAGE_CHARS:
-            text = text[: MAX_MESSAGE_CHARS - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+            text = (
+                text[: MAX_MESSAGE_CHARS - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+            )
         params: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
@@ -238,9 +251,13 @@ def github_token() -> str:
     )
 
 
-def create_issue(repo: str, token: str, title: str, body: str, labels: list[str]) -> str:
+def create_issue(
+    repo: str, token: str, title: str, body: str, labels: list[str]
+) -> str:
     """Create an issue via the GitHub REST API; returns its html_url."""
-    payload = json.dumps({"title": title, "body": body, "labels": labels}).encode("utf-8")
+    payload = json.dumps({"title": title, "body": body, "labels": labels}).encode(
+        "utf-8"
+    )
     request = urllib.request.Request(
         f"https://api.github.com/repos/{repo}/issues",
         data=payload,
@@ -252,7 +269,9 @@ def create_issue(repo: str, token: str, title: str, body: str, labels: list[str]
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(
+            request, timeout=REQUEST_TIMEOUT_SECONDS
+        ) as response:
             created = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:300]
@@ -268,7 +287,9 @@ def handle_audit_request(args: str, sender_id: str) -> str:
     repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
     token = github_token()
     if not repo or not token:
-        raise RuntimeError("GITHUB_REPOSITORY or a GitHub token is missing in the environment.")
+        raise RuntimeError(
+            "GITHUB_REPOSITORY or a GitHub token is missing in the environment."
+        )
     target = target_repo()
     title = f"[audit-request] {target}@{ref}"
     body = (
@@ -289,7 +310,9 @@ def handle_audit_request(args: str, sender_id: str) -> str:
     )
 
 
-def process_update(update: dict[str, Any], client: TelegramClient, allowed: set[str]) -> str:
+def process_update(
+    update: dict[str, Any], client: TelegramClient, allowed: set[str]
+) -> str:
     """Process one update; returns a log line. Replies happen inside."""
     message = update.get("message")
     if not message:
@@ -316,7 +339,9 @@ def process_update(update: dict[str, Any], client: TelegramClient, allowed: set[
         try:
             reply = handle_audit_request(action.get("args", ""), str(sender_id))
         except ValueError as exc:  # unsafe ref → chat reply, not a crash
-            client.send_message(chat_id, f"Could not file the request: {exc}", reply_to=message_id)
+            client.send_message(
+                chat_id, f"Could not file the request: {exc}", reply_to=message_id
+            )
             return f"/audit rejected: {exc}"
         except RuntimeError as exc:
             client.send_message(

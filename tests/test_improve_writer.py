@@ -6,6 +6,7 @@ no network and no real key are used; a placeholder ANTHROPIC_API_KEY is set
 per test. Covers the WRITER_CMD exit contract (0 proposed / 10 no-proposal /
 1 hard-fail), fence unwrapping, refusal handling, and token accounting.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,7 +28,9 @@ DIFF = (
 )
 
 
-def response(text: str, stop: str = "end_turn", tokens: tuple[int, int] = (100, 50)) -> dict:
+def response(
+    text: str, stop: str = "end_turn", tokens: tuple[int, int] = (100, 50)
+) -> dict:
     return {
         "content": [{"type": "text", "text": text}],
         "stop_reason": stop,
@@ -41,7 +44,9 @@ class ImproveWriterTest(unittest.TestCase):
         root = Path(self.tmp.name)
         self.target = root / "target"
         (self.target / "promptfoo").mkdir(parents=True)
-        (self.target / "promptfoo/promptfooconfig.determ.yaml").write_text("test-base PASS\n")
+        (self.target / "promptfoo/promptfooconfig.determ.yaml").write_text(
+            "test-base PASS\n"
+        )
         self.patch = root / "candidate.patch"
         self._env = {
             "ANTHROPIC_API_KEY": "test-key-not-real",
@@ -71,9 +76,7 @@ class ImproveWriterTest(unittest.TestCase):
     def test_diff_response_is_written(self) -> None:
         self.assertEqual(self.run_writer(response(DIFF)), iw.EXIT_PROPOSED)
         self.assertEqual(self.patch.read_text(), DIFF)
-        self.assertEqual(
-            Path(str(self.patch) + ".tokens").read_text().strip(), "150"
-        )
+        self.assertEqual(Path(str(self.patch) + ".tokens").read_text().strip(), "150")
         self.assertTrue(self.last_url.endswith("/v1/messages"))
         self.assertEqual(self.last_headers["x-api-key"], "test-key-not-real")
 
@@ -93,9 +96,7 @@ class ImproveWriterTest(unittest.TestCase):
         )
         self.assertFalse(self.patch.exists())
         # the call happened — its cost must still reach the budget guard
-        self.assertEqual(
-            Path(str(self.patch) + ".tokens").read_text().strip(), "150"
-        )
+        self.assertEqual(Path(str(self.patch) + ".tokens").read_text().strip(), "150")
 
     def test_non_diff_output_is_hard_fail(self) -> None:
         self.assertEqual(

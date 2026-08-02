@@ -12,6 +12,7 @@ it is what the handler implements today. Symlink-member hardening, a stream size
 limit and a read timeout are review finding S-D (Iteration 3) — not yet
 implemented, so not asserted here.
 """
+
 from __future__ import annotations
 
 import io
@@ -27,8 +28,16 @@ REPO = Path(__file__).resolve().parents[1]
 HANDLER = REPO / "deploy" / "microvm" / "channel" / "_receive-one.sh"
 REPORT_PY = REPO / "scripts" / "nightly_audit_report.py"
 
-_GREEN_GATES = {"ruff": 0, "mypy": 0, "pytest": 0, "schema_drift": 0,
-                "transport_boot": 0, "host_allowlist": 0, "shipped_artifact": 0, "promptfoo_rc": 0}
+_GREEN_GATES = {
+    "ruff": 0,
+    "mypy": 0,
+    "pytest": 0,
+    "schema_drift": 0,
+    "transport_boot": 0,
+    "host_allowlist": 0,
+    "shipped_artifact": 0,
+    "promptfoo_rc": 0,
+}
 
 
 def _tar_bytes(members: dict[str, bytes]) -> bytes:
@@ -44,7 +53,9 @@ def _tar_bytes(members: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
-@unittest.skipUnless(HANDLER.exists() and shutil.which("bash"), "handler or bash missing")
+@unittest.skipUnless(
+    HANDLER.exists() and shutil.which("bash"), "handler or bash missing"
+)
 class BrokerPipelineTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -75,51 +86,90 @@ class BrokerPipelineTest(unittest.TestCase):
         self.run_dir = run_dirs[0]
         return json.loads((self.run_dir / "nightly-summary.json").read_text())
 
-    def _deliver(self, members: dict[str, bytes], header: bytes = b"AUDIT-RESULT rc=0\n") -> dict:
+    def _deliver(
+        self, members: dict[str, bytes], header: bytes = b"AUDIT-RESULT rc=0\n"
+    ) -> dict:
         """Run the real handler with `header + tar(members)` on stdin."""
         return self._run_payload(header + _tar_bytes(members))
 
     @staticmethod
-    def _evidence(gates: dict, target: str = "o/r", sha: str = "abc1234",
-                  tests_collected: int = 7) -> bytes:
+    def _evidence(
+        gates: dict, target: str = "o/r", sha: str = "abc1234", tests_collected: int = 7
+    ) -> bytes:
         # tests_collected travels in the evidence because the Broker never sees the
         # runner log: a green pytest gate whose suite size is unknown is not a pass.
-        return json.dumps({"target": target, "target_sha": sha,
-                           "tests_collected": tests_collected, "gates": gates}).encode()
+        return json.dumps(
+            {
+                "target": target,
+                "target_sha": sha,
+                "tests_collected": tests_collected,
+                "gates": gates,
+            }
+        ).encode()
 
     # --- verdict re-derivation ------------------------------------------------
 
     def test_green_evidence_classifies_green(self) -> None:
-        s = self._deliver({
-            "nightly-evidence.json": self._evidence(_GREEN_GATES),
-            "promptfoo.json": json.dumps({"results": {"stats": {"errors": 0}, "results": []}}).encode(),
-        })
+        s = self._deliver(
+            {
+                "nightly-evidence.json": self._evidence(_GREEN_GATES),
+                "promptfoo.json": json.dumps(
+                    {"results": {"stats": {"errors": 0}, "results": []}}
+                ).encode(),
+            }
+        )
         self.assertEqual(s["outcome"], "green")
         self.assertTrue(s["green"])
 
     def test_forged_green_exit_codes_caught_by_promptfoo_evidence(self) -> None:
         # Worker claims all gates 0 but the promptfoo JSON it shipped carries real
         # failures. The Broker classifies from that too -> findings, not green.
-        pf = {"results": {"stats": {"errors": 0}, "results": [
-            {"success": False, "testCase": {"description": "schema"},
-             "gradingResult": {"componentResults": [{"pass": False, "assertion": {"type": "is-json"}}]}},
-            {"success": False, "testCase": {"description": "pii", "metadata": {"pluginId": "pii"}},
-             "gradingResult": {"componentResults": [{"pass": False, "assertion": {"type": "llm-rubric"}}]}},
-        ]}}
-        s = self._deliver({
-            "nightly-evidence.json": self._evidence(_GREEN_GATES),
-            "promptfoo.json": json.dumps(pf).encode(),
-        })
+        pf = {
+            "results": {
+                "stats": {"errors": 0},
+                "results": [
+                    {
+                        "success": False,
+                        "testCase": {"description": "schema"},
+                        "gradingResult": {
+                            "componentResults": [
+                                {"pass": False, "assertion": {"type": "is-json"}}
+                            ]
+                        },
+                    },
+                    {
+                        "success": False,
+                        "testCase": {
+                            "description": "pii",
+                            "metadata": {"pluginId": "pii"},
+                        },
+                        "gradingResult": {
+                            "componentResults": [
+                                {"pass": False, "assertion": {"type": "llm-rubric"}}
+                            ]
+                        },
+                    },
+                ],
+            }
+        }
+        s = self._deliver(
+            {
+                "nightly-evidence.json": self._evidence(_GREEN_GATES),
+                "promptfoo.json": json.dumps(pf).encode(),
+            }
+        )
         self.assertEqual(s["outcome"], "findings")
         self.assertFalse(s["green"])
         self.assertTrue(s["schema_drift"])
         self.assertTrue(s["redteam"])
 
     def test_garbled_evidence_is_hard_fail(self) -> None:
-        s = self._deliver({
-            "nightly-evidence.json": b"not json {{{",
-            "promptfoo.json": b"{}",
-        })
+        s = self._deliver(
+            {
+                "nightly-evidence.json": b"not json {{{",
+                "promptfoo.json": b"{}",
+            }
+        )
         self.assertEqual(s["outcome"], "hard-fail")
         self.assertFalse(s["green"])
 
@@ -128,7 +178,9 @@ class BrokerPipelineTest(unittest.TestCase):
         # that many bytes (no line-framing desync). Exact length -> clean extract.
         members = {
             "nightly-evidence.json": self._evidence(_GREEN_GATES),
-            "promptfoo.json": json.dumps({"results": {"stats": {"errors": 0}, "results": []}}).encode(),
+            "promptfoo.json": json.dumps(
+                {"results": {"stats": {"errors": 0}, "results": []}}
+            ).encode(),
         }
         tarb = _tar_bytes(members)
         header = f"AUDIT-RESULT rc=0 len={len(tarb)}\n".encode()
@@ -140,21 +192,32 @@ class BrokerPipelineTest(unittest.TestCase):
 
     def test_hostile_members_are_not_extracted(self) -> None:
         escape = f"pwned-{id(self)}.json".encode()
-        s = self._deliver({
-            "nightly-evidence.json": self._evidence(_GREEN_GATES),
-            "promptfoo.json": json.dumps({"results": {"stats": {"errors": 0}, "results": []}}).encode(),
-            # Hostile members a compromised Worker might ship:
-            "../escape.json": escape,                 # parent-dir traversal
-            "/tmp/mcp-broker-pwned.json": escape,      # absolute path
-            "nested/evil.json": escape,                # subdir member
-        })
+        s = self._deliver(
+            {
+                "nightly-evidence.json": self._evidence(_GREEN_GATES),
+                "promptfoo.json": json.dumps(
+                    {"results": {"stats": {"errors": 0}, "results": []}}
+                ).encode(),
+                # Hostile members a compromised Worker might ship:
+                "../escape.json": escape,  # parent-dir traversal
+                "/tmp/mcp-broker-pwned.json": escape,  # absolute path
+                "nested/evil.json": escape,  # subdir member
+            }
+        )
         # The verdict is still derived from the two legit members.
         self.assertEqual(s["outcome"], "green")
         # Only the two exact-name files landed in the run dir.
         extracted = sorted(p.name for p in self.run_dir.iterdir())
-        self.assertEqual(extracted, ["header.txt", "nightly-evidence.json",
-                                     "nightly-report.md", "nightly-summary.json",
-                                     "promptfoo.json"])
+        self.assertEqual(
+            extracted,
+            [
+                "header.txt",
+                "nightly-evidence.json",
+                "nightly-report.md",
+                "nightly-summary.json",
+                "promptfoo.json",
+            ],
+        )
         # Nothing escaped upward or to an absolute path.
         self.assertFalse((self.dropbox / "escape.json").exists())
         self.assertFalse(Path("/tmp/mcp-broker-pwned.json").exists())
@@ -165,13 +228,22 @@ class BrokerPipelineTest(unittest.TestCase):
         # SYMLINK to a Broker file must be dropped (not followed) — else the
         # classifier becomes an arbitrary-file read. It reads as ABSENT -> hard-fail.
         secret = Path(self.tmp.name) / "broker-secret.json"
-        secret.write_text(json.dumps({
-            "target": "o/r", "target_sha": "abc1234", "gates": _GREEN_GATES,
-        }), encoding="utf-8")
+        secret.write_text(
+            json.dumps(
+                {
+                    "target": "o/r",
+                    "target_sha": "abc1234",
+                    "gates": _GREEN_GATES,
+                }
+            ),
+            encoding="utf-8",
+        )
 
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w") as tar:
-            pj = json.dumps({"results": {"stats": {"errors": 0}, "results": []}}).encode()
+            pj = json.dumps(
+                {"results": {"stats": {"errors": 0}, "results": []}}
+            ).encode()
             info = tarfile.TarInfo(name="promptfoo.json")
             info.size = len(pj)
             tar.addfile(info, io.BytesIO(pj))
