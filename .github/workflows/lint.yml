@@ -28,11 +28,14 @@ jobs:
       #
       # NOTE: this version and the `rev` in .pre-commit-config.yaml must agree.
       # The last step of this job checks that.
-      - run: pip install ruff==0.15.8
+      - name: Install pinned Ruff
+        run: pip install ruff==0.15.8
 
-      - run: ruff check .
+      - name: Lint
+        run: ruff check .
 
-      - run: ruff format --check .
+      - name: Format
+        run: ruff format --check .
 
       # The Ruff pin sits in two places: above, and as `rev` in
       # .pre-commit-config.yaml. Let them drift and the hook formats to one
