@@ -60,6 +60,7 @@ _TIMEOUT = int(os.environ.get("RECALL_CANARY_TIMEOUT", "60"))
 
 # Reuse live_probe's counting so a floor means the same thing in both jobs.
 sys.path.insert(0, str(_HERE))
+import probe_provenance  # noqa: E402
 from live_probe import count_records  # noqa: E402
 
 
@@ -171,9 +172,14 @@ def evaluate(canaries: list[dict], caller: Any) -> tuple[list[str], list[str], l
 
 
 def build_report(canaries: list[dict], recall_rows: list[str], error_rows: list[str],
-                 ok_rows: list[str]) -> str:
+                 ok_rows: list[str],
+                 prov: probe_provenance.Provenance | None = None) -> str:
     report = ["# Recall-canary report\n",
               f"Called {len(canaries)} tool(s) against the live upstream.\n"]
+    if prov is not None:
+        # Which server code built those requests. A floor breach is a claim
+        # about a chain, and half that chain is the checkout named here.
+        report.append(f"_{prov.render()}_\n")
     if recall_rows:
         report.append("## 📉 Recall below floor\n")
         report.append(
@@ -209,13 +215,17 @@ def main() -> int:
         print("Recall-canary manifest is empty — nothing to do.", file=sys.stderr)
         return 0
 
+    # The server is imported from the working directory, so that checkout is
+    # half of what a floor breach is about. Not decisive: the module is loaded
+    # once, up front, and the upstream — not the tree — decides the counts.
+    prov = probe_provenance.capture(Path.cwd(), decisive=False)
     mcp = _load_server()
 
     def caller(tool: str, args: dict) -> Any:
         return asyncio.run(_call(mcp, tool, args))
 
     recall_rows, error_rows, ok_rows = evaluate(canaries, caller)
-    report_text = build_report(canaries, recall_rows, error_rows, ok_rows)
+    report_text = build_report(canaries, recall_rows, error_rows, ok_rows, prov.recheck())
 
     report_path = Path(os.environ.get("RECALL_REPORT", "recall-canary-report.md"))
     report_path.write_text(report_text, encoding="utf-8")

@@ -49,6 +49,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import probe_provenance  # noqa: E402
+
 _ROOT = Path(__file__).resolve().parent.parent
 _MANIFEST = Path(__file__).resolve().parent / "live_probe.manifest.json"
 _FIXTURES = Path(os.environ.get("MCP_FIXTURES_DIR", _ROOT / "promptfoo" / "fixtures"))
@@ -143,6 +147,10 @@ def _load_fixture(name: str) -> Any:
 
 
 def main() -> int:
+    # "The live probe was green" is a different claim depending on which
+    # revision of the manifest and which fixtures it walked. Both live in this
+    # repository, so this is the state the report is about.
+    prov = probe_provenance.capture_auditor()
     manifest = json.loads(_MANIFEST.read_text(encoding="utf-8"))
     probes = manifest["probes"] if isinstance(manifest, dict) else manifest
 
@@ -201,7 +209,12 @@ def main() -> int:
 
     has_drift = bool(drift_rows)
     has_recall_drop = bool(recall_rows)
-    report = ["# Live-probe drift report\n", f"Probed {len(probes)} endpoint(s).\n"]
+    prov.recheck()
+    report = [
+        "# Live-probe drift report\n",
+        f"Probed {len(probes)} endpoint(s).\n",
+        f"_{prov.render()}_\n",
+    ]
     if has_drift:
         report.append("## 🚨 Schema drift detected\n")
         report.append(
@@ -247,6 +260,9 @@ def main() -> int:
             fh.write(f"recall_drop={'true' if has_recall_drop else 'false'}\n")
             fh.write(f"alert={'true' if (has_drift or has_recall_drop) else 'false'}\n")
             fh.write(f"report_path={report_path}\n")
+            # So an issue opened from this run names the manifest revision it
+            # walked, not just the day it ran.
+            fh.write(f"auditor_sha={prov.head or ''}\n")
 
     return 0  # never fail the cron on a flaky endpoint; findings go via the outputs
 

@@ -101,6 +101,10 @@ EXIT CODES
   0    the published artifact matches the repository and ran
   2    FINDING — absent from the index, stale, version divergence, or the
        installed server did not answer
+  4    MOVED_DURING_RUN — HEAD or the working tree changed between the first and
+       the last read, so the git-derived half of this report describes one
+       repository and the artifact half another. No verdict. See
+       `probe_provenance`.
   127  the HARNESS could not run (no network to the index, venv creation failed).
        An unreachable index is NOT reported as "in sync": a comparison that did
        not happen is never a pass.
@@ -141,6 +145,7 @@ except ModuleNotFoundError:  # Python 3.10 — tomllib landed in 3.11
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import probe_provenance
 import transport_boot_probe as tbp
 
 EXIT_GREEN = 0
@@ -281,6 +286,12 @@ class Report:
     tool_call: ToolCall = field(default_factory=ToolCall)
     tree: TreeDiff = field(default_factory=TreeDiff)
     harness_error: str = ""
+    # The commit every git-derived claim below is about: the tag comparison,
+    # the unreleased commits, and `tree`, which diffs the installed artifact
+    # against this checkout. A full-depth run takes minutes; a rebase landing
+    # inside that window would have the tree diff and the tag list describing
+    # two different repositories. See `probe_provenance`.
+    provenance: probe_provenance.Provenance | None = None
 
     # ---- phase 1: the repository and the index ----------------------------
     # Cheap: two HTTP requests and some git. Everything above this line needs a
@@ -309,9 +320,10 @@ class Report:
             # Bumped from 1: the report gained the whole phase-1 block, and
             # findings gained `severity`. Bumped to 3 for `tree`, the artifact
             # content comparison. Additive both times, but a consumer pinning the
-            # shape deserves to see the number move.
-            "schema": 3, "dist": self.dist, "publication": self.publication,
+            # shape deserves to see the number move. 4: `provenance`.
+            "schema": 4, "dist": self.dist, "publication": self.publication,
             "depth": self.depth,
+            "provenance": self.provenance.as_dict() if self.provenance else None,
             "versions": self.versions.as_dict(), "entrypoint": self.entrypoint,
             "tools": self.tools, "tool_call": self.tool_call.as_dict(),
             "tree": self.tree.as_dict(),
@@ -343,6 +355,10 @@ class Report:
         }
 
     def exit_code(self) -> int:
+        if self.provenance is not None and self.provenance.blocking:
+            # Before `harness_error`: a run whose tree moved has not measured
+            # one repository, and that is the first thing true about it.
+            return probe_provenance.EXIT_MOVED
         if self.harness_error:
             return EXIT_CANNOT_RUN
         return EXIT_FINDINGS if self.findings else EXIT_GREEN
@@ -1803,6 +1819,10 @@ _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
 def render(r: Report) -> str:
     lines = [f"# Shipped probe — `{r.dist}`", ""]
+    if r.provenance is not None:
+        lines += [r.provenance.render(), ""]
+        if r.provenance.blocking:
+            return "\n".join(lines + [r.provenance.moved_detail(), ""]) + "\n"
     if r.harness_error:
         lines += [f"⛔ {r.harness_error}", ""]
         return "\n".join(lines) + "\n"
@@ -1939,6 +1959,7 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return EXIT_CANNOT_RUN
 
+    prov = probe_provenance.capture(target)
     try:
         report = probe(dist, target, tool=args.tool,
                        tool_args=tool_args, index_url=args.index_url,
@@ -1953,6 +1974,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"shipped: harness could not run: {type(exc).__name__}: {exc}",
               file=sys.stderr)
         return EXIT_CANNOT_RUN
+
+    report.provenance = prov.recheck()
+    if report.provenance.blocking:
+        print(f"shipped: {report.provenance.moved_detail()}", file=sys.stderr)
 
     print(json.dumps(report.as_dict(), indent=2, sort_keys=True)
           if args.format == "json" else render(report))
