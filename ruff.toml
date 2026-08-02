@@ -14,17 +14,42 @@
 target-version = "py311"
 
 [lint]
-# Genau der Regelsatz, den ruff heute per Default aktiviert — hier explizit
-# hingeschrieben. Ein `select` in der Konfiguration ersetzt die eingebauten
-# Defaults vollstaendig; damit ist der erzwungene Satz exakt diese Liste,
-# unabhaengig davon, ob eine spaetere ruff-Version ihre Defaults aendert.
+# Expliziter Regelsatz, gleichgezogen mit dem uebrigen Portfolio. Ein `select`
+# in der Konfiguration ersetzt die eingebauten Defaults vollstaendig; damit ist
+# der erzwungene Satz exakt diese Liste, unabhaengig davon, ob eine spaetere
+# ruff-Version ihre Defaults aendert.
 #
 #   E4 — pycodestyle: Importe (u.a. E402, Import nicht am Dateianfang)
 #   E7 — pycodestyle: Anweisungen (Vergleiche, mehrere Statements pro Zeile)
 #   E9 — pycodestyle: Syntax- und IO-Fehler
 #   F  — Pyflakes (ungenutzte Importe und Variablen, f-String-Fehler, …)
+#   I  — Import-Sortierung (isort)
+#   UP — pyupgrade (moderne Syntax, z.B. `X | None`, collections.abc)
+#   B  — flake8-bugbear
+#   C4 — flake8-comprehensions
+#   SIM— flake8-simplify
+#   RUF— ruff-eigene Regeln
 #
-# Bewusst schmal gehalten: der Bestand war nie gelintet, und dieser Satz kostet
-# 4 Befunde statt 104. Erweitern (I, UP, B, C4, SIM, RUF) ist jederzeit
-# moeglich — dann aber als eigener Commit, dessen Diff nur das ist.
-select = ["E4", "E7", "E9", "F"]
+# E501 (Zeilenlaenge) bleibt bewusst aussen vor: das entscheidet der Formatter.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "C4", "SIM", "RUF"]
+
+ignore = [
+    # Die Prosa nutzt bewusste Typografie — Halbgeviertstriche in Docstrings
+    # und Kommentaren. Die Ambiguous-Unicode-Regeln melden die als
+    # Verwechslungszeichen (17 Befunde), was hier kein Fehler ist.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # RUF100 meldet `noqa`-Direktiven, deren Regel nicht aktiviert ist — hier
+    # 51 Stueck, alle fuer Regelsaetze, die dieses `select` nicht enthaelt:
+    # BLE001, S310, ANN001, N802, PLC0415, E731. Sie sind nicht ueberfluessig,
+    # sondern dokumentieren Absicht, und zwar mit Begruendung:
+    #
+    #   except Exception as exc:  # noqa: BLE001 - surfaced as a targets error
+    #   urlopen(req, ...)         # noqa: S310 (fixed manifest URLs)
+    #
+    # RUF100 zu aktivieren hiesse, 51 solcher Begruendungen zu loeschen — und
+    # sie in dem Moment wieder zu brauchen, in dem der Regelsatz sich
+    # verbreitert. Die Information ist mehr wert als die Aufraeumung.
+    "RUF100",
+]

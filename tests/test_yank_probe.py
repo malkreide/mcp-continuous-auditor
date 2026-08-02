@@ -218,7 +218,9 @@ class AfterTheYankTest(unittest.TestCase):
     """The captured state: the six are yanked, 0.6.0 and 0.7.0 are healthy."""
 
     def setUp(self) -> None:
-        self.report = run(payload=simple_payload(yanked={v: True for v in BROKEN_SIX}))
+        self.report = run(
+            payload=simple_payload(yanked=dict.fromkeys(BROKEN_SIX, True))
+        )
 
     def test_the_broken_release_finding_is_gone(self) -> None:
         self.assertNotIn("UNYANKED_BROKEN_RELEASE", codes(self.report.findings))
@@ -237,7 +239,7 @@ class AfterTheYankTest(unittest.TestCase):
     def test_a_yank_carrying_a_reason_is_silent(self) -> None:
         report = run(
             payload=simple_payload(
-                yanked={v: "broken with mcp 2.x; fixed in 0.6.0" for v in BROKEN_SIX}
+                yanked=dict.fromkeys(BROKEN_SIX, "broken with mcp 2.x; fixed in 0.6.0")
             )
         )
         self.assertEqual(report.findings, [])
@@ -246,7 +248,7 @@ class AfterTheYankTest(unittest.TestCase):
     def test_a_partial_yank_leaves_the_version_installable(self) -> None:
         # PEP 592 yanks FILES. A version with one live file left still installs,
         # so it must still be reported — the inverse mistake would hide it.
-        payload = simple_payload(yanked={v: True for v in BROKEN_SIX})
+        payload = simple_payload(yanked=dict.fromkeys(BROKEN_SIX, True))
         for entry in payload["files"]:
             if entry["filename"].endswith(".whl") and "0.5.1" in entry["filename"]:
                 entry["yanked"] = False
@@ -304,7 +306,7 @@ class ConservatismTest(unittest.TestCase):
         self.assertNotIn("UNYANKED_BROKEN_RELEASE", codes(report.findings))
 
     def test_an_already_yanked_release_is_not_reported_again(self) -> None:
-        report = run(payload=simple_payload(yanked={v: "x" for v in BROKEN_SIX}))
+        report = run(payload=simple_payload(yanked=dict.fromkeys(BROKEN_SIX, "x")))
         self.assertEqual(report.findings, [])
 
     def test_dev_extras_are_never_a_finding(self) -> None:
@@ -356,7 +358,7 @@ class RefusalsTest(unittest.TestCase):
 
     def test_a_catalogue_with_no_healthy_release_makes_no_claim(self) -> None:
         report = run(
-            payload=simple_payload(yanked={v: True for v in SIMPLE["versions"]})
+            payload=simple_payload(yanked=dict.fromkeys(SIMPLE["versions"], True))
         )
         self.assertIsNone(report.reference)
         self.assertNotIn("UNYANKED_BROKEN_RELEASE", codes(report.findings))

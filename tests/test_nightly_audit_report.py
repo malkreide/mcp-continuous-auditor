@@ -979,7 +979,7 @@ class ShippedMetadataPreRunTest(unittest.TestCase):
             "index_version": "0.7.0",
             "index_status": "ok",
             "yank_source": "simple",
-            "yanked": {v: "" for v in yanked},
+            "yanked": dict.fromkeys(yanked, ""),
             "findings": [
                 {"code": c, "detail": "d", "severity": "high"} for c in findings
             ],

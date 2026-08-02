@@ -42,8 +42,9 @@ import os
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 EXIT_PROPOSED = 0
 EXIT_HARD_FAIL = 1

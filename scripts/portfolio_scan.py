@@ -106,9 +106,10 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -252,7 +253,7 @@ def parse_targets_yaml(text: str) -> dict[str, Any]:
                 and lines[i][1] == indent
                 and lines[i][2].startswith("- ")
             ):
-                no, _, content = lines[i]
+                _no, _, content = lines[i]
                 rest = content[2:].strip()
                 if ":" in rest and not rest.startswith(("[", '"', "'")):
                     # `- key: value` opens a mapping whose further keys are the
@@ -1203,7 +1204,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_GREEN
 
     try:
-        targets, defaults = load_targets(Path(args.targets))
+        targets, _defaults = load_targets(Path(args.targets))
     except TargetsError as exc:
         print(f"portfolio: {exc}", file=sys.stderr)
         return EXIT_INCOMPLETE

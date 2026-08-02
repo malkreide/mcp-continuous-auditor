@@ -123,7 +123,7 @@ class ReportTest(unittest.TestCase):
 
 
 class _FakeResponse(io.BytesIO):
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, *exc: object) -> None:

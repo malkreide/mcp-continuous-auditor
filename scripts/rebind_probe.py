@@ -518,7 +518,7 @@ def run_pass(
     except (OSError, ValueError) as exc:
         return result, f"could not spawn the target: {type(exc).__name__}: {exc}"
 
-    out_q: "Queue[str | None]" = Queue()
+    out_q: Queue[str | None] = Queue()
     tbp._reader_thread(proc.stdout, out_q)
     captured: list[str] = []
     started = time.monotonic()
