@@ -169,6 +169,26 @@ Phase 0 Baseline → 1 Read-only-Auditor → 2 promptfoo-CI-Gate → 3 PR-only-W
 > es gibt keine eingecheckte Automatik, die aus einem Finding von selbst einen PR
 > macht.
 
+## Verwandte Repos
+
+### Die MCP-Qualitätskette
+
+Fünf Repos, ein Lebenszyklus. Jedes beantwortet eine andere Frage, in der Reihenfolge, in der sie aufkommt — dieses kommt zuletzt und ist das einzige, das immer weiterfragt. Das gemeinsame GitHub-Topic ist [`mcp-quality-chain`](https://github.com/topics/mcp-quality-chain) und listet alle fünf auf einer Seite.
+
+| Phase | Repo | Frage, die es beantwortet |
+|---|---|---|
+| vor dem Bau | [`mcp-data-source-probe-skill`](https://github.com/malkreide/mcp-data-source-probe-skill) | Taugt die Quelle, und was hat sie? Die Recall-Ground-Truth aus Schritt 1.4 ist das, wogegen die `min_count`-Floors hier messen |
+| im Bau | [`mcp-data-fidelity-skill`](https://github.com/malkreide/mcp-data-fidelity-skill) | Liefert er, was die Quelle hat? Seine Regel 5 — Recall in den Tests, nicht in der Beschreibung — ist der Grund, warum die Probes Floors tragen statt Schema-Assertions |
+| im Bau | [`mcp-transport-hardening-skill`](https://github.com/malkreide/mcp-transport-hardening-skill) | Kommt er hoch, weist er richtig ab? Der Transport-Pfad, den die Canary-Probe live durchläuft |
+| nach dem Bau | [`mcp-audit-skill`](https://github.com/malkreide/mcp-audit-skill) | Hält er gegen den Katalog? Sein `OPS-005` (Pipeline-Ehrlichkeit) stammt aus diesem Repo — [#29](https://github.com/malkreide/mcp-continuous-auditor/pull/29), eine Testsuite, die kein Workflow je ausgeführt hat |
+| im Betrieb | **`mcp-continuous-auditor`** | **Dieses Projekt:** hält er morgen noch? |
+
+Daneben, nicht Teil der Kette: [`mcp-builder`](https://github.com/anthropics/skills/tree/main/skills/mcp-builder) — generische Bauanleitung von Anthropic. Fremdes Repo, kann das Topic nicht tragen.
+
+Die vier Skills sagen, wie ein korrekter Server aussieht; dieses Projekt ist der Teil, der weiterprüft, wenn alle aufgehört haben hinzuschauen. Jede Probe hier existiert, weil ein Server gleichzeitig grün und falsch war — genau die Fehlerklasse, für die alle fünf geschrieben wurden.
+
+Die geprüften Server sind das [Swiss Public Data MCP](https://github.com/malkreide/swiss-public-data-mcp) Portfolio mit dem eigenen Topic [`swiss-public-data-mcp`](https://github.com/topics/swiss-public-data-mcp).
+
 ## Changelog
 
 Siehe [CHANGELOG.md](CHANGELOG.md)

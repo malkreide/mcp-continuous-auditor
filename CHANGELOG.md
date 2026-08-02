@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the repository says which chain it belongs to, and a test keeps it saying so
+
+This repository is the last of five that were written for the same failure class
+— a system reporting success while being wrong — and it was the only one that
+said so nowhere. The four skills each carried a table naming their siblings;
+this one had no such section, in either language. Where it was mentioned, in the
+probe skill's README, it was a trailing sentence *after* the table, so it read
+as an aside rather than as the fifth link.
+
+That is not a cosmetic gap. On GitHub the intersection of the five
+repositories' topics was **empty**, and this repository had no topics at all —
+so nothing tied it to the other four for anyone who had not already found one
+of them.
+
+- **`## Related repositories` in both READMEs**, with the chain table and a link
+  to the shared topic [`mcp-quality-chain`](https://github.com/topics/mcp-quality-chain).
+  Each row says what that repository contributes here: the probe skill's step
+  1.4 recall ground truth is what the `min_count` floors measure against, and
+  `mcp-audit-skill`'s `OPS-005` came out of this repository's own [#29](https://github.com/malkreide/mcp-continuous-auditor/pull/29).
+- **`tests/test_quality_chain_table.py`** — the table must name all five in both
+  languages and link the topic page. It deliberately does not try to check the
+  GitHub topic itself: that lives outside every working copy, and the guard for
+  it (`tools/check_quality_chain.py`) belongs to `mcp-audit-skill`, the one
+  repository carrying the manifest. Stdlib-only, no network, no git.
+
 ### Added — `published_probe.py`: imports and start decide the status, and the published dependency ranges are read
 
 The probe installed the artifact and read one thing off it: the User-Agent. Every
