@@ -7,6 +7,7 @@ module through its CLI entrypoint against a throwaway state file in a tmp dir,
 and manipulates `os.environ` to set the limits — exactly how nightly-audit.sh
 invokes it.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,8 +54,15 @@ class BudgetGuardTest(unittest.TestCase):
         return bg.main(["--state", str(self.state), "preflight"])
 
     def record(self, exit_code: int, tokens: int = 0, strict: bool = False) -> int:
-        argv = ["--state", str(self.state), "record", "--exit-code", str(exit_code),
-                "--tokens", str(tokens)]
+        argv = [
+            "--state",
+            str(self.state),
+            "record",
+            "--exit-code",
+            str(exit_code),
+            "--tokens",
+            str(tokens),
+        ]
         if strict:
             argv.append("--strict")
         return bg.main(argv)
@@ -143,11 +151,19 @@ class BudgetGuardTest(unittest.TestCase):
             self.record(exit_code=1, tokens=10)
         report = Path(self.tmp.name) / "r.md"
         summary = Path(self.tmp.name) / "s.json"
-        rc = bg.main([
-            "--state", str(self.state), "preflight",
-            "--target", "owner/repo",
-            "--out-report", str(report), "--out-summary", str(summary),
-        ])
+        rc = bg.main(
+            [
+                "--state",
+                str(self.state),
+                "preflight",
+                "--target",
+                "owner/repo",
+                "--out-report",
+                str(report),
+                "--out-summary",
+                str(summary),
+            ]
+        )
         self.assertEqual(rc, bg.PREFLIGHT_SKIP)
         s = json.loads(summary.read_text())
         self.assertEqual(s["outcome"], "hard-fail")
@@ -159,14 +175,25 @@ class BudgetGuardTest(unittest.TestCase):
     # -- fan-out: a portfolio sweep multiplies whatever one target costs -----
 
     def fanout_preflight(self, n: int, expensive: int = 0) -> int:
-        return bg.main(["--state", str(self.state), "preflight",
-                        "--fanout", str(n), "--fanout-expensive", str(expensive)])
+        return bg.main(
+            [
+                "--state",
+                str(self.state),
+                "preflight",
+                "--fanout",
+                str(n),
+                "--fanout-expensive",
+                str(expensive),
+            ]
+        )
 
     def test_a_sweep_within_the_cap_runs(self) -> None:
         os.environ["BUDGET_MAX_FANOUT"] = "25"
         self.assertEqual(self.fanout_preflight(12), bg.PREFLIGHT_RUN)
 
-    def test_a_sweep_wider_than_the_cap_is_refused_before_it_clones_anything(self) -> None:
+    def test_a_sweep_wider_than_the_cap_is_refused_before_it_clones_anything(
+        self,
+    ) -> None:
         # Width is the one property knowable in advance. The breaker and the token
         # window are both retrospective, and a fan-out's whole risk is that it
         # spends N times before anyone looks.
@@ -182,8 +209,8 @@ class BudgetGuardTest(unittest.TestCase):
 
     def test_a_projected_spend_over_the_window_is_refused_before_spending(self) -> None:
         os.environ["BUDGET_MAX_FANOUT"] = "50"
-        os.environ["BUDGET_TOKENS_PER_TARGET"] = "500"   # window cap is 2500
-        self.assertEqual(self.fanout_preflight(4), bg.PREFLIGHT_RUN)   # 2000
+        os.environ["BUDGET_TOKENS_PER_TARGET"] = "500"  # window cap is 2500
+        self.assertEqual(self.fanout_preflight(4), bg.PREFLIGHT_RUN)  # 2000
         self.assertEqual(self.fanout_preflight(6), bg.PREFLIGHT_SKIP)  # 3000
 
     def test_deterministic_predicates_project_nothing_by_default(self) -> None:
@@ -208,8 +235,19 @@ class BudgetGuardTest(unittest.TestCase):
     def test_the_width_is_recorded_so_the_history_can_be_read_back(self) -> None:
         # A hard-fail from a 15-target sweep and one from a single nightly are the
         # same row otherwise, and they are not the same event.
-        bg.main(["--state", str(self.state), "record", "--exit-code", "0",
-                 "--tokens", "0", "--fanout", "15"])
+        bg.main(
+            [
+                "--state",
+                str(self.state),
+                "record",
+                "--exit-code",
+                "0",
+                "--tokens",
+                "0",
+                "--fanout",
+                "15",
+            ]
+        )
         self.assertEqual(self.load()["runs"][-1]["fanout"], 15)
 
     def test_the_refusal_names_the_knob_to_change(self) -> None:
@@ -224,7 +262,9 @@ class BudgetGuardTest(unittest.TestCase):
 
     def test_tokens_from_promptfoo_json(self) -> None:
         pf = Path(self.tmp.name) / "pf.json"
-        pf.write_text(json.dumps({"results": {"stats": {"tokenUsage": {"total": 4242}}}}))
+        pf.write_text(
+            json.dumps({"results": {"stats": {"tokenUsage": {"total": 4242}}}})
+        )
         self.assertEqual(bg.tokens_from_promptfoo(pf), 4242)
         # bare top-level stats also supported
         pf.write_text(json.dumps({"stats": {"tokenUsage": {"total": 7}}}))

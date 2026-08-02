@@ -104,6 +104,7 @@ Usage:
   python scripts/yank_probe.py --dist zurich-opendata-mcp --format json
   python scripts/yank_probe.py --dist foo-mcp --index-url https://pypi.example.com/simple
 """
+
 from __future__ import annotations
 
 import argparse
@@ -319,8 +320,8 @@ def parse_metadata(text: str) -> list[Requirement]:
     ONLY a genuinely empty line ends the headers and starts the description.
     """
     out: list[Requirement] = []
-    pending: str | None = None       # a Requires-Dist value still being folded
-    inside_header = False            # any header, so foreign continuations are skipped
+    pending: str | None = None  # a Requires-Dist value still being folded
+    inside_header = False  # any header, so foreign continuations are skipped
 
     def flush() -> None:
         nonlocal pending
@@ -365,8 +366,12 @@ class Finding:
     versions: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
-        return {"code": self.code, "detail": self.detail,
-                "severity": self.severity, "versions": list(self.versions)}
+        return {
+            "code": self.code,
+            "detail": self.detail,
+            "severity": self.severity,
+            "versions": list(self.versions),
+        }
 
 
 @dataclass
@@ -391,10 +396,10 @@ class ReleaseView:
 class Report:
     dist: str
     index_url: str = sp.DEFAULT_INDEX
-    index_status: str = "ok"   # ok | unreachable | not_published | skipped
+    index_status: str = "ok"  # ok | unreachable | not_published | skipped
     index_detail: str = ""
     releases: list[ReleaseView] = field(default_factory=list)
-    reference: str | None = None       # the healthy successor everything is held against
+    reference: str | None = None  # the healthy successor everything is held against
     # Newest non-pre-release of each dependency, as the index serves it. None
     # when the dependency's own project page could not be read.
     dependency_latest: dict[str, str | None] = field(default_factory=dict)
@@ -413,10 +418,13 @@ class Report:
             "index_detail": self.index_detail,
             "reference": self.reference,
             "releases": [
-                {"version": r.version, "yanked": r.yanked,
-                 "yank_reason": r.yank_reason,
-                 "metadata": "ok" if r.requires is not None else "unreadable",
-                 "metadata_detail": r.metadata_detail}
+                {
+                    "version": r.version,
+                    "yanked": r.yanked,
+                    "yank_reason": r.yank_reason,
+                    "metadata": "ok" if r.requires is not None else "unreadable",
+                    "metadata_detail": r.metadata_detail,
+                }
                 for r in self.releases
             ],
             "dependency_latest": dict(sorted(self.dependency_latest.items())),
@@ -438,7 +446,9 @@ class Report:
 # --------------------------------------------------------------------------
 
 
-def _fetch_text(url: str, timeout: float, accept: str | None = None) -> tuple[str | None, str]:
+def _fetch_text(
+    url: str, timeout: float, accept: str | None = None
+) -> tuple[str | None, str]:
     """(body, detail). Never raises; an empty detail means it worked."""
     request = urllib.request.Request(url)
     if accept:
@@ -452,7 +462,9 @@ def _fetch_text(url: str, timeout: float, accept: str | None = None) -> tuple[st
         return None, f"unreachable: {exc}"
 
 
-def fetch_project(dist: str, index_url: str, timeout: float) -> tuple[dict[str, Any] | None, str, str]:
+def fetch_project(
+    dist: str, index_url: str, timeout: float
+) -> tuple[dict[str, Any] | None, str, str]:
     """The project page, in PEP 691 shape. (payload, status, detail).
 
     ``shipped_probe._get`` does the content negotiation and the HTML fallback
@@ -466,7 +478,9 @@ def fetch_project(dist: str, index_url: str, timeout: float) -> tuple[dict[str, 
     return payload, status, detail
 
 
-def fetch_core_metadata(entry: dict[str, Any], timeout: float) -> tuple[str | None, str]:
+def fetch_core_metadata(
+    entry: dict[str, Any], timeout: float
+) -> tuple[str | None, str]:
     """PEP 658: the ``.metadata`` sidecar next to a distribution file.
 
     This is what makes walking every release affordable — the whole point of
@@ -487,7 +501,9 @@ def fetch_core_metadata(entry: dict[str, Any], timeout: float) -> tuple[str | No
     return _fetch_text(url + ".metadata", timeout)
 
 
-def fetch_pypi_requires(dist: str, version: str, timeout: float) -> tuple[list[Requirement] | None, str]:
+def fetch_pypi_requires(
+    dist: str, version: str, timeout: float
+) -> tuple[list[Requirement] | None, str]:
     """PyPI's per-version JSON, used ONLY as the fallback and ONLY on PyPI.
 
     Same precedence as ``shipped_probe.reconcile``: the Simple API is what pip
@@ -496,7 +512,8 @@ def fetch_pypi_requires(dist: str, version: str, timeout: float) -> tuple[list[R
     still audited instead of silently dropped.
     """
     body, detail = _fetch_text(
-        PYPI_VERSION_JSON.format(dist=quote(dist), version=quote(version)), timeout)
+        PYPI_VERSION_JSON.format(dist=quote(dist), version=quote(version)), timeout
+    )
     if body is None:
         return None, f"the JSON API fallback also failed ({detail})"
     try:
@@ -513,7 +530,9 @@ def fetch_pypi_requires(dist: str, version: str, timeout: float) -> tuple[list[R
     return [r for r in parsed if r is not None], ""
 
 
-def fetch_dependency_versions(name: str, index_url: str, timeout: float) -> list[str] | None:
+def fetch_dependency_versions(
+    name: str, index_url: str, timeout: float
+) -> list[str] | None:
     """Every version of a dependency the index serves, or None if unreadable."""
     payload, status, _ = fetch_project(name, index_url, timeout)
     if payload is None or status != "ok":
@@ -551,25 +570,32 @@ def collect_releases(payload: dict[str, Any], dist: str) -> list[ReleaseView]:
         version = sp.version_from_filename(str(entry.get("filename", "")), dist)
         if not version:
             continue
-        per_version.setdefault(version, []).append(sp._yank_reason(entry.get("yanked", False)))
+        per_version.setdefault(version, []).append(
+            sp._yank_reason(entry.get("yanked", False))
+        )
 
     declared = payload.get("versions")
-    names = ({str(v) for v in declared} if isinstance(declared, list)
-             else set(per_version))
+    names = (
+        {str(v) for v in declared} if isinstance(declared, list) else set(per_version)
+    )
 
     out: list[ReleaseView] = []
     for version in names:
         reasons = per_version.get(version) or []
         yanked = bool(reasons) and all(r is not None for r in reasons)
-        out.append(ReleaseView(
-            version=version,
-            yanked=yanked,
-            yank_reason=next((r for r in reasons if r), "") if yanked else "",
-        ))
+        out.append(
+            ReleaseView(
+                version=version,
+                yanked=yanked,
+                yank_reason=next((r for r in reasons if r), "") if yanked else "",
+            )
+        )
     return sorted(out, key=lambda r: _release(r.version) or ())
 
 
-def pick_metadata_file(payload: dict[str, Any], dist: str, version: str) -> dict[str, Any] | None:
+def pick_metadata_file(
+    payload: dict[str, Any], dist: str, version: str
+) -> dict[str, Any] | None:
     """The file to read ``Requires-Dist`` from — a wheel where there is one.
 
     Wheels carry built metadata; an sdist's is generated at build time and PyPI
@@ -618,14 +644,16 @@ def load_requirements(
     else:
         release.metadata_detail += (
             f" — and {report.index_url} is not PyPI, so there was no per-version "
-            "JSON API to fall back to")
+            "JSON API to fall back to"
+        )
 
 
 def choose_reference(releases: list[ReleaseView]) -> str | None:
     """The healthy successor: the newest release that is neither yanked nor a
     pre-release. Everything below is held against exactly this one."""
     healthy = [
-        r for r in releases
+        r
+        for r in releases
         if not r.yanked and not sp.is_prerelease(r.version) and _release(r.version)
     ]
     if not healthy:
@@ -647,7 +675,7 @@ class Boundary:
     to_major: int
     newest: str
     reference_spec: str
-    affected: tuple[tuple[str, str], ...] = ()   # (version, that version's raw spec)
+    affected: tuple[tuple[str, str], ...] = ()  # (version, that version's raw spec)
 
 
 def find_boundaries(report: Report) -> list[Boundary]:
@@ -661,7 +689,9 @@ def find_boundaries(report: Report) -> list[Boundary]:
     """
     if report.reference is None:
         return []
-    reference = next((r for r in report.releases if r.version == report.reference), None)
+    reference = next(
+        (r for r in report.releases if r.version == report.reference), None
+    )
     if reference is None or reference.requires is None:
         return []
     reference_declared = reference.declared()
@@ -673,7 +703,11 @@ def find_boundaries(report: Report) -> list[Boundary]:
     for release in report.releases:
         key = _release(release.version)
         # (1) not yanked, not a pre-release, strictly older than the successor.
-        if release.yanked or sp.is_prerelease(release.version) or release.requires is None:
+        if (
+            release.yanked
+            or sp.is_prerelease(release.version)
+            or release.requires is None
+        ):
             continue
         if key is None or reference_key is None or _cmp(key, reference_key) >= 0:
             continue
@@ -715,14 +749,18 @@ def find_boundaries(report: Report) -> list[Boundary]:
     out: list[Boundary] = []
     for (name, from_major, to_major), affected in grouped.items():
         newest, reference_spec = context[(name, from_major, to_major)]
-        out.append(Boundary(
-            dependency=name,
-            from_major=from_major,
-            to_major=to_major,
-            newest=newest,
-            reference_spec=reference_spec,
-            affected=tuple(sorted(affected, key=lambda pair: _release(pair[0]) or ())),
-        ))
+        out.append(
+            Boundary(
+                dependency=name,
+                from_major=from_major,
+                to_major=to_major,
+                newest=newest,
+                reference_spec=reference_spec,
+                affected=tuple(
+                    sorted(affected, key=lambda pair: _release(pair[0]) or ())
+                ),
+            )
+        )
     return sorted(out, key=lambda b: (b.dependency, b.from_major))
 
 
@@ -735,8 +773,11 @@ def newest_release(versions: list[str]) -> str | None:
     taking the list's last entry would have named a release candidate as the
     thing users resolve to.
     """
-    usable = [(v, _release(v)) for v in versions
-              if not sp.is_prerelease(v) and _release(v) is not None]
+    usable = [
+        (v, _release(v))
+        for v in versions
+        if not sp.is_prerelease(v) and _release(v) is not None
+    ]
     if not usable:
         return None
     return max(usable, key=lambda pair: pair[1] or ())[0]
@@ -750,27 +791,29 @@ def build_findings(report: Report) -> list[Finding]:
     for boundary in find_boundaries(report):
         versions = tuple(v for v, _ in boundary.affected)
         ranges = ", ".join(f"{v} ({spec})" for v, spec in boundary.affected)
-        out.append(Finding(
-            "UNYANKED_BROKEN_RELEASE",
-            f"{len(versions)} release(s) of {report.dist} declare {boundary.dependency} "
-            f"with no upper bound and are NOT yanked: {ranges}. The newest "
-            f"{boundary.dependency} on {report.index_url} is {boundary.newest}, so a "
-            f"fresh install of any of them resolves across the "
-            f"{boundary.from_major}.x -> {boundary.to_major}.x boundary. That boundary "
-            f"is not a guess: {report.dist} {report.reference} — the newest healthy "
-            f"release — declares {boundary.reference_spec}, which excludes the series "
-            "every one of those releases floors on, so the maintainer has already "
-            "established the crossing was breaking. Superseding them is not enough: "
-            "they stay selectable for any resolver constrained away from "
-            f"{report.reference} by an old lockfile or a colliding pin. RECOMMENDED: "
-            f"yank {', '.join(versions)} with a reason. A yank is not a deletion — "
-            "PEP 592 keeps them resolvable for an explicit pin, with a warning, so "
-            "existing lockfiles do not break. Do NOT delete them. This probe does "
-            "not and will not perform the yank: it needs an upload-scoped token and "
-            "it is a maintainer's call.",
-            severity="high",
-            versions=versions,
-        ))
+        out.append(
+            Finding(
+                "UNYANKED_BROKEN_RELEASE",
+                f"{len(versions)} release(s) of {report.dist} declare {boundary.dependency} "
+                f"with no upper bound and are NOT yanked: {ranges}. The newest "
+                f"{boundary.dependency} on {report.index_url} is {boundary.newest}, so a "
+                f"fresh install of any of them resolves across the "
+                f"{boundary.from_major}.x -> {boundary.to_major}.x boundary. That boundary "
+                f"is not a guess: {report.dist} {report.reference} — the newest healthy "
+                f"release — declares {boundary.reference_spec}, which excludes the series "
+                "every one of those releases floors on, so the maintainer has already "
+                "established the crossing was breaking. Superseding them is not enough: "
+                "they stay selectable for any resolver constrained away from "
+                f"{report.reference} by an old lockfile or a colliding pin. RECOMMENDED: "
+                f"yank {', '.join(versions)} with a reason. A yank is not a deletion — "
+                "PEP 592 keeps them resolvable for an explicit pin, with a warning, so "
+                "existing lockfiles do not break. Do NOT delete them. This probe does "
+                "not and will not perform the yank: it needs an upload-scoped token and "
+                "it is a maintainer's call.",
+                severity="high",
+                versions=versions,
+            )
+        )
 
     # 2. YANK_REASON_MISSING — lower, and separate on purpose.
     #
@@ -784,16 +827,18 @@ def build_findings(report: Report) -> list[Finding]:
         r.version for r in report.releases if r.yanked and not r.yank_reason.strip()
     )
     if reasonless:
-        out.append(Finding(
-            "YANK_REASON_MISSING",
-            f"{len(reasonless)} yanked release(s) carry no reason: "
-            f"{', '.join(reasonless)}. pip shows this as \"Reason for being yanked: "
-            "<none given>\" to anyone an old lockfile drops onto them, which is the "
-            "only audience a yanked release still has. Re-yank with a one-line "
-            "reason naming the defect and the release that fixes it.",
-            severity="low",
-            versions=reasonless,
-        ))
+        out.append(
+            Finding(
+                "YANK_REASON_MISSING",
+                f"{len(reasonless)} yanked release(s) carry no reason: "
+                f'{", ".join(reasonless)}. pip shows this as "Reason for being yanked: '
+                '<none given>" to anyone an old lockfile drops onto them, which is the '
+                "only audience a yanked release still has. Re-yank with a one-line "
+                "reason naming the defect and the release that fixes it.",
+                severity="low",
+                versions=reasonless,
+            )
+        )
 
     return out
 
@@ -835,7 +880,8 @@ def run(
         report.index_detail = (
             f"{dist} has no healthy release — every version on {index_url} is "
             "yanked or a pre-release. There is no successor to hold the older "
-            "releases against, so no claim is made about them")
+            "releases against, so no claim is made about them"
+        )
         return report
 
     for release in releases:
@@ -850,7 +896,8 @@ def run(
         report.harness_error = (
             f"the healthy successor {report.reference} has no readable metadata "
             f"({reference.metadata_detail}) — every comparison this probe makes is "
-            "against it, so nothing can be concluded. Not reported as clean")
+            "against it, so nothing can be concluded. Not reported as clean"
+        )
         return report
 
     # Dependency version lists, once per distinct dependency rather than once
@@ -888,17 +935,20 @@ def render(report: Report) -> str:
     lines.append(
         f"  {len(report.releases)} release(s), "
         f"{sum(1 for r in report.releases if r.yanked)} yanked, "
-        f"healthy successor: {report.reference or 'none'}")
+        f"healthy successor: {report.reference or 'none'}"
+    )
     for name, newest in sorted(report.dependency_latest.items()):
         lines.append(f"  dependency {name}: index serves {newest or 'unknown'}")
     if report.truncated:
         lines.append(
             f"  NOT AUDITED: the {report.truncated} oldest release(s) — raise "
-            "--max-versions to include them. They are not being reported as clean")
+            "--max-versions to include them. They are not being reported as clean"
+        )
     if report.unreadable:
         lines.append(
             "  metadata unreadable (not audited, not clean): "
-            + ", ".join(sorted(report.unreadable)))
+            + ", ".join(sorted(report.unreadable))
+        )
     if not report.findings:
         lines.append("  no unyanked known-broken release; every yank carries a reason")
     for finding in report.findings:
@@ -915,14 +965,24 @@ def build_parser() -> argparse.ArgumentParser:
     nothing else in the file would fail if somebody added it.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--dist", default="",
-                        help="distribution name (default: [project] name in --target)")
+    parser.add_argument(
+        "--dist",
+        default="",
+        help="distribution name (default: [project] name in --target)",
+    )
     parser.add_argument("--target", default=".", help="path to the target checkout")
-    parser.add_argument("--index-url", default=sp.DEFAULT_INDEX,
-                        help="PEP 503 index, as pip --index-url takes it")
+    parser.add_argument(
+        "--index-url",
+        default=sp.DEFAULT_INDEX,
+        help="PEP 503 index, as pip --index-url takes it",
+    )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
-    parser.add_argument("--max-versions", type=int, default=DEFAULT_MAX_VERSIONS,
-                        help="audit at most this many releases, newest first")
+    parser.add_argument(
+        "--max-versions",
+        type=int,
+        default=DEFAULT_MAX_VERSIONS,
+        help="audit at most this many releases, newest first",
+    )
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--report", default="", help="also write the JSON report here")
     return parser
@@ -936,7 +996,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             dist = str(sp.read_project(Path(args.target)).get("name") or "")
         except OSError as exc:
-            print(f"could not read {args.target}/pyproject.toml: {exc}", file=sys.stderr)
+            print(
+                f"could not read {args.target}/pyproject.toml: {exc}", file=sys.stderr
+            )
             return EXIT_CANNOT_RUN
     if not dist:
         print("no distribution name — pass --dist", file=sys.stderr)
@@ -950,7 +1012,8 @@ def main(argv: list[str] | None = None) -> int:
         print(render(report))
     if args.report:
         Path(args.report).write_text(
-            json.dumps(report.as_dict(), indent=2) + "\n", encoding="utf-8")
+            json.dumps(report.as_dict(), indent=2) + "\n", encoding="utf-8"
+        )
     return report.exit_code()
 
 

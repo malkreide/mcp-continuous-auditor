@@ -74,7 +74,7 @@ class IdentityProbeTest(unittest.TestCase):
             "good-mcp",
             "2.1.0",
             "good_mcp",
-            'from importlib.metadata import version\n\n'
+            "from importlib.metadata import version\n\n"
             '__version__ = version("good-mcp")\n'
             'USER_AGENT = f"good-mcp/{__version__} (https://example.invalid)"\n'
             'HEADERS = {"User-Agent": USER_AGENT}\n',
@@ -97,7 +97,7 @@ class IdentityProbeTest(unittest.TestCase):
             "0.4.0",
             "demo_mcp",
             "from importlib.metadata import version\n\n"
-            "# Until 0.3.0 this sent a hand-maintained \"demo-mcp/1.0\".\n"
+            '# Until 0.3.0 this sent a hand-maintained "demo-mcp/1.0".\n'
             '__version__ = version("demo-mcp")\n'
             'USER_AGENT = f"demo-mcp/{__version__}"\n',
         )
@@ -119,7 +119,11 @@ class IdentityProbeTest(unittest.TestCase):
     def test_badge_drift_does_not_hide_the_source_scan(self) -> None:
         """Both categories are reported; one clean says nothing about the other."""
         make_repo(
-            self.root, "demo-mcp", "0.4.0", "demo_mcp", 'USER_AGENT = "demo-mcp/0.1.0"\n'
+            self.root,
+            "demo-mcp",
+            "0.4.0",
+            "demo_mcp",
+            'USER_AGENT = "demo-mcp/0.1.0"\n',
         )
         (self.root / "README.md").write_text(
             "![v](https://img.shields.io/badge/Version-0.1.0-blue)\n", encoding="utf-8"

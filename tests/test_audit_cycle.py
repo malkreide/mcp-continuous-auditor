@@ -8,6 +8,7 @@ needed, and asserts the budget breaker is actually fed on the Broker side:
   * a worker that ships nothing -> missing result recorded as hard-fail, exit 1.
 Stdlib-only; needs bash + python3 (both present in the audit environment).
 """
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,9 @@ REPO = Path(__file__).resolve().parents[1]
 CYCLE = REPO / "deploy" / "microvm" / "run-audit-cycle.sh"
 
 
-@unittest.skipUnless(CYCLE.exists() and shutil.which("bash"), "cycle script or bash missing")
+@unittest.skipUnless(
+    CYCLE.exists() and shutil.which("bash"), "cycle script or bash missing"
+)
 class AuditCycleTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

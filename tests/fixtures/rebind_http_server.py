@@ -36,6 +36,7 @@ is there to measure.
 
 Binds ``HOST``/``PORT`` from the environment, like a real target's entrypoint.
 """
+
 from __future__ import annotations
 
 import json
@@ -114,7 +115,11 @@ class Handler(BaseHTTPRequestHandler):
         """The refusal this request earns, or None to serve it."""
         # auth_first is the bug: a valid token is taken as sufficient and the
         # host is never looked at again.
-        if MODE == "auth_first" and os.environ.get("MCP_AUTH_TOKEN") and self._token_ok():
+        if (
+            MODE == "auth_first"
+            and os.environ.get("MCP_AUTH_TOKEN")
+            and self._token_ok()
+        ):
             return None
         if not self._host_allowed():
             return 421, b'{"error":"Invalid request host"}'
@@ -126,8 +131,13 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- plumbing ---------------------------------------------------------
 
-    def _send(self, status: int, body: bytes, ctype: str = "application/json",
-              extra: dict[str, str] | None = None) -> None:
+    def _send(
+        self,
+        status: int,
+        body: bytes,
+        ctype: str = "application/json",
+        extra: dict[str, str] | None = None,
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -190,20 +200,33 @@ class Handler(BaseHTTPRequestHandler):
             self._send(202, b"")
             return
         if method == "initialize":
-            payload = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "rebind-fixture", "version": "1"},
-            }}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": msg.get("id"),
+                "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "rebind-fixture", "version": "1"},
+                },
+            }
             body = f"event: message\ndata: {json.dumps(payload)}\n\n".encode()
-            self._send(200, body, "text/event-stream", {"Mcp-Session-Id": "fixture-session"})
+            self._send(
+                200, body, "text/event-stream", {"Mcp-Session-Id": "fixture-session"}
+            )
             return
         if method == "tools/list":
-            payload = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {"tools": TOOLS}}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": msg.get("id"),
+                "result": {"tools": TOOLS},
+            }
             self._send(200, json.dumps(payload).encode(), "application/json")
             return
-        payload = {"jsonrpc": "2.0", "id": msg.get("id"),
-                   "error": {"code": -32601, "message": f"unknown method {method}"}}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": msg.get("id"),
+            "error": {"code": -32601, "message": f"unknown method {method}"},
+        }
         self._send(200, json.dumps(payload).encode(), "application/json")
 
 

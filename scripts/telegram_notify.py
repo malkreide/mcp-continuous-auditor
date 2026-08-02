@@ -88,7 +88,9 @@ def telegram_config(chat_id_override: str = "") -> tuple[str, str] | None:
     return token, chat_id
 
 
-def format_message(title: str, lines: list[str] | tuple[str, ...] = (), text: str = "") -> str:
+def format_message(
+    title: str, lines: list[str] | tuple[str, ...] = (), text: str = ""
+) -> str:
     """Compose a plain-text message from *title*, bullet *lines*, and *text*.
 
     Plain text (no Markdown/HTML parse mode) so a report containing ``*_[`` `` ` ``
@@ -101,7 +103,9 @@ def format_message(title: str, lines: list[str] | tuple[str, ...] = (), text: st
         parts.append(text.strip())
     message = "\n".join(parts)
     if len(message) > MAX_MESSAGE_CHARS:
-        message = message[: MAX_MESSAGE_CHARS - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+        message = (
+            message[: MAX_MESSAGE_CHARS - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+        )
     return message
 
 
@@ -132,7 +136,9 @@ def send_message(token: str, chat_id: str, text: str) -> bool:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(
+            request, timeout=REQUEST_TIMEOUT_SECONDS
+        ) as response:
             body = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
         print(
@@ -191,7 +197,9 @@ def main() -> int:
         default=[],
         help="Bullet line, repeatable; empty values are dropped.",
     )
-    parser.add_argument("--text", default="", help="Free-text paragraph after the bullets.")
+    parser.add_argument(
+        "--text", default="", help="Free-text paragraph after the bullets."
+    )
     parser.add_argument(
         "--report",
         default="",

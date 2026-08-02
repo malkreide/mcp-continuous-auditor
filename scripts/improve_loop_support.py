@@ -15,6 +15,7 @@ improve_acceptance):
 The GITHUB_TOKEN is read from the environment and sent only as an
 Authorization header — never printed, never interpolated into a shell.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,14 +53,18 @@ def read_run_entries(journal: Path, skip_lines: int) -> list[dict[str, Any]]:
     return entries
 
 
-def summarize(entries: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
+def summarize(
+    entries: list[dict[str, Any]], args: argparse.Namespace
+) -> dict[str, Any]:
     keeps = [e for e in entries if e.get("verdict") == "keep"]
     discards: dict[str, int] = {}
     for e in entries:
         if e.get("verdict") == "discard":
             grund = str(e.get("grund") or "unknown")
             discards[grund] = discards.get(grund, 0) + 1
-    hard_fails = [str(e.get("grund")) for e in entries if e.get("verdict") == "hard-fail"]
+    hard_fails = [
+        str(e.get("grund")) for e in entries if e.get("verdict") == "hard-fail"
+    ]
     return {
         "schema": _SUMMARY_SCHEMA,
         "generated_at": _now_iso(),
@@ -141,7 +146,11 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def _github(
-    method: str, url: str, token: str, opener: Opener, payload: dict[str, Any] | None = None
+    method: str,
+    url: str,
+    token: str,
+    opener: Opener,
+    payload: dict[str, Any] | None = None,
 ) -> Any:
     req = urllib.request.Request(
         url,
@@ -174,7 +183,10 @@ def cmd_publish(args: argparse.Namespace, opener: Opener | None = None) -> int:
             opener,
         )
         if isinstance(existing, list) and existing:
-            print(f"PUBLISH: open PR already exists: {existing[0].get('html_url')}", flush=True)
+            print(
+                f"PUBLISH: open PR already exists: {existing[0].get('html_url')}",
+                flush=True,
+            )
             return 0
         pr = _github(
             "POST",

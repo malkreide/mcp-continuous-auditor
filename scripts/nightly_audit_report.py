@@ -29,6 +29,7 @@ Ground truth is the exit code, never an opinion (SOUL.md). promptfoo output is
 UNTRUSTED data (it embeds upstream API payloads) — we read it as JSON files and
 never interpolate it into a shell (AGENTS.md / TOOLS.md).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -73,6 +74,7 @@ TESTS_UNKNOWN = -1
 def _hung(rc: int) -> bool:
     return rc in _HUNG_CODES
 
+
 # promptfoo assertion types that encode a tool-output contract / schema. A
 # failure on one of these is schema drift, not a red-team hit.
 _CONTRACT_ASSERTIONS = {"is-json", "is-valid-json", "javascript"}
@@ -95,7 +97,9 @@ def _clean_inline(s: Any, max_len: int = 200) -> str:
     return re.sub(r"[\x00-\x1f\x7f]", " ", str(s))[:max_len]
 
 
-def _validate_meta(value: Any, pattern: re.Pattern[str], kind: str) -> tuple[str, str | None]:
+def _validate_meta(
+    value: Any, pattern: re.Pattern[str], kind: str
+) -> tuple[str, str | None]:
     """Return (safe_value, error_or_None). A value that is neither a known sentinel
     nor pattern-matching is untrusted/tampered -> 'invalid' + an error string."""
     v = str(value or "").strip()
@@ -140,20 +144,25 @@ def summarise_shipped_metadata(path: Path | None) -> dict[str, Any]:
         return out
     findings = data.get("findings")
     yanked = data.get("yanked")
-    out.update({
-        "present": True,
-        "exit_code": data.get("exit_code"),
-        "publication": data.get("publication"),
-        "index_url": data.get("index_url"),
-        "index_version": data.get("index_version"),
-        "index_status": data.get("index_status"),
-        "yank_source": data.get("yank_source"),
-        "yanked": sorted(yanked) if isinstance(yanked, dict) else [],
-        "findings": [
-            {"code": f.get("code"), "severity": f.get("severity", "high")}
-            for f in findings if isinstance(f, dict)
-        ] if isinstance(findings, list) else [],
-    })
+    out.update(
+        {
+            "present": True,
+            "exit_code": data.get("exit_code"),
+            "publication": data.get("publication"),
+            "index_url": data.get("index_url"),
+            "index_version": data.get("index_version"),
+            "index_status": data.get("index_status"),
+            "yank_source": data.get("yank_source"),
+            "yanked": sorted(yanked) if isinstance(yanked, dict) else [],
+            "findings": [
+                {"code": f.get("code"), "severity": f.get("severity", "high")}
+                for f in findings
+                if isinstance(f, dict)
+            ]
+            if isinstance(findings, list)
+            else [],
+        }
+    )
     return out
 
 
@@ -166,8 +175,16 @@ def summarise_shipped_metadata(path: Path | None) -> dict[str, Any]:
 # HARD-FAILS. That is the intended fail-closed behaviour — a Worker image still
 # running the previous nightly-audit.sh genuinely did not run the new gate, and
 # must not be classified as green. Roll the Worker image and the Broker together.
-_GATE_NAMES = ("ruff", "mypy", "pytest", "schema_drift", "promptfoo_rc", "transport_boot",
-               "host_allowlist", "shipped_artifact")
+_GATE_NAMES = (
+    "ruff",
+    "mypy",
+    "pytest",
+    "schema_drift",
+    "promptfoo_rc",
+    "transport_boot",
+    "host_allowlist",
+    "shipped_artifact",
+)
 
 # The DNS-rebinding gate is the one gate whose exit code is not binary. 3 means
 # "the target has no inbound host allow-list configured" — the documented
@@ -250,7 +267,9 @@ def classify_promptfoo(pf: dict[str, Any] | None, promptfoo_rc: int) -> dict[str
             "contract_failures": 0,
             "other_failures": 0,
             "failures": 0,
-            "examples": [] if promptfoo_rc == 0 else ["promptfoo produced no output and exited non-zero"],
+            "examples": []
+            if promptfoo_rc == 0
+            else ["promptfoo produced no output and exited non-zero"],
         }
 
     block = _results_block(pf)
@@ -315,9 +334,11 @@ _PYTEST_NO_TESTS_RE = re.compile(r"no tests ran in ", re.MULTILINE)
 # and `errors in` (collection errors) are deliberately absent: a suite whose every
 # test was deselected executed nothing, which is precisely what we are looking for.
 _PYTEST_OUTCOME_RE = re.compile(
-    r"(\d+) (passed|failed|xfailed|xpassed|skipped|error|errors)\b")
-_PYTEST_SUMMARY_RE = re.compile(r"^=+ .*\bin \d+\.\d+s.*=+$|^\d+ \w+.* in \d+\.\d+s",
-                                re.MULTILINE)
+    r"(\d+) (passed|failed|xfailed|xpassed|skipped|error|errors)\b"
+)
+_PYTEST_SUMMARY_RE = re.compile(
+    r"^=+ .*\bin \d+\.\d+s.*=+$|^\d+ \w+.* in \d+\.\d+s", re.MULTILINE
+)
 
 
 def count_tests(text: str) -> int:
@@ -333,7 +354,7 @@ def count_tests(text: str) -> int:
     # pytest, quiet mode: the final summary line carries the per-outcome counts.
     summaries = list(_PYTEST_SUMMARY_RE.finditer(text or ""))
     if summaries:
-        last = (text or "")[summaries[-1].start():summaries[-1].end()]
+        last = (text or "")[summaries[-1].start() : summaries[-1].end()]
         total = sum(int(n) for n, _ in _PYTEST_OUTCOME_RE.findall(last))
         if total or _PYTEST_NO_TESTS_RE.search(last):
             return total
@@ -387,7 +408,8 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     pf = _load_promptfoo(Path(args.promptfoo_json)) if args.promptfoo_json else None
     pfc = classify_promptfoo(pf, args.promptfoo_rc)
     shipped_metadata = summarise_shipped_metadata(
-        Path(args.shipped_metadata_json) if args.shipped_metadata_json else None)
+        Path(args.shipped_metadata_json) if args.shipped_metadata_json else None
+    )
 
     # Validate the Worker-controlled metadata (S-D): a target/sha that is neither a
     # known sentinel nor pattern-matching is treated as tampering -> 'invalid' +
@@ -400,31 +422,41 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # A timeout is not "ruff found problems"; it is "ruff never answered", and
     # folding it into the finding classes would put a defect claim in the report
     # that no gate ever made.
-    hung_gates = [label for label, rc in (
-        ("ruff", args.ruff), ("mypy", args.mypy), ("pytest", args.pytest),
-        ("schema-drift gate", args.schema_drift),
-        ("transport boot gate", args.transport_boot),
-        ("DNS-rebinding gate", args.host_allowlist),
-        ("shipped-artifact gate", args.shipped_artifact),
-        ("promptfoo", args.promptfoo_rc),
-    ) if _hung(rc)]
+    hung_gates = [
+        label
+        for label, rc in (
+            ("ruff", args.ruff),
+            ("mypy", args.mypy),
+            ("pytest", args.pytest),
+            ("schema-drift gate", args.schema_drift),
+            ("transport boot gate", args.transport_boot),
+            ("DNS-rebinding gate", args.host_allowlist),
+            ("shipped-artifact gate", args.shipped_artifact),
+            ("promptfoo", args.promptfoo_rc),
+        )
+        if _hung(rc)
+    ]
     hung = bool(hung_gates)
 
     # Schema drift = the deterministic schema gate diverged OR a promptfoo
     # is-json/contract assertion failed.
-    schema_drift = (args.schema_drift != 0 and not _hung(args.schema_drift)) \
-        or pfc["contract_failures"] > 0
+    schema_drift = (args.schema_drift != 0 and not _hung(args.schema_drift)) or pfc[
+        "contract_failures"
+    ] > 0
     redteam = pfc["redteam_hits"] > 0
     other_findings = pfc.get("other_failures", 0) > 0
-    toolchain_fail = any(rc != 0 and not _hung(rc)
-                         for rc in (args.ruff, args.mypy, args.pytest))
+    toolchain_fail = any(
+        rc != 0 and not _hung(rc) for rc in (args.ruff, args.mypy, args.pytest)
+    )
     # Transport boot: the target did not come up, or came up unusable, under at
     # least one configured transport. A server that will not start is a FINDING
     # about the target — only the harness failing to run (126/127, below) is a
     # hard failure. Keeping those two apart is the whole point of the gate.
     transport_boot_unmeasured = args.transport_boot == BOOT_NOT_MEASURED
-    transport_boot_fail = (args.transport_boot not in (0, BOOT_NOT_MEASURED)
-                           and not _hung(args.transport_boot))
+    transport_boot_fail = args.transport_boot not in (
+        0,
+        BOOT_NOT_MEASURED,
+    ) and not _hung(args.transport_boot)
     # The rebinding gate, three ways. Exit 3 is NOT a failure: a target with no
     # allow-list configured is in the documented fail-open state. It is surfaced
     # as its own flag so the report can say so out loud instead of leaving a
@@ -434,11 +466,16 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # land in hard_fail_reasons below instead.
     # The shipped-artifact gate: what users actually install. Binary — a stale or
     # absent release is a finding about the target, 126/127 is the harness.
-    shipped_artifact_fail = (args.shipped_artifact not in (0, 126, 127)
-                             and not _hung(args.shipped_artifact))
+    shipped_artifact_fail = args.shipped_artifact not in (0, 126, 127) and not _hung(
+        args.shipped_artifact
+    )
     host_allowlist_unconfigured = args.host_allowlist == REBIND_NOT_CONFIGURED
-    host_allowlist_fail = (args.host_allowlist not in (0, REBIND_NOT_CONFIGURED, 126, 127)
-                           and not _hung(args.host_allowlist))
+    host_allowlist_fail = args.host_allowlist not in (
+        0,
+        REBIND_NOT_CONFIGURED,
+        126,
+        127,
+    ) and not _hung(args.host_allowlist)
 
     # --- the silent zero ----------------------------------------------------
     # A green pytest gate that reported on no tests at all. The count comes from
@@ -483,7 +520,9 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         if rc in infra_codes:
             hard_fail_reasons.append(f"{name} could not run (exit {rc})")
     if args.schema_drift in infra_codes:
-        hard_fail_reasons.append(f"schema-drift gate could not run (exit {args.schema_drift})")
+        hard_fail_reasons.append(
+            f"schema-drift gate could not run (exit {args.schema_drift})"
+        )
     if args.transport_boot in infra_codes:
         hard_fail_reasons.append(
             f"transport boot gate could not run (exit {args.transport_boot}) — the harness "
@@ -508,7 +547,8 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         # the target (an endless SSE stream, a deadlock, a suite waiting on a
         # client teardown) and belongs in front of the operator under its own name.
         hard_fail_reasons.append(
-            "gate(s) HUNG and were killed by the timeout: " + ", ".join(hung_gates)
+            "gate(s) HUNG and were killed by the timeout: "
+            + ", ".join(hung_gates)
             + " — no verdict was produced. A hang is not infrastructure noise: twice "
             "now a real defect has surfaced as a hanging suite rather than a red one. "
             "Read that gate's log for where it stopped before re-running"
@@ -532,10 +572,15 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # fail-open state and the operator's decision, not a defect. It is loud in
     # the report instead — see the block render_report() adds for it.
     green = not (
-        schema_drift or redteam or other_findings or toolchain_fail
-        or transport_boot_fail or host_allowlist_fail or shipped_artifact_fail
+        schema_drift
+        or redteam
+        or other_findings
+        or toolchain_fail
+        or transport_boot_fail
+        or host_allowlist_fail
+        or shipped_artifact_fail
         or hard_fail
-    )   # transport_boot_unmeasured deliberately absent: not a defect, see below
+    )  # transport_boot_unmeasured deliberately absent: not a defect, see below
 
     if hard_fail:
         outcome, exit_code = "hard-fail", EXIT_HARD_FAIL
@@ -547,7 +592,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     # Which promptfoo profile produced this verdict (Analysis T-C). A determ-only
     # run did NOT exercise the model-graded layer (llm-rubric + red-team), so a
     # green determ verdict must never be read as "red-team clear".
-    profile = (getattr(args, "promptfoo_profile", "") or "unknown")
+    profile = getattr(args, "promptfoo_profile", "") or "unknown"
     graded_layer_ran = profile in ("graded", "full")
 
     return {
@@ -613,7 +658,9 @@ def _shipped_metadata_line(s: dict[str, Any]) -> str:
     version = m.get("index_version")
     bits.append(f"index serves `{version}`" if version else "no version from the index")
     if m.get("index_status") == "unconfirmed":
-        bits.append("index APIs **disagree** (UNCONFIRMED — not a finding, read the log)")
+        bits.append(
+            "index APIs **disagree** (UNCONFIRMED — not a finding, read the log)"
+        )
     if m.get("yanked"):
         bits.append(f"{len(m['yanked'])} yanked release(s): {', '.join(m['yanked'])}")
 
@@ -626,11 +673,13 @@ def _shipped_metadata_line(s: dict[str, Any]) -> str:
     # When the gate above produced nothing, name precisely which half of the
     # question survived. "The release is fine" and "the artifact runs" are two
     # claims, and only the first one was earned here.
-    if (s["gates"]["shipped_artifact_gate"] not in (0, 2)
-            or _hung(s["gates"]["shipped_artifact_gate"])):
+    if s["gates"]["shipped_artifact_gate"] not in (0, 2) or _hung(
+        s["gates"]["shipped_artifact_gate"]
+    ):
         bits.append(
             "the gate itself returned no verdict, so what is still UNKNOWN is "
-            "whether the installed artifact starts and answers")
+            "whether the installed artifact starts and answers"
+        )
     return " · ".join(bits)
 
 
@@ -644,17 +693,24 @@ def render_report(s: dict[str, Any]) -> str:
     # Both of these are hard failures, but "could not complete" is the wrong
     # sentence for either: one gate ran forever, the other ran nothing. Say which.
     if s.get("hung"):
-        head = ("HARD FAILURE — " + ", ".join(s.get("hung_gates") or ["a gate"])
-                + " HUNG and had to be killed. No verdict was produced. Do NOT treat as passed.")
+        head = (
+            "HARD FAILURE — "
+            + ", ".join(s.get("hung_gates") or ["a gate"])
+            + " HUNG and had to be killed. No verdict was produced. Do NOT treat as passed."
+        )
     elif s.get("no_tests_executed"):
-        head = ("HARD FAILURE — the test suite executed 0 tests and still exited 0. "
-                "An empty suite is not a pass. Do NOT treat as passed.")
+        head = (
+            "HARD FAILURE — the test suite executed 0 tests and still exited 0. "
+            "An empty suite is not a pass. Do NOT treat as passed."
+        )
     # A green run that ships an unconfigured control must say so in the same
     # breath. "All gates green" on its own is the sentence a reader stops at.
     if s["outcome"] == "green" and s.get("host_allowlist_unconfigured"):
-        head = ("All gates green — but the inbound host allow-list is NOT configured "
-                "(see below). Green here means nothing was found broken, not that "
-                "the DNS-rebinding attack is opposed.")
+        head = (
+            "All gates green — but the inbound host allow-list is NOT configured "
+            "(see below). Green here means nothing was found broken, not that "
+            "the DNS-rebinding attack is opposed."
+        )
 
     lines = [
         f"# {icon} Nightly audit — `{s['target']}`",
@@ -740,23 +796,33 @@ def render_report(s: dict[str, Any]) -> str:
         # "Re-run" is the wrong advice for a hang: the second attempt is not the
         # answer, and a run that passes on retry is how an intermittent deadlock
         # gets talked out of the record.
-        closing = ("The run is **not** a pass. No green claim is made (SOUL.md). "
-                   "Resolve the model/provider or the broken gate and re-run.")
+        closing = (
+            "The run is **not** a pass. No green claim is made (SOUL.md). "
+            "Resolve the model/provider or the broken gate and re-run."
+        )
         if s.get("hung"):
-            closing = ("The run is **not** a pass. No green claim is made (SOUL.md). "
-                       "Find out *where* the gate stopped before re-running — a hang "
-                       "that disappears on the second attempt has not been explained.")
+            closing = (
+                "The run is **not** a pass. No green claim is made (SOUL.md). "
+                "Find out *where* the gate stopped before re-running — a hang "
+                "that disappears on the second attempt has not been explained."
+            )
         elif s.get("no_tests_executed") or s.get("tests_unverified"):
-            closing = ("The run is **not** a pass. No green claim is made (SOUL.md). "
-                       "Fix the suite's selection so it actually runs, then re-run.")
+            closing = (
+                "The run is **not** a pass. No green claim is made (SOUL.md). "
+                "Fix the suite's selection so it actually runs, then re-run."
+            )
         lines += ["", closing]
 
     pf = s["promptfoo"]
     findings: list[str] = []
     if s["schema_drift"]:
-        findings.append("**Schema drift** — committed schema / tool-output contract diverged.")
+        findings.append(
+            "**Schema drift** — committed schema / tool-output contract diverged."
+        )
     if s["redteam"]:
-        findings.append(f"**Red-team hit** — {pf['redteam_hits']} adversarial case(s) succeeded against the surface.")
+        findings.append(
+            f"**Red-team hit** — {pf['redteam_hits']} adversarial case(s) succeeded against the surface."
+        )
     if s.get("other_findings"):
         findings.append(
             f"**Other promptfoo failure(s)** — {pf.get('other_failures', 0)} case(s) failed but "
@@ -789,8 +855,9 @@ def render_report(s: dict[str, Any]) -> str:
     # withdrawn release. Surfaced as its own line rather than folded into
     # `findings`: the outcome stays whatever the gate's own exit code made it.
     _m = s.get("shipped_metadata") or {}
-    _shipped_silent = (s["gates"]["shipped_artifact_gate"] not in (0, 2)
-                       or _hung(s["gates"]["shipped_artifact_gate"]))
+    _shipped_silent = s["gates"]["shipped_artifact_gate"] not in (0, 2) or _hung(
+        s["gates"]["shipped_artifact_gate"]
+    )
     _codes = [f["code"] for f in _m.get("findings", []) if f.get("code")]
     # Only a real finding earns a place under "Findings". A pre-run that found
     # nothing still has something worth saying when the gate above it went
@@ -815,7 +882,9 @@ def render_report(s: dict[str, Any]) -> str:
             "tools. See the Worker's `shipped.log` / `shipped.json` for which."
         )
     if s["toolchain_fail"]:
-        findings.append("**Toolchain failure** — ruff/mypy/pytest is red (see gates above).")
+        findings.append(
+            "**Toolchain failure** — ruff/mypy/pytest is red (see gates above)."
+        )
     if findings:
         lines += ["", "## 🚨 Findings"]
         lines += [f"- {f}" for f in findings]
@@ -882,36 +951,68 @@ def main() -> int:
     p.add_argument("--mypy", type=int)
     p.add_argument("--pytest", type=int)
     p.add_argument("--schema-drift", type=int, dest="schema_drift")
-    p.add_argument("--transport-boot", type=int, dest="transport_boot",
-                   help="transport boot gate exit code (0 green / 2 target does not "
-                        "boot / 3 the transport could not be selected, so nothing was "
-                        "measured / 127 the harness could not run)")
-    p.add_argument("--host-allowlist", type=int, dest="host_allowlist",
-                   help="DNS-rebinding gate exit code (0 the control is enforced / "
-                        "2 finding / 3 the control is NOT CONFIGURED — neither a pass "
-                        "nor a failure / 127 the harness could not run)")
+    p.add_argument(
+        "--transport-boot",
+        type=int,
+        dest="transport_boot",
+        help="transport boot gate exit code (0 green / 2 target does not "
+        "boot / 3 the transport could not be selected, so nothing was "
+        "measured / 127 the harness could not run)",
+    )
+    p.add_argument(
+        "--host-allowlist",
+        type=int,
+        dest="host_allowlist",
+        help="DNS-rebinding gate exit code (0 the control is enforced / "
+        "2 finding / 3 the control is NOT CONFIGURED — neither a pass "
+        "nor a failure / 127 the harness could not run)",
+    )
     p.add_argument("--promptfoo-rc", type=int, dest="promptfoo_rc")
-    p.add_argument("--shipped-artifact", type=int, dest="shipped_artifact",
-                   help="shipped-artifact gate exit code (0 the published package "
-                        "matches and runs / 2 absent, stale, or it does not run / "
-                        "127 the harness could not run, e.g. an unreachable index)")
-    p.add_argument("--tests-collected", type=int, dest="tests_collected",
-                   default=TESTS_UNKNOWN,
-                   help="how many tests the pytest gate reported on (-1 = could not be "
-                        "determined). A green gate with 0 is NOT a pass")
-    p.add_argument("--count-tests", default="", dest="count_tests",
-                   help="read a runner log and print the test count, then exit. This is "
-                        "how nightly-audit.sh measures the number it ships in the "
-                        "evidence — the log itself never reaches the Broker")
-    p.add_argument("--from-evidence", default="", dest="from_evidence",
-                   help="read gate exit codes (+ target/sha) from a Worker evidence JSON")
-    p.add_argument("--shipped-metadata-json", default="", dest="shipped_metadata_json",
-                   help="the shipped gate's --metadata-only pre-run report. Evidence, "
-                        "not a gate: it is reported and never changes the outcome, and "
-                        "an absent file reads as unknown rather than as clean")
+    p.add_argument(
+        "--shipped-artifact",
+        type=int,
+        dest="shipped_artifact",
+        help="shipped-artifact gate exit code (0 the published package "
+        "matches and runs / 2 absent, stale, or it does not run / "
+        "127 the harness could not run, e.g. an unreachable index)",
+    )
+    p.add_argument(
+        "--tests-collected",
+        type=int,
+        dest="tests_collected",
+        default=TESTS_UNKNOWN,
+        help="how many tests the pytest gate reported on (-1 = could not be "
+        "determined). A green gate with 0 is NOT a pass",
+    )
+    p.add_argument(
+        "--count-tests",
+        default="",
+        dest="count_tests",
+        help="read a runner log and print the test count, then exit. This is "
+        "how nightly-audit.sh measures the number it ships in the "
+        "evidence — the log itself never reaches the Broker",
+    )
+    p.add_argument(
+        "--from-evidence",
+        default="",
+        dest="from_evidence",
+        help="read gate exit codes (+ target/sha) from a Worker evidence JSON",
+    )
+    p.add_argument(
+        "--shipped-metadata-json",
+        default="",
+        dest="shipped_metadata_json",
+        help="the shipped gate's --metadata-only pre-run report. Evidence, "
+        "not a gate: it is reported and never changes the outcome, and "
+        "an absent file reads as unknown rather than as clean",
+    )
     p.add_argument("--promptfoo-json", default="", dest="promptfoo_json")
-    p.add_argument("--promptfoo-profile", default="", dest="promptfoo_profile",
-                   help="which promptfoo profile ran (determ|graded|full); stamped into the summary")
+    p.add_argument(
+        "--promptfoo-profile",
+        default="",
+        dest="promptfoo_profile",
+        help="which promptfoo profile ran (determ|graded|full); stamped into the summary",
+    )
     p.add_argument("--target", default="")
     p.add_argument("--sha", default="unknown")
     # Not `required=True`: --count-tests is a measurement mode that writes nothing.
@@ -953,9 +1054,15 @@ def main() -> int:
         except (KeyError, TypeError, ValueError):
             args.tests_collected = TESTS_UNKNOWN
     else:
-        missing = [f"--{n.replace('_', '-')}" for n in _GATE_NAMES if getattr(args, n) is None]
+        missing = [
+            f"--{n.replace('_', '-')}" for n in _GATE_NAMES if getattr(args, n) is None
+        ]
         if missing:
-            p.error("missing gate flags: " + ", ".join(missing) + " (or pass --from-evidence)")
+            p.error(
+                "missing gate flags: "
+                + ", ".join(missing)
+                + " (or pass --from-evidence)"
+            )
         if not args.target:
             p.error("--target is required (or pass --from-evidence carrying it)")
 

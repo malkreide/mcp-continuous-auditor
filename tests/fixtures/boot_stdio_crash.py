@@ -10,6 +10,7 @@ the truth.
 Reproduced here with the real exception text so the probe's captured stderr is
 recognisable to whoever reads the finding.
 """
+
 from __future__ import annotations
 
 import sys

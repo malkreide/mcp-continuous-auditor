@@ -185,7 +185,7 @@ DEFAULT_SMOKE_SECONDS = 6.0
 # submodule, and collect any string that looks like a product token followed by
 # a version, wherever it sits. The order is load-bearing — see the module
 # docstring on `bag-health-mcp`.
-RUNTIME_SCAN = r'''
+RUNTIME_SCAN = r"""
 import importlib, importlib.metadata as md, json, pkgutil, re, sys, warnings
 warnings.filterwarnings("ignore")
 
@@ -297,13 +297,13 @@ for f in found:
 print(json.dumps({"installed": installed, "runtime": uniq, "errors": errors[:24],
                   "tops": sorted(tops), "imported_dists": sorted(imported),
                   "requires": requires}))
-'''
+"""
 
 # Runs inside the target venv, in a FRESH interpreter, to tell a real broken
 # import apart from this probe's own import order. `cold` is the very first
 # import of the process; `warm` imports the package root first, which is what
 # any real user's code does.
-VERIFY_IMPORT = r'''
+VERIFY_IMPORT = r"""
 import importlib, json, sys, warnings
 warnings.filterwarnings("ignore")
 mode, root, module = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -315,11 +315,11 @@ except BaseException as e:
     print(json.dumps({"ok": False, "error": "%s: %s" % (type(e).__name__, e)}))
 else:
     print(json.dumps({"ok": True, "error": ""}))
-'''
+"""
 
 # Runs inside the target venv: resolve one f-string's interpolated expression
 # against the module that defines it. Measured, not inferred.
-EVAL_EXPR = r'''
+EVAL_EXPR = r"""
 import importlib, json, sys, warnings
 warnings.filterwarnings("ignore")
 mod, expr = sys.argv[1], sys.argv[2]
@@ -327,10 +327,10 @@ try:
     print(json.dumps({"value": str(eval(expr, vars(importlib.import_module(mod))))}))
 except Exception as e:
     print(json.dumps({"error": "%s: %s" % (type(e).__name__, e)}))
-'''
+"""
 
 # Runs inside the target venv: the console scripts the distribution installed.
-CONSOLE_SCRIPTS = r'''
+CONSOLE_SCRIPTS = r"""
 import json, sys
 from importlib import metadata as md
 try:
@@ -339,7 +339,7 @@ try:
 except Exception as e:
     print(json.dumps({"error": "%s: %s" % (type(e).__name__, e)})); raise SystemExit
 print(json.dumps({"scripts": eps}))
-'''
+"""
 
 # f"token/{expr}" — the inline form that carries no literal digit and is
 # therefore invisible to a literal scan.
@@ -421,8 +421,8 @@ class ImportCheck:
 
     module: str
     root: str
-    kind: str            # root | submodule
-    error: str           # what the bulk scan saw
+    kind: str  # root | submodule
+    error: str  # what the bulk scan saw
     verdict: str = "unconfirmed"
     cold_error: str = ""
     warm_error: str = ""
@@ -436,25 +436,35 @@ class ImportCheck:
         return self.verdict in ("order-artifact", "not-reproduced", "optional-dep")
 
     def as_dict(self) -> dict[str, Any]:
-        return {"module": self.module, "root": self.root, "kind": self.kind,
-                "error": self.error, "verdict": self.verdict,
-                "cold_error": self.cold_error, "warm_error": self.warm_error}
+        return {
+            "module": self.module,
+            "root": self.root,
+            "kind": self.kind,
+            "error": self.error,
+            "verdict": self.verdict,
+            "cold_error": self.cold_error,
+            "warm_error": self.warm_error,
+        }
 
 
 @dataclass
 class Smoke:
     """What happened when the installed console script was started."""
 
-    status: str = "skipped"   # ok | crashed | no_event | no_entrypoint | error | skipped
+    status: str = "skipped"  # ok | crashed | no_event | no_entrypoint | error | skipped
     entrypoint: str = ""
     detail: str = ""
     exit_code: int | None = None
-    evidence: str = ""        # the line that carried the start event, if any
+    evidence: str = ""  # the line that carried the start event, if any
 
     def as_dict(self) -> dict[str, Any]:
-        return {"status": self.status, "entrypoint": self.entrypoint,
-                "detail": self.detail, "exit_code": self.exit_code,
-                "evidence": self.evidence}
+        return {
+            "status": self.status,
+            "entrypoint": self.entrypoint,
+            "detail": self.detail,
+            "exit_code": self.exit_code,
+            "evidence": self.evidence,
+        }
 
 
 @dataclass
@@ -464,7 +474,7 @@ class Cap:
     name: str
     requirement: str
     floor: str | None = None
-    verdict: str = "capped"   # capped | major-available | armed | unknown
+    verdict: str = "capped"  # capped | major-available | armed | unknown
     detail: str = ""
 
     @property
@@ -472,8 +482,13 @@ class Cap:
         return self.verdict == "major-available"
 
     def as_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "requirement": self.requirement,
-                "floor": self.floor, "verdict": self.verdict, "detail": self.detail}
+        return {
+            "name": self.name,
+            "requirement": self.requirement,
+            "floor": self.floor,
+            "verdict": self.verdict,
+            "detail": self.detail,
+        }
 
 
 @dataclass
@@ -570,15 +585,22 @@ def identity_status(r: Result) -> tuple[str, str]:
     if foreign:
         # Someone else's identity on our requests. Not version drift — a
         # separate, larger question about what the server tells upstreams.
-        return "foreign_user_agent", "sends a User-Agent that is not this package's identity"
+        return (
+            "foreign_user_agent",
+            "sends a User-Agent that is not this package's identity",
+        )
     if graded:
         return "ok", ""
     if r.mentions_ua:
         # Source talks about a User-Agent and no strategy resolved one. That is
         # a gap in this probe, not a clean package.
-        return "unverified", "source mentions a User-Agent but no value could be resolved"
+        return (
+            "unverified",
+            "source mentions a User-Agent but no value could be resolved",
+        )
     return "no_user_agent", (
-        "no custom User-Agent — requests go out under the HTTP client default")
+        "no custom User-Agent — requests go out under the HTTP client default"
+    )
 
 
 def decide_status(r: Result) -> tuple[str, str]:
@@ -607,15 +629,19 @@ def decide_status(r: Result) -> tuple[str, str]:
         shown = ", ".join(c.module for c in broken[:4])
         more = f" (+{len(broken) - 4} more)" if len(broken) > 4 else ""
         unconfirmed = [c for c in broken if c.verdict == "unconfirmed"]
-        note = (" — including "
-                + ", ".join(c.module for c in unconfirmed[:3])
-                + ", where the re-measurement itself could not run and the failure "
-                  "is therefore taken at face value"
-                if unconfirmed else "")
+        note = (
+            " — including "
+            + ", ".join(c.module for c in unconfirmed[:3])
+            + ", where the re-measurement itself could not run and the failure "
+            "is therefore taken at face value"
+            if unconfirmed
+            else ""
+        )
         return "broken_import", (
             f"{len(broken)} module(s) do not import from the installed "
             f"distribution: {shown}{more}{note}. Measured with the package root "
-            "imported first, so this is not an import-order artefact")
+            "imported first, so this is not an import-order artefact"
+        )
 
     if r.smoke.status == "crashed":
         return "smoke_failed", r.smoke.detail
@@ -628,7 +654,8 @@ def decide_status(r: Result) -> tuple[str, str]:
     open_ranges = r.uncapped
     if open_ranges:
         return "unbounded_dependency", (
-            "; ".join(f"{c.requirement} — {c.detail}" for c in open_ranges[:4]))
+            "; ".join(f"{c.requirement} — {c.detail}" for c in open_ranges[:4])
+        )
 
     if r.smoke.status in ("no_event", "error"):
         return "smoke_unverified", r.smoke.detail
@@ -636,7 +663,9 @@ def decide_status(r: Result) -> tuple[str, str]:
     return ident, ident_detail
 
 
-_MODULE_NOT_FOUND = re.compile(r"ModuleNotFoundError: No module named ['\"]([\w.]+)['\"]")
+_MODULE_NOT_FOUND = re.compile(
+    r"ModuleNotFoundError: No module named ['\"]([\w.]+)['\"]"
+)
 
 
 def conditional_names(requires: list[str]) -> set[str]:
@@ -671,8 +700,12 @@ def blames_optional(warm_error: str, conditional: set[str]) -> str:
     return top if top in conditional else ""
 
 
-def classify_import(check: ImportCheck, cold: dict[str, Any], warm: dict[str, Any],
-                    conditional: set[str] | None = None) -> ImportCheck:
+def classify_import(
+    check: ImportCheck,
+    cold: dict[str, Any],
+    warm: dict[str, Any],
+    conditional: set[str] | None = None,
+) -> ImportCheck:
     """Fold the two fresh-interpreter measurements into a verdict. Pure.
 
     ``warm`` is the one that decides, because it is what a user's code does:
@@ -686,7 +719,9 @@ def classify_import(check: ImportCheck, cold: dict[str, Any], warm: dict[str, An
     if "ok" not in warm:
         # The verification subprocess itself did not answer. Fail closed.
         check.verdict = "unconfirmed"
-        check.warm_error = str(warm.get("error") or "the verification produced no answer")
+        check.warm_error = str(
+            warm.get("error") or "the verification produced no answer"
+        )
         return check
     if warm.get("ok"):
         check.verdict = "not-reproduced" if cold.get("ok") else "order-artifact"
@@ -727,8 +762,13 @@ def has_start_event(text: str, event: str = DEFAULT_START_EVENT) -> str:
     return ""
 
 
-def classify_smoke(text: str, exit_code: int | None, entrypoint: str,
-                   seconds: float, event: str = DEFAULT_START_EVENT) -> Smoke:
+def classify_smoke(
+    text: str,
+    exit_code: int | None,
+    entrypoint: str,
+    seconds: float,
+    event: str = DEFAULT_START_EVENT,
+) -> Smoke:
     """What the start attempt proved. Pure — the subprocess is the caller's.
 
     ``exit_code is None`` means the process was still running when the window
@@ -741,25 +781,42 @@ def classify_smoke(text: str, exit_code: int | None, entrypoint: str,
     if crashed:
         tail = "\n".join((text or "").strip().splitlines()[-6:])[:400]
         return Smoke(
-            status="crashed", entrypoint=entrypoint, exit_code=exit_code, evidence=evidence,
-            detail=("the installed console script crashed"
-                    + (f" (exit {exit_code})" if exit_code is not None else "")
-                    + f" within {seconds:.0f}s of starting with stdin closed. "
-                      "Importing the package is not the same as starting it, and "
-                      f"this is the difference: {tail!r}"))
+            status="crashed",
+            entrypoint=entrypoint,
+            exit_code=exit_code,
+            evidence=evidence,
+            detail=(
+                "the installed console script crashed"
+                + (f" (exit {exit_code})" if exit_code is not None else "")
+                + f" within {seconds:.0f}s of starting with stdin closed. "
+                "Importing the package is not the same as starting it, and "
+                f"this is the difference: {tail!r}"
+            ),
+        )
     if evidence:
-        return Smoke(status="ok", entrypoint=entrypoint, exit_code=exit_code,
-                     evidence=evidence, detail="announced its start and did not crash")
+        return Smoke(
+            status="ok",
+            entrypoint=entrypoint,
+            exit_code=exit_code,
+            evidence=evidence,
+            detail="announced its start and did not crash",
+        )
     return Smoke(
-        status="no_event", entrypoint=entrypoint, exit_code=exit_code,
-        detail=(f"the console script ran for {seconds:.0f}s with stdin closed and did "
-                f"not crash, but never announced {event!r}. That is not a pass: this "
-                "probe did not see the server reach serving, and not seeing it is not "
-                "evidence that it did"))
+        status="no_event",
+        entrypoint=entrypoint,
+        exit_code=exit_code,
+        detail=(
+            f"the console script ran for {seconds:.0f}s with stdin closed and did "
+            f"not crash, but never announced {event!r}. That is not a pass: this "
+            "probe did not see the server reach serving, and not seeing it is not "
+            "evidence that it did"
+        ),
+    )
 
 
-def dependency_caps(requires: list[str], imported: set[str], own: str,
-                    versions_of: Any = None) -> list[Cap]:
+def dependency_caps(
+    requires: list[str], imported: set[str], own: str, versions_of: Any = None
+) -> list[Cap]:
     """Upper bounds on the dependencies the package actually imports. Pure-ish.
 
     ``versions_of(name) -> list[str] | None`` is the only impure part and is
@@ -782,43 +839,81 @@ def dependency_caps(requires: list[str], imported: set[str], own: str,
             continue
         seen.add(key)
         if req.bounded_above():
-            out.append(Cap(name=key, requirement=req.raw, floor=req.floor(),
-                           verdict="capped",
-                           detail="the range names an upper bound"))
+            out.append(
+                Cap(
+                    name=key,
+                    requirement=req.raw,
+                    floor=req.floor(),
+                    verdict="capped",
+                    detail="the range names an upper bound",
+                )
+            )
             continue
         floor = req.floor()
         floor_key = yp._release(floor.rstrip(".*")) if floor else None
         if floor_key is None:
-            out.append(Cap(
-                name=key, requirement=req.raw, floor=floor, verdict="armed",
-                detail="no upper bound, and no floor this probe can order either — "
-                       "the resolver is free to take any release ever published"))
+            out.append(
+                Cap(
+                    name=key,
+                    requirement=req.raw,
+                    floor=floor,
+                    verdict="armed",
+                    detail="no upper bound, and no floor this probe can order either — "
+                    "the resolver is free to take any release ever published",
+                )
+            )
             continue
         published = versions_of(key) if versions_of else None
         if published is None:
-            out.append(Cap(
-                name=key, requirement=req.raw, floor=floor, verdict="unknown",
-                detail="no upper bound, and the index could not be read to say "
-                       "whether a higher major is already available"))
+            out.append(
+                Cap(
+                    name=key,
+                    requirement=req.raw,
+                    floor=floor,
+                    verdict="unknown",
+                    detail="no upper bound, and the index could not be read to say "
+                    "whether a higher major is already available",
+                )
+            )
             continue
         higher = sorted(
-            {v for v in published
-             if not yp.sp.is_prerelease(v)
-             and (yp._release(v) or (0,))[0] > floor_key[0]},
-            key=lambda v: yp._release(v) or ())
+            {
+                v
+                for v in published
+                if not yp.sp.is_prerelease(v)
+                and (yp._release(v) or (0,))[0] > floor_key[0]
+            },
+            key=lambda v: yp._release(v) or (),
+        )
         if higher:
-            out.append(Cap(
-                name=key, requirement=req.raw, floor=floor, verdict="major-available",
-                detail=(f"no upper bound, floor {floor}, and the index already serves "
+            out.append(
+                Cap(
+                    name=key,
+                    requirement=req.raw,
+                    floor=floor,
+                    verdict="major-available",
+                    detail=(
+                        f"no upper bound, floor {floor}, and the index already serves "
                         f"{higher[-1]} — a major past it. The artifact will not change; "
                         "the resolver's answer to the next fresh install will. This is "
                         "the shape swiss-energy-mcp 0.3.3 shipped in before mcp 2.0.0 "
-                        "killed every reinstall of it")))
+                        "killed every reinstall of it"
+                    ),
+                )
+            )
         else:
-            out.append(Cap(
-                name=key, requirement=req.raw, floor=floor, verdict="armed",
-                detail=(f"no upper bound above floor {floor}; no higher major is "
-                        "published yet, so the trap is armed and has not sprung")))
+            out.append(
+                Cap(
+                    name=key,
+                    requirement=req.raw,
+                    floor=floor,
+                    verdict="armed",
+                    detail=(
+                        f"no upper bound above floor {floor}; no higher major is "
+                        "published yet, so the trap is armed and has not sprung"
+                    ),
+                )
+            )
     return out
 
 
@@ -827,16 +922,20 @@ def dependency_caps(requires: list[str], imported: set[str], own: str,
 # --------------------------------------------------------------------------
 
 
-def _verify_imports(py: Path, raw_errors: list[dict[str, Any]],
-                    conditional: set[str] | None = None) -> list[ImportCheck]:
+def _verify_imports(
+    py: Path, raw_errors: list[dict[str, Any]], conditional: set[str] | None = None
+) -> list[ImportCheck]:
     """Re-measure every failure from the bulk scan in two fresh interpreters."""
     checks: list[ImportCheck] = []
     for entry in raw_errors:
         module = str(entry.get("module") or "")
         root = str(entry.get("root") or module.split(".")[0])
-        check = ImportCheck(module=module, root=root,
-                            kind=str(entry.get("kind") or "submodule"),
-                            error=str(entry.get("error") or ""))
+        check = ImportCheck(
+            module=module,
+            root=root,
+            kind=str(entry.get("kind") or "submodule"),
+            error=str(entry.get("error") or ""),
+        )
         try:
             cold = _run(py, VERIFY_IMPORT, "cold", root, module, timeout=180)
             warm = _run(py, VERIFY_IMPORT, "warm", root, module, timeout=180)
@@ -876,10 +975,15 @@ def watch(argv: list[str], cwd: Path, seconds: float) -> tuple[str, int | None, 
     """
     try:
         proc = subprocess.Popen(
-            argv, cwd=str(cwd), stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            argv,
+            cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
             start_new_session=(os.name != "nt"),
-            env={**os.environ, "PYTHONUNBUFFERED": "1"})
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
     except OSError as exc:
         return "", None, f"could not start {argv[0]}: {type(exc).__name__}: {exc}"
 
@@ -896,8 +1000,9 @@ def watch(argv: list[str], cwd: Path, seconds: float) -> tuple[str, int | None, 
         return text or "", None, ""
 
 
-def smoke_start(py: Path, dist: str, env: Path, seconds: float,
-                event: str = DEFAULT_START_EVENT) -> Smoke:
+def smoke_start(
+    py: Path, dist: str, env: Path, seconds: float, event: str = DEFAULT_START_EVENT
+) -> Smoke:
     """Start the installed console script with stdin closed, and watch.
 
     The entrypoint, not ``python -c "import …"``: the incident this stage exists
@@ -913,8 +1018,11 @@ def smoke_start(py: Path, dist: str, env: Path, seconds: float,
     if entry is None:
         return Smoke(
             status="no_entrypoint",
-            detail=("the installed distribution declares no console script — there "
-                    "is nothing for a user to start, whatever the source tree does"))
+            detail=(
+                "the installed distribution declares no console script — there "
+                "is nothing for a user to start, whatever the source tree does"
+            ),
+        )
 
     text, exit_code, error = watch([str(entry)], env, seconds)
     if error:
@@ -922,13 +1030,19 @@ def smoke_start(py: Path, dist: str, env: Path, seconds: float,
     return classify_smoke(text, exit_code, entry.name, seconds, event)
 
 
-def probe(dist: str, constraint: str | None = None, keep: bool = False, *,
-          version: str = "", smoke: bool = True,
-          smoke_seconds: float = DEFAULT_SMOKE_SECONDS,
-          start_event: str = DEFAULT_START_EVENT,
-          index_url: str = DEFAULT_INDEX,
-          check_caps: bool = True,
-          index_timeout: float = 20.0) -> Result:
+def probe(
+    dist: str,
+    constraint: str | None = None,
+    keep: bool = False,
+    *,
+    version: str = "",
+    smoke: bool = True,
+    smoke_seconds: float = DEFAULT_SMOKE_SECONDS,
+    start_event: str = DEFAULT_START_EVENT,
+    index_url: str = DEFAULT_INDEX,
+    check_caps: bool = True,
+    index_timeout: float = 20.0,
+) -> Result:
     env = Path(tempfile.mkdtemp(prefix=f"probe-{dist}-"))
     try:
         venv.create(env, with_pip=True, clear=True)
@@ -950,13 +1064,18 @@ def probe(dist: str, constraint: str | None = None, keep: bool = False, *,
         )
         if install.returncode != 0:
             tail = (install.stderr or install.stdout).strip().splitlines()[-1:] or ["?"]
-            return Result(dist=dist, status="install_failed", detail=tail[0][:300],
-                          pinned=version)
+            return Result(
+                dist=dist, status="install_failed", detail=tail[0][:300], pinned=version
+            )
 
         out = _run(py, RUNTIME_SCAN, dist)
         if "installed" not in out:
-            return Result(dist=dist, status="install_failed",
-                          detail=str(out.get("error"))[:300], pinned=version)
+            return Result(
+                dist=dist,
+                status="install_failed",
+                detail=str(out.get("error"))[:300],
+                pinned=version,
+            )
 
         result = Result(dist=dist, installed=out["installed"], pinned=version)
         if version and out["installed"] != version:
@@ -965,7 +1084,8 @@ def probe(dist: str, constraint: str | None = None, keep: bool = False, *,
             result.status = "install_failed"
             result.detail = (
                 f"pinned to =={version} and the venv reports {out['installed']} — "
-                "the artifact under test is not the one named")
+                "the artifact under test is not the one named"
+            )
             return result
 
         requires = [str(r) for r in out.get("requires", [])]
@@ -974,7 +1094,8 @@ def probe(dist: str, constraint: str | None = None, keep: bool = False, *,
         # The old flat list is kept so consumers that read it keep working; it
         # now carries the VERDICT, not just the message.
         result.import_errors = [
-            f"{c.module}: {c.error} [{c.verdict}]" for c in result.imports]
+            f"{c.module}: {c.error} [{c.verdict}]" for c in result.imports
+        ]
 
         seen: set[str] = set()
         for hit in out["runtime"]:
@@ -1003,7 +1124,9 @@ def probe(dist: str, constraint: str | None = None, keep: bool = False, *,
             if MENTIONS_UA.search(text):
                 result.mentions_ua = True
 
-            modname = str(rel.with_suffix("")).replace("/", ".").removesuffix(".__init__")
+            modname = (
+                str(rel.with_suffix("")).replace("/", ".").removesuffix(".__init__")
+            )
             for token, expr in FSTRING.findall(text):
                 got = _run(py, EVAL_EXPR, modname, expr, timeout=120)
                 if "value" not in got:
@@ -1016,7 +1139,7 @@ def probe(dist: str, constraint: str | None = None, keep: bool = False, *,
                             value=value,
                             sent_version=got["value"],
                             evidence="f-string",
-                            where=f"{modname}: f\"{token}/{{{expr}}}\"",
+                            where=f'{modname}: f"{token}/{{{expr}}}"',
                         )
                     )
             # Only literals in files that talk about User-Agents, so that a
@@ -1043,12 +1166,17 @@ def probe(dist: str, constraint: str | None = None, keep: bool = False, *,
 
             def versions_of(name: str) -> list[str] | None:
                 if name not in cache:
-                    cache[name] = yp.fetch_dependency_versions(name, index_url, index_timeout)
+                    cache[name] = yp.fetch_dependency_versions(
+                        name, index_url, index_timeout
+                    )
                 return cache[name]
 
             result.caps = dependency_caps(
-                requires, {str(d) for d in out.get("imported_dists", [])},
-                dist, versions_of)
+                requires,
+                {str(d) for d in out.get("imported_dists", [])},
+                dist,
+                versions_of,
+            )
 
         if smoke:
             result.smoke = smoke_start(py, dist, env, smoke_seconds, start_event)
@@ -1074,21 +1202,29 @@ def render(r: Result) -> str:
 
     for check in r.broken_imports:
         marker = "BROKEN-IMP" if check.verdict == "real" else "IMPORT-?  "
-        lines.append(f"{marker} {head} {check.module} does not import: "
-                     f"{(check.warm_error or check.error)[:140]}")
+        lines.append(
+            f"{marker} {head} {check.module} does not import: "
+            f"{(check.warm_error or check.error)[:140]}"
+        )
     for check in r.artifacts:
         if check.verdict == "order-artifact":
-            lines.append(f"IMPORT-ORD {head} {check.module} fails only as the FIRST "
-                         f"import of a process and imports fine after {check.root} — "
-                         "an artefact of import order, not a finding")
+            lines.append(
+                f"IMPORT-ORD {head} {check.module} fails only as the FIRST "
+                f"import of a process and imports fine after {check.root} — "
+                "an artefact of import order, not a finding"
+            )
         elif check.verdict == "optional-dep":
-            lines.append(f"IMPORT-OPT {head} {check.module} needs a dependency this "
-                         "package declares only behind an extra — not installed by "
-                         "`pip install`, and not meant to be")
+            lines.append(
+                f"IMPORT-OPT {head} {check.module} needs a dependency this "
+                "package declares only behind an extra — not installed by "
+                "`pip install`, and not meant to be"
+            )
         else:
-            lines.append(f"IMPORT-ORD {head} {check.module} imports cleanly in a fresh "
-                         "interpreter both cold and warm — the bulk scan's own state "
-                         "produced that error, not the package")
+            lines.append(
+                f"IMPORT-ORD {head} {check.module} imports cleanly in a fresh "
+                "interpreter both cold and warm — the bulk scan's own state "
+                "produced that error, not the package"
+            )
 
     if r.smoke.status == "crashed":
         lines.append(f"SMOKE-FAIL {head} {r.smoke.entrypoint}: {r.smoke.detail}")
@@ -1107,7 +1243,9 @@ def render(r: Result) -> str:
 
     for f in r.findings:
         if not f.own:
-            lines.append(f"FOREIGN-UA {head} sends {f.value[:70]!r} (via {f.evidence}, {f.where})")
+            lines.append(
+                f"FOREIGN-UA {head} sends {f.value[:70]!r} (via {f.evidence}, {f.where})"
+            )
         elif not f._ok:
             lines.append(
                 f"DRIFT      {head} sends {f.sent_version} "
@@ -1200,7 +1338,9 @@ def read_manifest(path: Path) -> tuple[int, list[str], list[tuple[str, str]]]:
         elif isinstance(dist, str) and dist.strip():
             targets.append(dist)
         else:
-            raise SystemExit(f"{path}: Eintrag {s['id']}: 'pypi_dist' ist weder Name noch null")
+            raise SystemExit(
+                f"{path}: Eintrag {s['id']}: 'pypi_dist' ist weder Name noch null"
+            )
 
     return len(servers), targets, unpublished
 
@@ -1253,19 +1393,37 @@ def main() -> int:
         "the previous artifact for minutes after the new one was on the index, "
         "even with --no-cache-dir",
     )
-    ap.add_argument("--index-url", default=DEFAULT_INDEX,
-                    help="PEP 503 index used for the dependency upper-bound check "
-                         f"(default: {DEFAULT_INDEX})")
-    ap.add_argument("--no-smoke", action="store_true",
-                    help="skip starting the installed console script")
-    ap.add_argument("--no-cap-check", action="store_true",
-                    help="skip the requires_dist upper-bound check (no index requests)")
-    ap.add_argument("--smoke-seconds", type=float, default=DEFAULT_SMOKE_SECONDS,
-                    help=f"how long to watch the entrypoint (default: {DEFAULT_SMOKE_SECONDS:g})")
-    ap.add_argument("--start-event", default=DEFAULT_START_EVENT,
-                    help=f"the event the entrypoint must announce (default: {DEFAULT_START_EVENT})")
+    ap.add_argument(
+        "--index-url",
+        default=DEFAULT_INDEX,
+        help="PEP 503 index used for the dependency upper-bound check "
+        f"(default: {DEFAULT_INDEX})",
+    )
+    ap.add_argument(
+        "--no-smoke",
+        action="store_true",
+        help="skip starting the installed console script",
+    )
+    ap.add_argument(
+        "--no-cap-check",
+        action="store_true",
+        help="skip the requires_dist upper-bound check (no index requests)",
+    )
+    ap.add_argument(
+        "--smoke-seconds",
+        type=float,
+        default=DEFAULT_SMOKE_SECONDS,
+        help=f"how long to watch the entrypoint (default: {DEFAULT_SMOKE_SECONDS:g})",
+    )
+    ap.add_argument(
+        "--start-event",
+        default=DEFAULT_START_EVENT,
+        help=f"the event the entrypoint must announce (default: {DEFAULT_START_EVENT})",
+    )
     ap.add_argument("--format", choices=("text", "json"), default="text")
-    ap.add_argument("--keep-venv", action="store_true", help="leave the venv for inspection")
+    ap.add_argument(
+        "--keep-venv", action="store_true", help="leave the venv for inspection"
+    )
     args = ap.parse_args()
 
     allowed = parse_allow_skip(args.allow_skip)
@@ -1284,28 +1442,39 @@ def main() -> int:
         raise SystemExit("weder Dist-Namen noch --manifest angegeben")
 
     if args.version and len(targets) > 1:
-        print("published: --version pins ONE distribution; pass one name with it",
-              file=sys.stderr)
+        print(
+            "published: --version pins ONE distribution; pass one name with it",
+            file=sys.stderr,
+        )
         return 2
 
     results = []
     for dist in targets:
         try:
-            results.append(probe(
-                dist, args.constraint, args.keep_venv,
-                version=args.version,
-                smoke=not args.no_smoke,
-                smoke_seconds=args.smoke_seconds,
-                start_event=args.start_event,
-                index_url=args.index_url,
-                check_caps=not args.no_cap_check))
+            results.append(
+                probe(
+                    dist,
+                    args.constraint,
+                    args.keep_venv,
+                    version=args.version,
+                    smoke=not args.no_smoke,
+                    smoke_seconds=args.smoke_seconds,
+                    start_event=args.start_event,
+                    index_url=args.index_url,
+                    check_caps=not args.no_cap_check,
+                )
+            )
         except subprocess.TimeoutExpired:
             results.append(Result(dist=dist, status="install_failed", detail="timeout"))
         except Exception as e:  # noqa: BLE001 - eine Dist darf den Sweep nicht abbrechen
             # Ohne das endet ein Portfolio-Lauf beim ersten Ausrutscher und
             # berichtet ueber ein Praefix der Zielliste, als waere es die Liste.
             results.append(
-                Result(dist=dist, status="install_failed", detail=f"{type(e).__name__}: {e}")
+                Result(
+                    dist=dist,
+                    status="install_failed",
+                    detail=f"{type(e).__name__}: {e}",
+                )
             )
 
     # Ein Ziel ohne Ergebnis waere ein stiller Ausfall — genau die Sorte, die
@@ -1339,7 +1508,9 @@ def main() -> int:
         if args.manifest:
             line = f"{len(results)}/{expected} geprueft"
             if skipped:
-                line += " — uebersprungen: " + ", ".join(f"{n} ({why})" for n, why in skipped)
+                line += " — uebersprungen: " + ", ".join(
+                    f"{n} ({why})" for n, why in skipped
+                )
             if missing:
                 line += " — OHNE ERGEBNIS: " + ", ".join(missing)
             print(line)

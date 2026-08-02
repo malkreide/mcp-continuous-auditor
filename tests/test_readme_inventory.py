@@ -20,6 +20,7 @@ someone somewhere that does not exist.
 
 Stdlib-only, no network, no git.
 """
+
 from __future__ import annotations
 
 import re
@@ -39,10 +40,14 @@ class SkillInventoryTest(unittest.TestCase):
     def _listed(self, readme: Path) -> set[str]:
         text = readme.read_text(encoding="utf-8")
         block = re.search(r"^skills/\s+(.*?)(?=^\S)", text, re.M | re.S)
-        self.assertIsNotNone(block, f"{readme.name}: no `skills/` entry in Project Structure")
+        self.assertIsNotNone(
+            block, f"{readme.name}: no `skills/` entry in Project Structure"
+        )
         # Parentheticals are prose, not inventory ("(x absorbed the former y)").
         body = re.sub(r"\([^)]*\)", "", block.group(1))
-        return {name.strip() for name in body.replace("\n", " ").split(",") if name.strip()}
+        return {
+            name.strip() for name in body.replace("\n", " ").split(",") if name.strip()
+        }
 
     def _on_disk(self) -> set[str]:
         return {p.name for p in (ROOT / "skills").iterdir() if p.is_dir()}
@@ -51,16 +56,20 @@ class SkillInventoryTest(unittest.TestCase):
         for readme in READMES:
             with self.subTest(readme=readme.name):
                 missing = self._on_disk() - self._listed(readme)
-                self.assertEqual(missing, set(),
-                                 f"{readme.name} omits skills that exist: {missing}")
+                self.assertEqual(
+                    missing, set(), f"{readme.name} omits skills that exist: {missing}"
+                )
 
     def test_every_listed_skill_exists(self):
         """The direction that sends a reader to a path that is not there."""
         for readme in READMES:
             with self.subTest(readme=readme.name):
                 phantom = self._listed(readme) - self._on_disk()
-                self.assertEqual(phantom, set(),
-                                 f"{readme.name} lists skills that are gone: {phantom}")
+                self.assertEqual(
+                    phantom,
+                    set(),
+                    f"{readme.name} lists skills that are gone: {phantom}",
+                )
 
 
 class ScriptPathTest(unittest.TestCase):
@@ -73,12 +82,20 @@ class ScriptPathTest(unittest.TestCase):
     def test_named_scripts_exist(self):
         for readme in READMES:
             with self.subTest(readme=readme.name):
-                named = set(re.findall(r"(scripts/[a-z_0-9]+\.py)",
-                                       readme.read_text(encoding="utf-8")))
-                self.assertTrue(named, f"{readme.name} names no scripts — format changed?")
+                named = set(
+                    re.findall(
+                        r"(scripts/[a-z_0-9]+\.py)", readme.read_text(encoding="utf-8")
+                    )
+                )
+                self.assertTrue(
+                    named, f"{readme.name} names no scripts — format changed?"
+                )
                 missing = sorted(n for n in named if not (ROOT / n).exists())
-                self.assertEqual(missing, [],
-                                 f"{readme.name} points at scripts that do not exist: {missing}")
+                self.assertEqual(
+                    missing,
+                    [],
+                    f"{readme.name} points at scripts that do not exist: {missing}",
+                )
 
 
 if __name__ == "__main__":

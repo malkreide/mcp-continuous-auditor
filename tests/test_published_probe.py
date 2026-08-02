@@ -24,11 +24,20 @@ import published_probe as pp  # noqa: E402
 DIST = "demo-mcp"
 
 
-def measured(findings: list[pp.Finding] | None = None, installed: str = "1.2.3",
-             mentions_ua: bool = True, **over) -> pp.Result:
+def measured(
+    findings: list[pp.Finding] | None = None,
+    installed: str = "1.2.3",
+    mentions_ua: bool = True,
+    **over,
+) -> pp.Result:
     """A Result as `probe()` would leave it, without a venv or an index."""
-    result = pp.Result(dist=DIST, installed=installed, findings=findings or [],
-                       mentions_ua=mentions_ua, **over)
+    result = pp.Result(
+        dist=DIST,
+        installed=installed,
+        findings=findings or [],
+        mentions_ua=mentions_ua,
+        **over,
+    )
     for f in result.findings:
         f.own = pp._is_own(f.value, DIST)
         f._ok = f.own and f.sent_version == installed
@@ -47,7 +56,10 @@ def classify(findings: list[pp.Finding], installed: str, mentions_ua: bool) -> s
 
 def finding(value: str, evidence: str = "runtime") -> pp.Finding:
     return pp.Finding(
-        value=value, sent_version=pp._sent_version(value), evidence=evidence, where="test"
+        value=value,
+        sent_version=pp._sent_version(value),
+        evidence=evidence,
+        where="test",
     )
 
 
@@ -72,7 +84,9 @@ class VersionExtractionTest(unittest.TestCase):
 class PatternTest(unittest.TestCase):
     def test_fstring_pattern_finds_the_inline_form(self) -> None:
         """The shape a literal scan cannot see: no digit after the slash."""
-        found = pp.FSTRING.findall('headers={"User-Agent": f"news-monitor-mcp/{__version__}"}')
+        found = pp.FSTRING.findall(
+            'headers={"User-Agent": f"news-monitor-mcp/{__version__}"}'
+        )
         self.assertEqual(found, [("news-monitor-mcp", "__version__")])
 
     def test_fstring_pattern_accepts_any_variable_name(self) -> None:
@@ -148,7 +162,9 @@ class ClassificationTest(unittest.TestCase):
     def test_one_stale_value_among_correct_ones_still_drifts(self) -> None:
         """swiss-electricity-mcp shipped a stale second constant after a merged fix."""
         self.assertEqual(
-            classify([finding("demo-mcp/1.2.3"), finding("demo-mcp/0.2.0")], "1.2.3", True),
+            classify(
+                [finding("demo-mcp/1.2.3"), finding("demo-mcp/0.2.0")], "1.2.3", True
+            ),
             "drift",
         )
 
@@ -167,7 +183,9 @@ class ClassificationTest(unittest.TestCase):
     def test_a_foreign_token_does_not_mask_real_drift(self) -> None:
         """Drift outranks it: a stale own identity stays the headline."""
         self.assertEqual(
-            classify([finding("Mozilla/5.0 (X11)"), finding("demo-mcp/0.1.0")], "1.2.3", True),
+            classify(
+                [finding("Mozilla/5.0 (X11)"), finding("demo-mcp/0.1.0")], "1.2.3", True
+            ),
             "drift",
         )
 
@@ -196,8 +214,12 @@ class ExitStatusTest(unittest.TestCase):
 
 
 def check(module: str = "demo_mcp.private", kind: str = "submodule") -> pp.ImportCheck:
-    return pp.ImportCheck(module=module, root=module.split(".")[0], kind=kind,
-                          error="ImportError: cannot import name 'x'")
+    return pp.ImportCheck(
+        module=module,
+        root=module.split(".")[0],
+        kind=kind,
+        error="ImportError: cannot import name 'x'",
+    )
 
 
 class ImportVerdictTest(unittest.TestCase):
@@ -210,15 +232,21 @@ class ImportVerdictTest(unittest.TestCase):
     """
 
     def test_cold_fails_and_warm_succeeds_is_an_import_order_artefact(self) -> None:
-        got = pp.classify_import(check(), cold={"ok": False, "error": "ImportError: x"},
-                                 warm={"ok": True, "error": ""})
+        got = pp.classify_import(
+            check(),
+            cold={"ok": False, "error": "ImportError: x"},
+            warm={"ok": True, "error": ""},
+        )
         self.assertEqual(got.verdict, "order-artifact")
         self.assertFalse(got.real)
 
     def test_warm_failing_is_a_real_broken_import(self) -> None:
         """The rule: import the root first, and whatever still fails is real."""
-        got = pp.classify_import(check(), cold={"ok": False, "error": "boom"},
-                                 warm={"ok": False, "error": "ImportError: no mcp.server.fastmcp"})
+        got = pp.classify_import(
+            check(),
+            cold={"ok": False, "error": "boom"},
+            warm={"ok": False, "error": "ImportError: no mcp.server.fastmcp"},
+        )
         self.assertEqual(got.verdict, "real")
         self.assertTrue(got.real)
         self.assertIn("fastmcp", got.warm_error)
@@ -229,20 +257,30 @@ class ImportVerdictTest(unittest.TestCase):
         Reported as `not-reproduced` rather than `order-artifact`, because
         claiming it was the ORDER would be claiming something not measured.
         """
-        got = pp.classify_import(check(), cold={"ok": True, "error": ""},
-                                 warm={"ok": True, "error": ""})
+        got = pp.classify_import(
+            check(), cold={"ok": True, "error": ""}, warm={"ok": True, "error": ""}
+        )
         self.assertEqual(got.verdict, "not-reproduced")
         self.assertFalse(got.real)
 
-    def test_a_missing_extras_only_dependency_is_not_the_server_being_broken(self) -> None:
+    def test_a_missing_extras_only_dependency_is_not_the_server_being_broken(
+        self,
+    ) -> None:
         """A shipped test module importing `pytest` fails for every user, and
         says nothing about the server. `pip install <dist>` installs no extras."""
         conditional = pp.conditional_names(['pytest>=8; extra == "dev"'])
         got = pp.classify_import(
             check("demo_mcp.tests.test_api"),
-            cold={"ok": False, "error": "ModuleNotFoundError: No module named 'pytest'"},
-            warm={"ok": False, "error": "ModuleNotFoundError: No module named 'pytest'"},
-            conditional=conditional)
+            cold={
+                "ok": False,
+                "error": "ModuleNotFoundError: No module named 'pytest'",
+            },
+            warm={
+                "ok": False,
+                "error": "ModuleNotFoundError: No module named 'pytest'",
+            },
+            conditional=conditional,
+        )
         self.assertEqual(got.verdict, "optional-dep")
         self.assertFalse(got.real)
 
@@ -252,9 +290,16 @@ class ImportVerdictTest(unittest.TestCase):
         not import for anyone who ran `pip install cowsay`."""
         got = pp.classify_import(
             check("demo_mcp.tests.test_api"),
-            cold={"ok": False, "error": "ModuleNotFoundError: No module named 'pytest'"},
-            warm={"ok": False, "error": "ModuleNotFoundError: No module named 'pytest'"},
-            conditional=set())
+            cold={
+                "ok": False,
+                "error": "ModuleNotFoundError: No module named 'pytest'",
+            },
+            warm={
+                "ok": False,
+                "error": "ModuleNotFoundError: No module named 'pytest'",
+            },
+            conditional=set(),
+        )
         self.assertEqual(got.verdict, "real")
 
     def test_an_unconditional_dependency_is_never_excused(self) -> None:
@@ -262,22 +307,30 @@ class ImportVerdictTest(unittest.TestCase):
         conditional = pp.conditional_names(["mcp>=1.20.0", 'ruff; extra == "dev"'])
         self.assertEqual(conditional, {"ruff"})
         got = pp.classify_import(
-            check(), cold={"ok": False, "error": "x"},
+            check(),
+            cold={"ok": False, "error": "x"},
             warm={"ok": False, "error": "ModuleNotFoundError: No module named 'mcp'"},
-            conditional=conditional)
+            conditional=conditional,
+        )
         self.assertEqual(got.verdict, "real")
 
     def test_a_verification_that_could_not_run_counts_as_real(self) -> None:
         """Fail closed. An unverified failure is not a pass — see `unverified`."""
-        got = pp.classify_import(check(), cold={"error": "no parseable output"},
-                                 warm={"error": "no parseable output"})
+        got = pp.classify_import(
+            check(),
+            cold={"error": "no parseable output"},
+            warm={"error": "no parseable output"},
+        )
         self.assertEqual(got.verdict, "unconfirmed")
         self.assertTrue(got.real)
 
     def test_a_real_broken_import_decides_the_status(self) -> None:
         result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
-        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
-                                             {"ok": False, "error": "x"})]
+        result.imports = [
+            pp.classify_import(
+                check(), {"ok": False, "error": "x"}, {"ok": False, "error": "x"}
+            )
+        ]
         status, detail = pp.decide_status(result)
         self.assertEqual(status, "broken_import")
         self.assertIn("demo_mcp.private", detail)
@@ -285,28 +338,40 @@ class ImportVerdictTest(unittest.TestCase):
     def test_an_artefact_does_not_decide_the_status(self) -> None:
         """The regression this whole distinction exists to prevent."""
         result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
-        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
-                                             {"ok": True, "error": ""})]
+        result.imports = [
+            pp.classify_import(
+                check(), {"ok": False, "error": "x"}, {"ok": True, "error": ""}
+            )
+        ]
         self.assertEqual(pp.decide_status(result)[0], "ok")
 
     def test_the_artefact_is_still_rendered_rather_than_swallowed(self) -> None:
         result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
-        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
-                                             {"ok": True, "error": ""})]
+        result.imports = [
+            pp.classify_import(
+                check(), {"ok": False, "error": "x"}, {"ok": True, "error": ""}
+            )
+        ]
         result.status, result.detail = pp.decide_status(result)
         self.assertIn("IMPORT-ORD", pp.render(result))
 
 
 class StartEventTest(unittest.TestCase):
     def test_a_structured_log_line_counts(self) -> None:
-        self.assertTrue(pp.has_start_event('{"event": "server.start", "transport": "stdio"}'))
+        self.assertTrue(
+            pp.has_start_event('{"event": "server.start", "transport": "stdio"}')
+        )
 
     def test_a_plain_text_line_counts(self) -> None:
-        self.assertTrue(pp.has_start_event("2026-08-01 INFO server.start transport=stdio"))
+        self.assertTrue(
+            pp.has_start_event("2026-08-01 INFO server.start transport=stdio")
+        )
 
     def test_a_structured_line_with_another_event_does_not(self) -> None:
         """Read by field, not by substring — a JSON line is not grepped."""
-        self.assertFalse(pp.has_start_event('{"event": "config.load", "note": "server.start"}'))
+        self.assertFalse(
+            pp.has_start_event('{"event": "config.load", "note": "server.start"}')
+        )
 
     def test_silence_is_not_a_start(self) -> None:
         self.assertFalse(pp.has_start_event("Loading config...\nReady.\n"))
@@ -329,7 +394,9 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(got.status, "ok")
 
     def test_a_nonzero_exit_is_a_crash(self) -> None:
-        got = pp.classify_smoke("ValueError: settings are read-only\n", 1, "demo-mcp", 6.0)
+        got = pp.classify_smoke(
+            "ValueError: settings are read-only\n", 1, "demo-mcp", 6.0
+        )
         self.assertEqual(got.status, "crashed")
 
     def test_a_traceback_with_a_zero_exit_is_still_a_crash(self) -> None:
@@ -345,8 +412,9 @@ class SmokeTest(unittest.TestCase):
 
     def test_a_crash_decides_the_status_over_a_clean_user_agent(self) -> None:
         result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
-        result.smoke = pp.classify_smoke("Traceback (most recent call last)\n", 1,
-                                         "demo-mcp", 6.0)
+        result.smoke = pp.classify_smoke(
+            "Traceback (most recent call last)\n", 1, "demo-mcp", 6.0
+        )
         self.assertEqual(pp.decide_status(result)[0], "smoke_failed")
 
     def test_drift_outranks_an_unannounced_start(self) -> None:
@@ -376,8 +444,11 @@ class WatchTest(unittest.TestCase):
     FIXTURE = Path(__file__).resolve().parent / "fixtures" / "published_smoke_server.py"
 
     def _watch(self, mode: str, seconds: float = 3.0):
-        text, code, error = pp.watch([sys.executable, str(self.FIXTURE), mode],
-                                     Path(self.FIXTURE).parent, seconds)
+        text, code, error = pp.watch(
+            [sys.executable, str(self.FIXTURE), mode],
+            Path(self.FIXTURE).parent,
+            seconds,
+        )
         self.assertEqual(error, "")
         return text, code
 
@@ -416,7 +487,9 @@ class WatchTest(unittest.TestCase):
         self.assertEqual((text, code), ("", None))
 
 
-def caps(requires: list[str], imported: set[str], versions: dict[str, list[str] | None]):
+def caps(
+    requires: list[str], imported: set[str], versions: dict[str, list[str] | None]
+):
     return pp.dependency_caps(requires, imported, DIST, lambda n: versions.get(n))
 
 
@@ -429,12 +502,16 @@ class DependencyCapTest(unittest.TestCase):
     """
 
     def test_an_open_range_with_a_published_major_past_it_is_a_finding(self) -> None:
-        got = caps(["mcp[cli]>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "1.28.1", "2.0.0"]})
+        got = caps(
+            ["mcp[cli]>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "1.28.1", "2.0.0"]}
+        )
         self.assertEqual([c.verdict for c in got], ["major-available"])
         self.assertIn("2.0.0", got[0].detail)
         self.assertTrue(got[0].finding)
 
-    def test_an_open_range_with_no_higher_major_yet_is_armed_not_a_finding(self) -> None:
+    def test_an_open_range_with_no_higher_major_yet_is_armed_not_a_finding(
+        self,
+    ) -> None:
         """The day before. Reported, because the trap is real; not red, because
         nothing has happened yet."""
         got = caps(["mcp[cli]>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "1.28.1"]})
@@ -457,7 +534,9 @@ class DependencyCapTest(unittest.TestCase):
 
     def test_an_environment_gated_requirement_is_skipped(self) -> None:
         """`extra == 'dev'` is not what `pip install` gives a user."""
-        got = caps(['pytest>=8; extra == "dev"'], {"pytest"}, {"pytest": ["8.0", "9.0"]})
+        got = caps(
+            ['pytest>=8; extra == "dev"'], {"pytest"}, {"pytest": ["8.0", "9.0"]}
+        )
         self.assertEqual(got, [])
 
     def test_an_unreadable_index_is_unknown_and_never_capped(self) -> None:
@@ -481,8 +560,13 @@ class DependencyCapTest(unittest.TestCase):
         """It already happened; the warning about it happening is not the news."""
         result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
         result.caps = caps(["mcp>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "2.0.0"]})
-        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
-                                             {"ok": False, "error": "no mcp.server.fastmcp"})]
+        result.imports = [
+            pp.classify_import(
+                check(),
+                {"ok": False, "error": "x"},
+                {"ok": False, "error": "no mcp.server.fastmcp"},
+            )
+        ]
         self.assertEqual(pp.decide_status(result)[0], "broken_import")
 
 
@@ -494,8 +578,11 @@ class RenderTest(unittest.TestCase):
         two true facts behind a precedence rule.
         """
         result = measured([finding("demo-mcp/0.1.0")], "1.2.3", True)
-        result.imports = [pp.classify_import(check(), {"ok": False, "error": "x"},
-                                             {"ok": False, "error": "x"})]
+        result.imports = [
+            pp.classify_import(
+                check(), {"ok": False, "error": "x"}, {"ok": False, "error": "x"}
+            )
+        ]
         result.caps = caps(["mcp>=1.20.0"], {"mcp"}, {"mcp": ["1.20.0", "2.0.0"]})
         result.smoke = pp.classify_smoke("quiet\n", 0, "demo-mcp", 6.0)
         result.status, result.detail = pp.decide_status(result)

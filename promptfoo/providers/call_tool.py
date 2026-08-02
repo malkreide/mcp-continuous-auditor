@@ -23,6 +23,7 @@ The target server is imported via MCP_SERVER_IMPORT="package.module:attr"
 (default ``zurich_opendata_mcp.server:mcp``). Fixture dir override:
 MCP_FIXTURES_DIR.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -144,6 +145,7 @@ def _resource_to_json(result: Any) -> str:
 # what the previous `from fastmcp import Client` did to every migrated target.
 # --------------------------------------------------------------------------
 
+
 def _sdk_client(server: Any) -> Any:
     from mcp.client.client import Client  # (a) — mcp >= 2
 
@@ -163,8 +165,11 @@ def in_memory_client(server: Any) -> Any:
     importable — that is the one signal that cannot be wrong.
     """
     origin = (type(server).__module__ or "").split(".")[0]
-    order = ((_fastmcp_client, _sdk_client) if origin == "fastmcp"
-             else (_sdk_client, _fastmcp_client))
+    order = (
+        (_fastmcp_client, _sdk_client)
+        if origin == "fastmcp"
+        else (_sdk_client, _fastmcp_client)
+    )
     problems: list[str] = []
     for make in order:
         try:
@@ -175,7 +180,8 @@ def in_memory_client(server: Any) -> Any:
         "no in-memory client available for a server of type "
         f"{type(server).__module__}.{type(server).__name__}. Tried the official "
         "SDK (`mcp>=2`) and the standalone `fastmcp` package — different "
-        "projects, cannot be installed together. Details: " + "; ".join(problems))
+        "projects, cannot be installed together. Details: " + "; ".join(problems)
+    )
 
 
 async def _invoke(
@@ -184,7 +190,9 @@ async def _invoke(
     mcp = _load_server()
     payload = _fixture_payload(fixture)
 
-    async def _fake_request(self: Any, method: str, url: Any, *a: Any, **k: Any) -> _FakeResponse:
+    async def _fake_request(
+        self: Any, method: str, url: Any, *a: Any, **k: Any
+    ) -> _FakeResponse:
         # The single network chokepoint for httpx.AsyncClient.get/post/... is request().
         return _FakeResponse(payload)
 

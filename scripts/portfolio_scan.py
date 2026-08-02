@@ -94,6 +94,7 @@ liability. PyYAML is used when present and a strict subset reader stands in when
 it is not — the reader refuses anything outside the documented shape rather than
 guessing at it.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -124,15 +125,27 @@ DEFAULT_BOOT_TIMEOUT = 300
 
 # Directories that are never a target's own source (mirrors transport_boot_probe).
 _SKIP_DIRS = {
-    ".git", ".venv", "venv", ".tox", "node_modules", "__pycache__", "dist",
-    "build", ".mypy_cache", ".ruff_cache", ".pytest_cache", "site-packages",
-    ".audit", ".eggs",
+    ".git",
+    ".venv",
+    "venv",
+    ".tox",
+    "node_modules",
+    "__pycache__",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    "site-packages",
+    ".audit",
+    ".eggs",
 }
 
 
 # --------------------------------------------------------------------------
 # the targets file
 # --------------------------------------------------------------------------
+
 
 class TargetsError(Exception):
     """The targets file could not be understood. Never guessed around."""
@@ -234,7 +247,11 @@ def parse_targets_yaml(text: str) -> dict[str, Any]:
             return {}, i
         if lines[i][2].startswith("- "):
             items: list[Any] = []
-            while i < len(lines) and lines[i][1] == indent and lines[i][2].startswith("- "):
+            while (
+                i < len(lines)
+                and lines[i][1] == indent
+                and lines[i][2].startswith("- ")
+            ):
                 no, _, content = lines[i]
                 rest = content[2:].strip()
                 if ":" in rest and not rest.startswith(("[", '"', "'")):
@@ -246,7 +263,11 @@ def parse_targets_yaml(text: str) -> dict[str, Any]:
                     item[key.strip()] = _scalar(val)
                     i += 1
                     inner = indent + 2
-                    while i < len(lines) and lines[i][1] >= inner and not lines[i][2].startswith("- "):
+                    while (
+                        i < len(lines)
+                        and lines[i][1] >= inner
+                        and not lines[i][2].startswith("- ")
+                    ):
                         sub, i = mapping(i, lines[i][1], stop_indent=indent)
                         item.update(sub)
                     items.append(item)
@@ -256,7 +277,9 @@ def parse_targets_yaml(text: str) -> dict[str, Any]:
             return items, i
         return mapping(i, indent, stop_indent=indent - 1)
 
-    def mapping(i: int, indent: int, stop_indent: int = -1) -> tuple[dict[str, Any], int]:
+    def mapping(
+        i: int, indent: int, stop_indent: int = -1
+    ) -> tuple[dict[str, Any], int]:
         out: dict[str, Any] = {}
         while i < len(lines) and lines[i][1] > stop_indent:
             no, ind, content = lines[i]
@@ -295,7 +318,7 @@ class Target:
     # repositories in this portfolio run on `master`; a tool that assumes `main`
     # clones nothing there and checks nothing. See `default_branch`.
     ref: str = ""
-    path: str = ""                       # local checkout instead of a clone
+    path: str = ""  # local checkout instead of a clone
     server_import: str = ""
     predicates: list[str] = field(default_factory=list)
     known_manifests: list[str] = field(default_factory=list)
@@ -356,28 +379,39 @@ def load_targets(path: Path) -> tuple[list[Target], dict[str, Any]]:
             # the matrix still shows a full-looking row.
             raise TargetsError(f"targets[{i}]: {key} is listed twice")
         seen.add(key)
-        out.append(Target(
-            repo=repo,
-            path=local,
-            # No fallback to "main". An unset ref stays unset and is resolved
-            # against the remote at clone time; inventing a branch name here is
-            # what made three `master` repositories unscannable.
-            ref=str(entry.get("ref") or defaults.get("ref") or ""),
-            server_import=str(entry.get("server_import")
-                              or defaults.get("server_import") or ""),
-            predicates=_as_list(entry.get("predicates") or defaults.get("predicates"),
-                                f"targets[{i}].predicates") or list(DEFAULT_PREDICATES),
-            known_manifests=_as_list(entry.get("known_manifests"),
-                                     f"targets[{i}].known_manifests"),
-            sdk_major_expect=str(entry.get("sdk_major_expect")
-                                 or defaults.get("sdk_major_expect") or ""),
-        ))
+        out.append(
+            Target(
+                repo=repo,
+                path=local,
+                # No fallback to "main". An unset ref stays unset and is resolved
+                # against the remote at clone time; inventing a branch name here is
+                # what made three `master` repositories unscannable.
+                ref=str(entry.get("ref") or defaults.get("ref") or ""),
+                server_import=str(
+                    entry.get("server_import") or defaults.get("server_import") or ""
+                ),
+                predicates=_as_list(
+                    entry.get("predicates") or defaults.get("predicates"),
+                    f"targets[{i}].predicates",
+                )
+                or list(DEFAULT_PREDICATES),
+                known_manifests=_as_list(
+                    entry.get("known_manifests"), f"targets[{i}].known_manifests"
+                ),
+                sdk_major_expect=str(
+                    entry.get("sdk_major_expect")
+                    or defaults.get("sdk_major_expect")
+                    or ""
+                ),
+            )
+        )
     return out, defaults
 
 
 # --------------------------------------------------------------------------
 # predicates
 # --------------------------------------------------------------------------
+
 
 @dataclass
 class Cell:
@@ -437,7 +471,9 @@ def pred_manifest(ctx: Ctx) -> Cell:
             return Cell(FLAG, "unreadable", "package.json is present but unparseable")
         return Cell(OK, f"{pkg.get('name', '?')} {pkg.get('version', '?')}")
     if not py:
-        return Cell(FLAG, "none", "no readable pyproject.toml or package.json at the root")
+        return Cell(
+            FLAG, "none", "no readable pyproject.toml or package.json at the root"
+        )
     return Cell(FLAG, "incomplete", "the root manifest names no project name/version")
 
 
@@ -480,14 +516,20 @@ def pred_sdk_major(ctx: Ctx) -> Cell:
             continue
         major = _sdk_major(m.group("spec"))
         if not major:
-            return Cell(NOTE, "unpinned",
-                        f"{dep.strip()!r} names no version — the major is whatever "
-                        "resolved last, which is how a portfolio drifts apart")
+            return Cell(
+                NOTE,
+                "unpinned",
+                f"{dep.strip()!r} names no version — the major is whatever "
+                "resolved last, which is how a portfolio drifts apart",
+            )
         want = ctx.target.sdk_major_expect
         if want and major != want:
-            return Cell(FLAG, major,
-                        f"pins SDK major {major}, the portfolio expects {want} "
-                        f"({dep.strip()!r})")
+            return Cell(
+                FLAG,
+                major,
+                f"pins SDK major {major}, the portfolio expects {want} "
+                f"({dep.strip()!r})",
+            )
         return Cell(OK, major, dep.strip())
     return Cell(NA, "", "no mcp/fastmcp dependency in the root manifest")
 
@@ -512,7 +554,9 @@ def pred_settings_write(ctx: Ctx) -> Cell:
         for no, line in enumerate(text.splitlines(), 1):
             m = _SETTINGS_WRITE_RE.search(line)
             if m:
-                hits.append(f"{path.relative_to(ctx.root).as_posix()}:{no} (.{m.group(1)})")
+                hits.append(
+                    f"{path.relative_to(ctx.root).as_posix()}:{no} (.{m.group(1)})"
+                )
         if len(hits) >= 5:
             break
     if hits:
@@ -535,9 +579,12 @@ def pred_host_allowlist_knob(ctx: Ctx) -> Cell:
     knob = rebind_probe.detect_knob(ctx.root)
     if knob.advertised:
         return Cell(OK, ",".join(knob.names))
-    return Cell(NOTE, "absent",
-                "no inbound allow-list variable named anywhere — the documented "
-                "fail-open state, not a defect")
+    return Cell(
+        NOTE,
+        "absent",
+        "no inbound allow-list variable named anywhere — the documented "
+        "fail-open state, not a defect",
+    )
 
 
 _MANIFEST_NAMES = ("pyproject.toml", "package.json")
@@ -584,10 +631,13 @@ def pred_nested_manifests(ctx: Ctx) -> Cell:
             found.append(f"{rel}{' — ' + why if why else ''}")
     if not found:
         return Cell(OK, "none")
-    return Cell(FLAG, f"{len(found)} unclaimed",
-                "; ".join(sorted(found)[:6])
-                + " — add each as its own target, or acknowledge it in "
-                  "`known_manifests` if it is not a server")
+    return Cell(
+        FLAG,
+        f"{len(found)} unclaimed",
+        "; ".join(sorted(found)[:6])
+        + " — add each as its own target, or acknowledge it in "
+        "`known_manifests` if it is not a server",
+    )
 
 
 def pred_boot(ctx: Ctx) -> Cell:
@@ -608,11 +658,19 @@ def pred_boot(ctx: Ctx) -> Cell:
     env.setdefault("BOOT_TIMEOUT", "30")
     try:
         proc = subprocess.run(
-            [sys.executable, str(script)], cwd=str(ctx.root), env=env,
-            capture_output=True, text=True, timeout=ctx.timeout, check=False)
+            [sys.executable, str(script)],
+            cwd=str(ctx.root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=ctx.timeout,
+            check=False,
+        )
     except subprocess.TimeoutExpired:
         # Task 3's lesson, one level down: a hang is its own answer, not noise.
-        return Cell(ERROR, "hung", f"the boot probe did not finish within {ctx.timeout:.0f}s")
+        return Cell(
+            ERROR, "hung", f"the boot probe did not finish within {ctx.timeout:.0f}s"
+        )
     except OSError as exc:
         return Cell(ERROR, "", f"{type(exc).__name__}: {exc}")
     tail = (proc.stdout or proc.stderr or "").strip().splitlines()
@@ -632,8 +690,13 @@ PREDICATES: dict[str, Callable[[Ctx], Cell]] = {
     "nested_manifests": pred_nested_manifests,
     "boot": pred_boot,
 }
-DEFAULT_PREDICATES = ("manifest", "sdk_major", "settings_write",
-                      "host_allowlist_knob", "nested_manifests")
+DEFAULT_PREDICATES = (
+    "manifest",
+    "sdk_major",
+    "settings_write",
+    "host_allowlist_knob",
+    "nested_manifests",
+)
 _EXPENSIVE = {"boot"}
 
 
@@ -661,23 +724,30 @@ def default_branch(url: str, timeout: float) -> tuple[str, str]:
     """
     cmd = ["git", "ls-remote", "--symref", url, "HEAD"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=timeout, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
     except subprocess.TimeoutExpired:
         return "", f"ls-remote timed out after {timeout:.0f}s"
     except OSError as exc:
         return "", f"could not run git: {type(exc).__name__}: {exc}"
     if proc.returncode != 0:
-        return "", f"ls-remote failed (rc {proc.returncode}): {(proc.stderr or '').strip()[:200]}"
+        return (
+            "",
+            f"ls-remote failed (rc {proc.returncode}): {(proc.stderr or '').strip()[:200]}",
+        )
     m = _SYMREF.search(proc.stdout or "")
     if not m:
         return "", "the remote advertised no symref for HEAD"
     return m.group("branch"), ""
 
 
-def checkout(target: Target, workdir: Path, timeout: float,
-             resolver: Callable[[str, float], tuple[str, str]] | None = None
-             ) -> tuple[Path | None, str, str]:
+def checkout(
+    target: Target,
+    workdir: Path,
+    timeout: float,
+    resolver: Callable[[str, float], tuple[str, str]] | None = None,
+) -> tuple[Path | None, str, str]:
     """A shallow checkout of one target, or (None, reason, ref).
 
     Read-only against the target, like every other provisioning path here. The
@@ -710,21 +780,28 @@ def checkout(target: Target, workdir: Path, timeout: float,
     cmd += [url, str(dest)]
     label = ref or f"(remote HEAD; {note})"
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=timeout, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
     except subprocess.TimeoutExpired:
         return None, f"clone timed out after {timeout:.0f}s", label
     except OSError as exc:
         return None, f"could not run git: {type(exc).__name__}: {exc}", label
     if proc.returncode != 0:
-        return (None,
-                f"clone failed (rc {proc.returncode}): {(proc.stderr or '').strip()[:200]}",
-                label)
+        return (
+            None,
+            f"clone failed (rc {proc.returncode}): {(proc.stderr or '').strip()[:200]}",
+            label,
+        )
     if not ref:
         # Clone succeeded without a branch; name what it landed on so the report
         # is about a measured branch rather than an unnamed one.
-        got = subprocess.run(["git", "-C", str(dest), "rev-parse", "--abbrev-ref", "HEAD"],
-                             capture_output=True, text=True, check=False)
+        got = subprocess.run(
+            ["git", "-C", str(dest), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if got.returncode == 0 and got.stdout.strip():
             label = got.stdout.strip()
     return dest, "", label
@@ -733,6 +810,7 @@ def checkout(target: Target, workdir: Path, timeout: float,
 # --------------------------------------------------------------------------
 # the matrix
 # --------------------------------------------------------------------------
+
 
 @dataclass
 class Row:
@@ -744,17 +822,24 @@ class Row:
     ref: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {"target": self.target.name,
-                "ref": self.ref or self.target.ref_label,
-                "requested_ref": self.target.ref,
-                "error": self.error,
-                "cells": {k: v.as_dict() for k, v in self.cells.items()}}
+        return {
+            "target": self.target.name,
+            "ref": self.ref or self.target.ref_label,
+            "requested_ref": self.target.ref,
+            "error": self.error,
+            "cells": {k: v.as_dict() for k, v in self.cells.items()},
+        }
 
 
-def scan_target(target: Target, workdir: Path, predicates: list[str],
-                clone_timeout: float, predicate_timeout: float,
-                boot_timeout: float,
-                resolver: Callable[[str, float], tuple[str, str]] | None = None) -> Row:
+def scan_target(
+    target: Target,
+    workdir: Path,
+    predicates: list[str],
+    clone_timeout: float,
+    predicate_timeout: float,
+    boot_timeout: float,
+    resolver: Callable[[str, float], tuple[str, str]] | None = None,
+) -> Row:
     row = Row(target=target)
     root, reason, row.ref = checkout(target, workdir, clone_timeout, resolver)
     if root is None:
@@ -789,18 +874,30 @@ def outliers(rows: list[Row], predicates: list[str]) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     for name in predicates:
-        values = [(r, r.cells[name].value) for r in rows
-                  if name in r.cells and r.cells[name].status != ERROR]
+        values = [
+            (r, r.cells[name].value)
+            for r in rows
+            if name in r.cells and r.cells[name].status != ERROR
+        ]
         if len(values) < 3:
             continue  # with two targets there is no majority to break
         counts = Counter(v for _, v in values)
         top, top_n = counts.most_common(1)[0]
         if top_n == len(values) or top_n * 2 <= len(values):
             continue  # unanimous, or no clear majority to deviate from
-        deviants = [{"target": r.target.name, "value": v} for r, v in values if v != top]
+        deviants = [
+            {"target": r.target.name, "value": v} for r, v in values if v != top
+        ]
         if deviants:
-            out.append({"predicate": name, "majority": top, "majority_count": top_n,
-                        "of": len(values), "deviants": deviants})
+            out.append(
+                {
+                    "predicate": name,
+                    "majority": top,
+                    "majority_count": top_n,
+                    "of": len(values),
+                    "deviants": deviants,
+                }
+            )
     return out
 
 
@@ -836,14 +933,23 @@ class Coverage:
         return self.complete or self.acknowledged
 
     def as_dict(self) -> dict[str, Any]:
-        return {"declared": self.declared, "scanned": self.scanned,
-                "expected": self.expected, "skipped": sorted(self.skipped),
-                "acknowledged": self.acknowledged, "complete": self.complete,
-                "detail": self.detail}
+        return {
+            "declared": self.declared,
+            "scanned": self.scanned,
+            "expected": self.expected,
+            "skipped": sorted(self.skipped),
+            "acknowledged": self.acknowledged,
+            "complete": self.complete,
+            "detail": self.detail,
+        }
 
 
-def assess_coverage(declared: list[Target], scanned: list[Target],
-                    expected: int | None, acknowledged: bool) -> Coverage:
+def assess_coverage(
+    declared: list[Target],
+    scanned: list[Target],
+    expected: int | None,
+    acknowledged: bool,
+) -> Coverage:
     """Name what was left out. Pure — this is the part the tests own.
 
     Skipped targets are listed BY NAME, not counted. A count is what the
@@ -852,19 +958,24 @@ def assess_coverage(declared: list[Target], scanned: list[Target],
     """
     scanned_names = {t.name for t in scanned}
     cov = Coverage(
-        declared=len(declared), scanned=len(scanned), expected=expected,
+        declared=len(declared),
+        scanned=len(scanned),
+        expected=expected,
         skipped=sorted(t.name for t in declared if t.name not in scanned_names),
-        acknowledged=acknowledged)
+        acknowledged=acknowledged,
+    )
     notes: list[str] = []
     if expected is not None and expected != len(declared):
         notes.append(
             f"the targets file declares {len(declared)} target(s) and {expected} "
             "were expected — the file itself is short, so no selection of it can "
-            "be complete")
+            "be complete"
+        )
     if cov.skipped:
         notes.append(
             f"{len(cov.skipped)} declared target(s) were not scanned: "
-            + ", ".join(cov.skipped))
+            + ", ".join(cov.skipped)
+        )
     cov.detail = "; ".join(notes)
     return cov
 
@@ -887,29 +998,50 @@ def classify(rows: list[Row], coverage: Coverage | None = None) -> tuple[str, in
     return "green", EXIT_GREEN
 
 
-def render(rows: list[Row], predicates: list[str], outs: list[dict[str, Any]],
-           outcome: str, coverage: Coverage | None = None) -> str:
+def render(
+    rows: list[Row],
+    predicates: list[str],
+    outs: list[dict[str, Any]],
+    outcome: str,
+    coverage: Coverage | None = None,
+) -> str:
     head = {
         "green": "✅ No findings across the portfolio.",
         "findings": "🚨 Findings — see the flagged cells.",
         "incomplete": "⛔ The sweep is INCOMPLETE — some cells could not be "
-                      "evaluated. Findings below are real; absence of others is not.",
+        "evaluated. Findings below are real; absence of others is not.",
     }[outcome]
     if coverage is not None and not coverage.claimable:
         # No overall verdict at all. Not "green for the ones we saw" — that is
         # the sentence three servers spent half a day hiding behind.
-        head = ("⛔ NO OVERALL VERDICT — this sweep did not cover the portfolio. "
-                + coverage.detail
-                + ". Findings below are real; the absence of any other finding says "
-                  "nothing about the targets that were not scanned.")
-    lines = ["# Portfolio scan", "", head, "",
-             f"{len(rows)} target(s) × {len(predicates)} predicate(s)", ""]
+        head = (
+            "⛔ NO OVERALL VERDICT — this sweep did not cover the portfolio. "
+            + coverage.detail
+            + ". Findings below are real; the absence of any other finding says "
+            "nothing about the targets that were not scanned."
+        )
+    lines = [
+        "# Portfolio scan",
+        "",
+        head,
+        "",
+        f"{len(rows)} target(s) × {len(predicates)} predicate(s)",
+        "",
+    ]
     if coverage is not None:
-        expected = coverage.expected if coverage.expected is not None else coverage.declared
-        state = ("complete" if coverage.complete
-                 else "PARTIAL (acknowledged with --partial)" if coverage.acknowledged
-                 else "INCOMPLETE")
-        lines += [f"coverage: {coverage.scanned}/{expected} declared target(s) — {state}"]
+        expected = (
+            coverage.expected if coverage.expected is not None else coverage.declared
+        )
+        state = (
+            "complete"
+            if coverage.complete
+            else "PARTIAL (acknowledged with --partial)"
+            if coverage.acknowledged
+            else "INCOMPLETE"
+        )
+        lines += [
+            f"coverage: {coverage.scanned}/{expected} declared target(s) — {state}"
+        ]
         if coverage.skipped:
             lines += ["not scanned: " + ", ".join(f"`{n}`" for n in coverage.skipped)]
         lines += [""]
@@ -920,8 +1052,11 @@ def render(rows: list[Row], predicates: list[str], outs: list[dict[str, Any]],
         cells = []
         for name in predicates:
             c = r.cells.get(name)
-            cells.append("–" if c is None
-                         else f"{_ICON.get(c.status, '?')} {c.value or c.status}")
+            cells.append(
+                "–"
+                if c is None
+                else f"{_ICON.get(c.status, '?')} {c.value or c.status}"
+            )
         # The ref is a column because it is a measurement: three of these
         # repositories are on `master`, and a report that does not say which
         # branch it read cannot be checked.
@@ -929,13 +1064,21 @@ def render(rows: list[Row], predicates: list[str], outs: list[dict[str, Any]],
         lines.append(f"| `{r.target.name}` | `{ref}` | " + " | ".join(cells) + " |")
 
     if outs:
-        lines += ["", "## Out of line", "",
-                  "The reason this is a matrix and not N reports — a value only "
-                  "one or two targets carry:"]
+        lines += [
+            "",
+            "## Out of line",
+            "",
+            "The reason this is a matrix and not N reports — a value only "
+            "one or two targets carry:",
+        ]
         for o in outs:
-            names = ", ".join(f"`{d['target']}` = {d['value'] or '∅'}" for d in o["deviants"])
-            lines.append(f"- **{o['predicate']}**: {o['majority_count']}/{o['of']} targets "
-                         f"say `{o['majority'] or '∅'}` — {names}")
+            names = ", ".join(
+                f"`{d['target']}` = {d['value'] or '∅'}" for d in o["deviants"]
+            )
+            lines.append(
+                f"- **{o['predicate']}**: {o['majority_count']}/{o['of']} targets "
+                f"say `{o['majority'] or '∅'}` — {names}"
+            )
 
     flagged = [(r, n, c) for r in rows for n, c in r.cells.items() if c.status == FLAG]
     if flagged:
@@ -954,9 +1097,11 @@ def render(rows: list[Row], predicates: list[str], outs: list[dict[str, Any]],
         lines += ["", "## ⛔ Could not run"]
         for r, n, c in broken:
             lines.append(f"- `{r.target.name}` / **{n}** — {c.detail}")
-        lines += ["",
-                  "These cells are empty, not green. A predicate that could not be "
-                  "evaluated says nothing about that target."]
+        lines += [
+            "",
+            "These cells are empty, not green. A predicate that could not be "
+            "evaluated says nothing about that target.",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -972,16 +1117,29 @@ def egress_origins(targets: list[Target]) -> list[str]:
 # budget
 # --------------------------------------------------------------------------
 
+
 def budget_preflight(state: str, fanout: int, expensive: int) -> tuple[bool, str]:
     """Ask budget_guard whether a sweep this wide may run. See guardrails.md."""
     guard = Path(__file__).resolve().parent / "budget_guard.py"
     if not guard.is_file():
         return True, "budget_guard.py not present — proceeding unbounded"
-    cmd = [sys.executable, str(guard), "--state", state, "preflight",
-           "--target", "portfolio", "--fanout", str(fanout),
-           "--fanout-expensive", str(expensive)]
+    cmd = [
+        sys.executable,
+        str(guard),
+        "--state",
+        state,
+        "preflight",
+        "--target",
+        "portfolio",
+        "--fanout",
+        str(fanout),
+        "--fanout-expensive",
+        str(expensive),
+    ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=60, check=False
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"budget preflight could not run: {type(exc).__name__}: {exc}"
     if proc.returncode == 0:
@@ -990,31 +1148,51 @@ def budget_preflight(state: str, fanout: int, expensive: int) -> tuple[bool, str
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--targets", default="targets.yaml")
-    p.add_argument("--predicates", default="",
-                   help="comma-separated override for every target")
+    p.add_argument(
+        "--predicates", default="", help="comma-separated override for every target"
+    )
     p.add_argument("--only", default="", help="comma-separated repo/path substrings")
-    p.add_argument("--expect-targets", type=int, default=None,
-                   help="how many servers the targets file is SUPPOSED to declare. "
-                        "Overrides `expect_targets:` in the file. A mismatch means "
-                        "no selection of that file can be a complete sweep")
-    p.add_argument("--partial", action="store_true",
-                   help="acknowledge a deliberately narrow run (usually with --only): "
-                        "keeps the overall verdict. What was left out is still named")
-    p.add_argument("--report", default="", help="write the machine-readable matrix here")
+    p.add_argument(
+        "--expect-targets",
+        type=int,
+        default=None,
+        help="how many servers the targets file is SUPPOSED to declare. "
+        "Overrides `expect_targets:` in the file. A mismatch means "
+        "no selection of that file can be a complete sweep",
+    )
+    p.add_argument(
+        "--partial",
+        action="store_true",
+        help="acknowledge a deliberately narrow run (usually with --only): "
+        "keeps the overall verdict. What was left out is still named",
+    )
+    p.add_argument(
+        "--report", default="", help="write the machine-readable matrix here"
+    )
     p.add_argument("--workdir", default="", help="checkout dir (default: a temp dir)")
     p.add_argument("--clone-timeout", type=float, default=DEFAULT_CLONE_TIMEOUT)
     p.add_argument("--predicate-timeout", type=float, default=DEFAULT_PREDICATE_TIMEOUT)
     p.add_argument("--boot-timeout", type=float, default=DEFAULT_BOOT_TIMEOUT)
-    p.add_argument("--budget-state", default=os.environ.get("BUDGET_STATE", ""),
-                   help="gate the sweep's WIDTH through budget_guard.py preflight")
-    p.add_argument("--no-budget", action="store_true",
-                   help="skip the budget preflight (know why before you use it)")
+    p.add_argument(
+        "--budget-state",
+        default=os.environ.get("BUDGET_STATE", ""),
+        help="gate the sweep's WIDTH through budget_guard.py preflight",
+    )
+    p.add_argument(
+        "--no-budget",
+        action="store_true",
+        help="skip the budget preflight (know why before you use it)",
+    )
     p.add_argument("--list-predicates", action="store_true")
-    p.add_argument("--print-egress", action="store_true",
-                   help="print the proxy allowlist entries this targets file implies")
+    p.add_argument(
+        "--print-egress",
+        action="store_true",
+        help="print the proxy allowlist entries this targets file implies",
+    )
     args = p.parse_args(argv)
 
     if args.list_predicates:
@@ -1055,7 +1233,9 @@ def main(argv: list[str] | None = None) -> int:
         for line in egress_origins(targets):
             print(line)
         print("\n# Each target's own UPSTREAM data origin still needs its own entry —")
-        print("# see deploy/microvm/forward-proxy/README.md. GitHub is already allowed;")
+        print(
+            "# see deploy/microvm/forward-proxy/README.md. GitHub is already allowed;"
+        )
         print("# the data endpoints the servers actually call are not.")
         return EXIT_GREEN
 
@@ -1080,8 +1260,14 @@ def main(argv: list[str] | None = None) -> int:
         rows: list[Row] = []
         for t in targets:
             print(f"==> {t.name} @ {t.ref_label}", file=sys.stderr)
-            row = scan_target(t, workdir, t.predicates, args.clone_timeout,
-                              args.predicate_timeout, args.boot_timeout)
+            row = scan_target(
+                t,
+                workdir,
+                t.predicates,
+                args.clone_timeout,
+                args.predicate_timeout,
+                args.boot_timeout,
+            )
             if not t.ref:
                 print(f"    ref resolved to {row.ref}", file=sys.stderr)
             rows.append(row)
@@ -1098,16 +1284,29 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.report:
             try:
-                Path(args.report).write_text(json.dumps({
-                    # Bumped from 1: the report gained `coverage`, and every row
-                    # now carries the ref it was actually measured on.
-                    "schema": 2, "outcome": outcome, "exit_code": exit_code,
-                    "predicates": columns, "outliers": outs,
-                    "coverage": coverage.as_dict(),
-                    "targets": [r.as_dict() for r in rows],
-                }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                Path(args.report).write_text(
+                    json.dumps(
+                        {
+                            # Bumped from 1: the report gained `coverage`, and every row
+                            # now carries the ref it was actually measured on.
+                            "schema": 2,
+                            "outcome": outcome,
+                            "exit_code": exit_code,
+                            "predicates": columns,
+                            "outliers": outs,
+                            "coverage": coverage.as_dict(),
+                            "targets": [r.as_dict() for r in rows],
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
             except OSError as exc:
-                print(f"portfolio: could not write {args.report}: {exc}", file=sys.stderr)
+                print(
+                    f"portfolio: could not write {args.report}: {exc}", file=sys.stderr
+                )
         return exit_code
     finally:
         if tmp is not None and shutil.which("git"):

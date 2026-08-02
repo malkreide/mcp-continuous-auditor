@@ -10,6 +10,7 @@ constructed exactly, without promptfoo or a network. FLAKY flips its outcome
 on every invocation (a deterministic simulation of a random-dependent assert:
 two consecutive runs always disagree). Needs `git`, like the harness itself.
 """
+
 from __future__ import annotations
 
 import json
@@ -117,13 +118,19 @@ class ImproveAcceptanceTest(unittest.TestCase):
     ) -> int:
         # D1/D2 tests judge with D3 off; the D3 tests opt in explicitly.
         argv = [
-            "--journal", str(self.journal),
+            "--journal",
+            str(self.journal),
             "judge",
-            "--target-dir", str(self.target),
-            "--config", CONFIG_REL,
-            "--runner", self.runner,
-            "--candidate", str(patch),
-            "--coverage-mode", coverage,
+            "--target-dir",
+            str(self.target),
+            "--config",
+            CONFIG_REL,
+            "--runner",
+            self.runner,
+            "--candidate",
+            str(patch),
+            "--coverage-mode",
+            coverage,
         ]
         if mutants is not None:
             argv += ["--mutants-dir", str(mutants)]
@@ -131,12 +138,17 @@ class ImproveAcceptanceTest(unittest.TestCase):
 
     def baseline(self, coverage: str = "off", mutants: Path | None = None) -> int:
         argv = [
-            "--journal", str(self.journal),
+            "--journal",
+            str(self.journal),
             "baseline",
-            "--target-dir", str(self.target),
-            "--config", CONFIG_REL,
-            "--runner", self.runner,
-            "--coverage-mode", coverage,
+            "--target-dir",
+            str(self.target),
+            "--config",
+            CONFIG_REL,
+            "--runner",
+            self.runner,
+            "--coverage-mode",
+            coverage,
         ]
         if mutants is not None:
             argv += ["--mutants-dir", str(mutants)]
@@ -151,9 +163,7 @@ class ImproveAcceptanceTest(unittest.TestCase):
 
     # -- the three fixture cases from the plan (Fertig-wenn, 6a) -----------
     def test_valid_candidate_is_kept(self) -> None:
-        patch = self.make_candidate(
-            "good", CONFIG_REL, BASE_CONFIG + "test-new PASS\n"
-        )
+        patch = self.make_candidate("good", CONFIG_REL, BASE_CONFIG + "test-new PASS\n")
         self.assertEqual(self.judge(patch), ia.EXIT_KEEP)
         (entry,) = self.journal_entries()
         self.assertEqual(entry["verdict"], "keep")
@@ -170,9 +180,7 @@ class ImproveAcceptanceTest(unittest.TestCase):
         self.assertEqual(entry["grund"], "flaky")
 
     def test_red_on_head_candidate_is_discarded_as_false_positive(self) -> None:
-        patch = self.make_candidate(
-            "red", CONFIG_REL, BASE_CONFIG + "test-new FAIL\n"
-        )
+        patch = self.make_candidate("red", CONFIG_REL, BASE_CONFIG + "test-new FAIL\n")
         self.assertEqual(self.judge(patch), ia.EXIT_DISCARD)
         (entry,) = self.journal_entries()
         self.assertEqual(entry["verdict"], "discard")
@@ -222,17 +230,20 @@ class ImproveAcceptanceTest(unittest.TestCase):
     def test_crashing_runner_hard_fails(self) -> None:
         crash = Path(self.tmp.name) / "crash.py"
         crash.write_text("import sys; sys.exit(13)\n")
-        patch = self.make_candidate(
-            "good", CONFIG_REL, BASE_CONFIG + "test-new PASS\n"
-        )
+        patch = self.make_candidate("good", CONFIG_REL, BASE_CONFIG + "test-new PASS\n")
         rc = ia.main(
             [
-                "--journal", str(self.journal),
+                "--journal",
+                str(self.journal),
                 "judge",
-                "--target-dir", str(self.target),
-                "--config", CONFIG_REL,
-                "--runner", f"{sys.executable} {crash}",
-                "--candidate", str(patch),
+                "--target-dir",
+                str(self.target),
+                "--config",
+                CONFIG_REL,
+                "--runner",
+                f"{sys.executable} {crash}",
+                "--candidate",
+                str(patch),
             ]
         )
         self.assertEqual(rc, ia.EXIT_HARD_FAIL)
@@ -280,7 +291,8 @@ class ImproveAcceptanceTest(unittest.TestCase):
         patch = self.make_candidate(
             "dup",
             CONFIG_REL,
-            BASE_CONFIG + "test-geo PASS schemas/a.json\ntest-dup PASS schemas/a.json\n",
+            BASE_CONFIG
+            + "test-geo PASS schemas/a.json\ntest-dup PASS schemas/a.json\n",
         )
         self.assertEqual(self.judge(patch, coverage="schema-path"), ia.EXIT_DISCARD)
         (entry,) = self.journal_entries()
@@ -303,7 +315,8 @@ class ImproveAcceptanceTest(unittest.TestCase):
         patch = self.make_candidate(
             "new",
             CONFIG_REL,
-            BASE_CONFIG + "test-geo PASS schemas/a.json\ntest-new PASS schemas/b.json\n",
+            BASE_CONFIG
+            + "test-geo PASS schemas/a.json\ntest-new PASS schemas/b.json\n",
         )
         self.assertEqual(self.judge(patch, coverage="schema-path"), ia.EXIT_KEEP)
         (entry,) = self.journal_entries()
@@ -317,7 +330,8 @@ class ImproveAcceptanceTest(unittest.TestCase):
         patch = self.make_candidate(
             "flakydup",
             CONFIG_REL,
-            BASE_CONFIG + "test-geo PASS schemas/a.json\ntest-dup FLAKY schemas/a.json\n",
+            BASE_CONFIG
+            + "test-geo PASS schemas/a.json\ntest-dup FLAKY schemas/a.json\n",
         )
         self.assertEqual(self.judge(patch, coverage="schema-path"), ia.EXIT_DISCARD)
         self.assertEqual(self.journal_entries()[0]["grund"], "flaky")
@@ -409,4 +423,3 @@ class ImproveAcceptanceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

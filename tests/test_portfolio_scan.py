@@ -18,6 +18,7 @@ around the one that keeps the sweep usable at all:
 Everything is offline: targets carry a local ``path:`` instead of a repo, so no
 clone is attempted. Stdlib-only; the YAML cross-check self-skips without PyYAML.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -40,21 +41,31 @@ EXAMPLE = REPO / "targets.example.yaml"
 
 try:
     import yaml  # noqa: F401
+
     _HAVE_YAML = True
 except ModuleNotFoundError:  # pragma: no cover - environment dependent
     _HAVE_YAML = False
 
 
-def _server(root: Path, name: str, sdk: str = "fastmcp>=2.0,<3",
-            settings_write: bool = False, allowlist: bool = False) -> Path:
+def _server(
+    root: Path,
+    name: str,
+    sdk: str = "fastmcp>=2.0,<3",
+    settings_write: bool = False,
+    allowlist: bool = False,
+) -> Path:
     """A minimal target checkout on disk."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "pyproject.toml").write_text(textwrap.dedent(f'''
+    (root / "pyproject.toml").write_text(
+        textwrap.dedent(f'''
         [project]
         name = "{name}"
         version = "0.1.0"
         dependencies = ["{sdk}", "httpx>=0.27"]
-    ''').strip() + "\n", encoding="utf-8")
+    ''').strip()
+        + "\n",
+        encoding="utf-8",
+    )
     src = root / name.replace("-", "_")
     src.mkdir(exist_ok=True)
     body = "from fastmcp import FastMCP\nmcp = FastMCP('t')\n"
@@ -62,8 +73,9 @@ def _server(root: Path, name: str, sdk: str = "fastmcp>=2.0,<3",
         body += "mcp.settings.host = '0.0.0.0'\n"
     (src / "server.py").write_text(body, encoding="utf-8")
     if allowlist:
-        (root / ".env.example").write_text("MCP_ALLOWED_HOSTS=x.example:8000\n",
-                                           encoding="utf-8")
+        (root / ".env.example").write_text(
+            "MCP_ALLOWED_HOSTS=x.example:8000\n", encoding="utf-8"
+        )
     return root
 
 
@@ -93,8 +105,10 @@ class TargetsFileTest(unittest.TestCase):
         opted_in = [t for t in targets if "boot" in t.predicates]
         self.assertTrue(opted_in, "the example should demonstrate opting into `boot`")
         acknowledged = [t for t in targets if t.known_manifests]
-        self.assertTrue(acknowledged,
-                        "the example should demonstrate acknowledging a nested manifest")
+        self.assertTrue(
+            acknowledged,
+            "the example should demonstrate acknowledging a nested manifest",
+        )
 
     @staticmethod
     def _stdlib_parse(text: str) -> object:
@@ -109,18 +123,21 @@ class TargetsFileTest(unittest.TestCase):
             else:
                 sys.modules["yaml"] = saved  # type: ignore[assignment]
 
-    @unittest.skipUnless(_HAVE_YAML, "PyYAML is absent, so there is nothing to compare to")
+    @unittest.skipUnless(
+        _HAVE_YAML, "PyYAML is absent, so there is nothing to compare to"
+    )
     def test_the_stdlib_reader_agrees_with_pyyaml(self) -> None:
         # The Worker has no PyYAML, so the subset reader is what actually parses
         # the portfolio there. If the two ever disagree, a target silently drops
         # out of the sweep ON THE WORKER ONLY — the exact class of bug this module
         # was written to prevent, reintroduced by its own config loader.
         import yaml as real
+
         samples = [
             EXAMPLE.read_text(encoding="utf-8"),
             "schema: 1\ntargets:\n  - repo: a/b\n",
             # inline comments, quoted scalars, flow lists, a wrapped flow list
-            textwrap.dedent('''
+            textwrap.dedent("""
                 defaults:              # trailing comment
                   ref: "main"
                   predicates: [manifest, sdk_major]
@@ -132,7 +149,7 @@ class TargetsFileTest(unittest.TestCase):
                                  sdk_major, boot]
                   - repo: c/d
                     known_manifests: [x/pyproject.toml]
-            ''').lstrip(),
+            """).lstrip(),
         ]
         for i, text in enumerate(samples):
             with self.subTest(sample=i):
@@ -146,17 +163,18 @@ class TargetsFileTest(unittest.TestCase):
         self.assertEqual(len(data["targets"]), 4)
         self.assertEqual(data["defaults"]["sdk_major_expect"], "2")
         self.assertIn("boot", data["targets"][2]["predicates"])
-        self.assertEqual(data["targets"][3]["known_manifests"],
-                         ["examples/demo/pyproject.toml"])
+        self.assertEqual(
+            data["targets"][3]["known_manifests"], ["examples/demo/pyproject.toml"]
+        )
 
     def test_a_duplicate_target_is_refused(self) -> None:
         # A duplicate halves that target's coverage while the matrix still shows
         # a full-looking row.
-        p = self._write('''
+        p = self._write("""
             targets:
               - repo: a/b
               - repo: a/b
-        ''')
+        """)
         with self.assertRaises(ps.TargetsError) as cm:
             ps.load_targets(p)
         self.assertIn("twice", str(cm.exception))
@@ -172,7 +190,7 @@ class TargetsFileTest(unittest.TestCase):
             ps.load_targets(p)
 
     def test_defaults_apply_and_entries_override(self) -> None:
-        p = self._write('''
+        p = self._write("""
             defaults:
               ref: main
               predicates: [manifest]
@@ -182,7 +200,7 @@ class TargetsFileTest(unittest.TestCase):
               - repo: c/d
                 ref: v1.2.3
                 predicates: [manifest, sdk_major]
-        ''')
+        """)
         targets, _ = ps.load_targets(p)
         self.assertEqual(targets[0].ref, "main")
         self.assertEqual(targets[0].predicates, ["manifest"])
@@ -211,15 +229,28 @@ class PredicateTest(unittest.TestCase):
 
     def test_a_missing_manifest_is_flagged(self) -> None:
         (self.dir / "empty").mkdir()
-        self.assertEqual(ps.pred_manifest(self._ctx(self.dir / "empty")).status, ps.FLAG)
+        self.assertEqual(
+            ps.pred_manifest(self._ctx(self.dir / "empty")).status, ps.FLAG
+        )
 
     def test_sdk_major_is_read_off_the_constraint(self) -> None:
-        for spec, want in (("fastmcp>=2.0,<3", "2"), ("mcp>=1.2", "1"),
-                           ("fastmcp==2.3.1", "2"), ("mcp~=1.0", "1")):
+        for spec, want in (
+            ("fastmcp>=2.0,<3", "2"),
+            ("mcp>=1.2", "1"),
+            ("fastmcp==2.3.1", "2"),
+            ("mcp~=1.0", "1"),
+        ):
             with self.subTest(spec=spec):
-                root = _server(self.dir / spec.replace(">", "_").replace("=", "_")
-                               .replace("<", "_").replace(",", "_").replace("~", "_"),
-                               "x", sdk=spec)
+                root = _server(
+                    self.dir
+                    / spec.replace(">", "_")
+                    .replace("=", "_")
+                    .replace("<", "_")
+                    .replace(",", "_")
+                    .replace("~", "_"),
+                    "x",
+                    sdk=spec,
+                )
                 self.assertEqual(ps.pred_sdk_major(self._ctx(root)).value, want)
 
     def test_the_wrong_major_is_flagged_when_an_expectation_is_set(self) -> None:
@@ -248,7 +279,8 @@ class PredicateTest(unittest.TestCase):
     def test_a_comparison_is_not_mistaken_for_an_assignment(self) -> None:
         root = _server(self.dir / "cmp", "cmp-mcp")
         (root / "cmp_mcp" / "check.py").write_text(
-            "if mcp.settings.host == '0.0.0.0':\n    pass\n", encoding="utf-8")
+            "if mcp.settings.host == '0.0.0.0':\n    pass\n", encoding="utf-8"
+        )
         self.assertEqual(ps.pred_settings_write(self._ctx(root)).status, ps.OK)
 
     def test_a_missing_allowlist_knob_is_a_note_not_a_flag(self) -> None:
@@ -273,8 +305,11 @@ class NestedManifestTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _ctx(self, root: Path, known=()) -> ps.Ctx:
-        return ps.Ctx(target=ps.Target(repo="o/r", known_manifests=list(known)),
-                      root=root, timeout=10)
+        return ps.Ctx(
+            target=ps.Target(repo="o/r", known_manifests=list(known)),
+            root=root,
+            timeout=10,
+        )
 
     def test_a_root_only_repo_is_clean(self) -> None:
         root = _server(self.dir / "solo", "solo-mcp")
@@ -294,7 +329,9 @@ class NestedManifestTest(unittest.TestCase):
         # the same bet that lost the first time.
         root = _server(self.dir / "harmless", "harmless-mcp")
         (root / "tools").mkdir()
-        (root / "tools" / "package.json").write_text('{"name":"helper"}', encoding="utf-8")
+        (root / "tools" / "package.json").write_text(
+            '{"name":"helper"}', encoding="utf-8"
+        )
         cell = ps.pred_nested_manifests(self._ctx(root))
         self.assertEqual(cell.status, ps.FLAG)
         self.assertIn("tools/package.json", cell.detail)
@@ -305,7 +342,8 @@ class NestedManifestTest(unittest.TestCase):
         noisy = ps.pred_nested_manifests(self._ctx(root))
         self.assertEqual(noisy.status, ps.FLAG)
         quiet = ps.pred_nested_manifests(
-            self._ctx(root, known=["examples/demo/pyproject.toml"]))
+            self._ctx(root, known=["examples/demo/pyproject.toml"])
+        )
         self.assertEqual(quiet.status, ps.OK)
 
     def test_vendored_trees_are_not_reported(self) -> None:
@@ -326,9 +364,13 @@ class MatrixTest(unittest.TestCase):
 
     @staticmethod
     def _row(name: str, **cells) -> ps.Row:
-        return ps.Row(target=ps.Target(repo=name),
-                      cells={k: (v if isinstance(v, ps.Cell) else ps.Cell(ps.OK, v))
-                             for k, v in cells.items()})
+        return ps.Row(
+            target=ps.Target(repo=name),
+            cells={
+                k: (v if isinstance(v, ps.Cell) else ps.Cell(ps.OK, v))
+                for k, v in cells.items()
+            },
+        )
 
     def test_the_odd_one_out_is_found_without_any_expectation(self) -> None:
         # THE POINT. Mid-migration nobody knows which major is "right" until they
@@ -347,8 +389,12 @@ class MatrixTest(unittest.TestCase):
 
     def test_an_even_split_is_not_called_an_outlier(self) -> None:
         # Two camps of two is a decision to make, not a deviation to report.
-        rows = [self._row("o/a", sdk_major="1"), self._row("o/b", sdk_major="1"),
-                self._row("o/c", sdk_major="2"), self._row("o/d", sdk_major="2")]
+        rows = [
+            self._row("o/a", sdk_major="1"),
+            self._row("o/b", sdk_major="1"),
+            self._row("o/c", sdk_major="2"),
+            self._row("o/d", sdk_major="2"),
+        ]
         self.assertEqual(ps.outliers(rows, ["sdk_major"]), [])
 
     def test_an_error_cell_is_not_counted_as_a_dissenting_opinion(self) -> None:
@@ -362,7 +408,9 @@ class MatrixTest(unittest.TestCase):
         good = _server(self.dir / "good", "good-mcp")
         targets = [
             ps.Target(repo="", path=str(good), predicates=["manifest"]),
-            ps.Target(repo="o/gone", path=str(self.dir / "nope"), predicates=["manifest"]),
+            ps.Target(
+                repo="o/gone", path=str(self.dir / "nope"), predicates=["manifest"]
+            ),
         ]
         rows = [ps.scan_target(t, self.dir, t.predicates, 5, 5, 5) for t in targets]
         self.assertEqual(rows[0].cells["manifest"].status, ps.OK)
@@ -373,21 +421,26 @@ class MatrixTest(unittest.TestCase):
         # "We did not look" and "we looked and found nothing" are different
         # claims; only one of them is a sweep. So a partial run cannot report a
         # clean bill — even though its real findings are still listed.
-        rows = [self._row("o/a", p=ps.Cell(ps.FLAG, "bad")),
-                self._row("o/b", p=ps.Cell(ps.ERROR, "no checkout"))]
+        rows = [
+            self._row("o/a", p=ps.Cell(ps.FLAG, "bad")),
+            self._row("o/b", p=ps.Cell(ps.ERROR, "no checkout")),
+        ]
         outcome, code = ps.classify(rows)
         self.assertEqual(outcome, "incomplete")
         self.assertEqual(code, ps.EXIT_INCOMPLETE)
         text = ps.render(rows, ["p"], [], outcome)
         self.assertIn("INCOMPLETE", text)
-        self.assertIn("Flagged", text)       # the real finding is still shown
+        self.assertIn("Flagged", text)  # the real finding is still shown
 
     def test_a_flag_alone_is_findings(self) -> None:
         rows = [self._row("o/a", p=ps.Cell(ps.FLAG, "bad")), self._row("o/b", p="fine")]
         self.assertEqual(ps.classify(rows), ("findings", ps.EXIT_FINDINGS))
 
     def test_notes_do_not_make_a_run_red(self) -> None:
-        rows = [self._row("o/a", p=ps.Cell(ps.NOTE, "absent")), self._row("o/b", p="fine")]
+        rows = [
+            self._row("o/a", p=ps.Cell(ps.NOTE, "absent")),
+            self._row("o/b", p="fine"),
+        ]
         self.assertEqual(ps.classify(rows), ("green", ps.EXIT_GREEN))
         self.assertIn("Noted (not findings)", ps.render(rows, ["p"], [], "green"))
 
@@ -487,12 +540,15 @@ class DefaultBranchTest(unittest.TestCase):
         root = self.dir / f"origin-{branch}"
         root.mkdir()
         (root / "pyproject.toml").write_text(
-            '[project]\nname = "x-mcp"\nversion = "0.1.0"\n', encoding="utf-8")
-        for cmd in (["git", "init", "-q", "-b", branch],
-                    ["git", "config", "user.email", "t@example.invalid"],
-                    ["git", "config", "user.name", "T"],
-                    ["git", "add", "-A"],
-                    ["git", "commit", "-q", "-m", "chore: init"]):
+            '[project]\nname = "x-mcp"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        for cmd in (
+            ["git", "init", "-q", "-b", branch],
+            ["git", "config", "user.email", "t@example.invalid"],
+            ["git", "config", "user.name", "T"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-q", "-m", "chore: init"],
+        ):
             subprocess.run(cmd, cwd=root, check=True, capture_output=True)
         return root
 
@@ -534,8 +590,9 @@ class DefaultBranchTest(unittest.TestCase):
         def resolver(url: str, timeout: float) -> tuple[str, str]:
             raise AssertionError("an explicit ref must not be resolved away")
 
-        _, _, ref = ps.checkout(ps.Target(repo="o/r", ref="v1.2.3"),
-                                self.dir / "w", 30, resolver)
+        _, _, ref = ps.checkout(
+            ps.Target(repo="o/r", ref="v1.2.3"), self.dir / "w", 30, resolver
+        )
         self.assertEqual(ref, "v1.2.3")
 
     def test_an_unresolvable_default_still_clones_the_remote_head(self) -> None:
@@ -544,7 +601,8 @@ class DefaultBranchTest(unittest.TestCase):
         origin = self._origin("master")
         target = ps.Target(repo="o/r")
         with unittest.mock.patch.object(
-                ps, "default_branch", lambda url, t: ("", "ls-remote refused")):
+            ps, "default_branch", lambda url, t: ("", "ls-remote refused")
+        ):
             # Point the clone at the local origin by using a path target's URL
             # shape: the resolver failing is what is under test.
             cmds: list[list[str]] = []
@@ -553,8 +611,10 @@ class DefaultBranchTest(unittest.TestCase):
             def spy(cmd, *a, **k):
                 cmds.append(list(cmd))
                 if cmd[:2] == ["git", "clone"]:
-                    cmd = [c if not c.startswith("https://") else "file://" + str(origin)
-                           for c in cmd]
+                    cmd = [
+                        c if not c.startswith("https://") else "file://" + str(origin)
+                        for c in cmd
+                    ]
                 return real(cmd, *a, **k)
 
             with unittest.mock.patch.object(subprocess, "run", spy):
@@ -581,16 +641,27 @@ class EndToEndTest(unittest.TestCase):
         report = self.dir / "matrix.json"
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            rc = ps.main(["--targets", str(tf), "--report", str(report),
-                          "--workdir", str(self.dir / "work"), *extra])
+            rc = ps.main(
+                [
+                    "--targets",
+                    str(tf),
+                    "--report",
+                    str(report),
+                    "--workdir",
+                    str(self.dir / "work"),
+                    *extra,
+                ]
+            )
         data = json.loads(report.read_text(encoding="utf-8")) if report.exists() else {}
         return rc, data, out.getvalue()
 
-    def test_a_portfolio_with_one_laggard_produces_the_matrix_and_the_outlier(self) -> None:
+    def test_a_portfolio_with_one_laggard_produces_the_matrix_and_the_outlier(
+        self,
+    ) -> None:
         for i in range(3):
             _server(self.dir / f"ok{i}", f"ok{i}-mcp", sdk="fastmcp>=2.0,<3")
         _server(self.dir / "legacy", "legacy-mcp", sdk="mcp>=1.2")
-        rc, data, text = self._run(f'''
+        rc, data, text = self._run(f"""
             defaults:
               predicates: [manifest, sdk_major]
             targets:
@@ -602,27 +673,28 @@ class EndToEndTest(unittest.TestCase):
                 path: {self.dir / "ok2"}
               - repo: o/legacy
                 path: {self.dir / "legacy"}
-        ''')
+        """)
         self.assertEqual(rc, ps.EXIT_GREEN, msg=text)
         self.assertEqual(data["outcome"], "green")
         # Nothing is a *finding* — no expectation was configured. The value is
         # entirely in the row that breaks the pattern.
         self.assertEqual(len(data["outliers"]), 1)
         self.assertEqual(data["outliers"][0]["predicate"], "sdk_major")
-        self.assertEqual([d["target"] for d in data["outliers"][0]["deviants"]],
-                         ["o/legacy"])
+        self.assertEqual(
+            [d["target"] for d in data["outliers"][0]["deviants"]], ["o/legacy"]
+        )
         self.assertIn("Out of line", text)
 
     def test_a_nested_server_is_reported_end_to_end(self) -> None:
         root = _server(self.dir / "host", "host-mcp")
         _server(root / "packages" / "hidden", "hidden-mcp", sdk="mcp>=1.0")
-        rc, data, text = self._run(f'''
+        rc, data, text = self._run(f"""
             defaults:
               predicates: [nested_manifests]
             targets:
               - repo: o/host
                 path: {root}
-        ''')
+        """)
         self.assertEqual(rc, ps.EXIT_FINDINGS)
         cell = data["targets"][0]["cells"]["nested_manifests"]
         self.assertEqual(cell["status"], ps.FLAG)
@@ -630,7 +702,7 @@ class EndToEndTest(unittest.TestCase):
 
     def test_one_dead_target_still_yields_the_others(self) -> None:
         _server(self.dir / "alive", "alive-mcp")
-        rc, data, text = self._run(f'''
+        rc, data, text = self._run(f"""
             defaults:
               predicates: [manifest]
             targets:
@@ -638,24 +710,31 @@ class EndToEndTest(unittest.TestCase):
                 path: {self.dir / "alive"}
               - repo: o/dead
                 path: {self.dir / "nowhere"}
-        ''')
+        """)
         self.assertEqual(rc, ps.EXIT_INCOMPLETE)
         by_name = {t["target"]: t for t in data["targets"]}
-        self.assertEqual(by_name[str(self.dir / "alive")]["cells"]["manifest"]["status"]
-                         if str(self.dir / "alive") in by_name
-                         else by_name["o/alive"]["cells"]["manifest"]["status"], ps.OK)
+        self.assertEqual(
+            by_name[str(self.dir / "alive")]["cells"]["manifest"]["status"]
+            if str(self.dir / "alive") in by_name
+            else by_name["o/alive"]["cells"]["manifest"]["status"],
+            ps.OK,
+        )
         self.assertEqual(by_name["o/dead"]["cells"]["manifest"]["status"], ps.ERROR)
         self.assertIn("Could not run", text)
 
     def test_predicate_override_applies_to_every_target(self) -> None:
         _server(self.dir / "one", "one-mcp")
-        rc, data, _ = self._run(f'''
+        rc, data, _ = self._run(
+            f"""
             defaults:
               predicates: [manifest, sdk_major, settings_write]
             targets:
               - repo: o/one
                 path: {self.dir / "one"}
-        ''', "--predicates", "manifest")
+        """,
+            "--predicates",
+            "manifest",
+        )
         self.assertEqual(data["predicates"], ["manifest"])
 
     def test_only_narrows_the_sweep_and_costs_it_its_verdict(self) -> None:
@@ -663,7 +742,7 @@ class EndToEndTest(unittest.TestCase):
         going red. The run still happens; it just may not call itself green."""
         for name in ("a", "b"):
             _server(self.dir / name, f"{name}-mcp")
-        text_targets = f'''
+        text_targets = f"""
             defaults:
               predicates: [manifest]
             targets:
@@ -671,7 +750,7 @@ class EndToEndTest(unittest.TestCase):
                 path: {self.dir / "a"}
               - repo: o/b
                 path: {self.dir / "b"}
-        '''
+        """
         rc, data, text = self._run(text_targets, "--only", "o/a")
         self.assertEqual(rc, ps.EXIT_INCOMPLETE)
         self.assertEqual(data["coverage"]["skipped"], ["o/b"])
@@ -684,35 +763,41 @@ class EndToEndTest(unittest.TestCase):
 
     def test_a_targets_file_shorter_than_expected_is_not_a_sweep(self) -> None:
         _server(self.dir / "a", "a-mcp")
-        rc, data, text = self._run(f'''
+        rc, data, text = self._run(f"""
             expect_targets: 33
             defaults:
               predicates: [manifest]
             targets:
               - repo: o/a
                 path: {self.dir / "a"}
-        ''')
+        """)
         self.assertEqual(rc, ps.EXIT_INCOMPLETE)
         self.assertEqual(data["coverage"]["expected"], 33)
         self.assertIn("33 were expected", text)
 
     def test_the_expected_count_can_be_given_on_the_command_line(self) -> None:
         _server(self.dir / "a", "a-mcp")
-        rc, data, _ = self._run(f'''
+        rc, data, _ = self._run(
+            f"""
             defaults:
               predicates: [manifest]
             targets:
               - repo: o/a
                 path: {self.dir / "a"}
-        ''', "--expect-targets", "1")
+        """,
+            "--expect-targets",
+            "1",
+        )
         self.assertEqual(rc, ps.EXIT_GREEN)
         self.assertEqual(data["coverage"]["expected"], 1)
         self.assertTrue(data["coverage"]["complete"])
 
     def test_an_unreadable_targets_file_is_not_a_green_sweep(self) -> None:
         missing = self.dir / "nope.yaml"
-        with contextlib.redirect_stdout(io.StringIO()), \
-                contextlib.redirect_stderr(io.StringIO()):
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             rc = ps.main(["--targets", str(missing)])
         self.assertEqual(rc, ps.EXIT_INCOMPLETE)
 
@@ -727,8 +812,9 @@ class EndToEndTest(unittest.TestCase):
     def test_print_egress_says_github_is_one_entry_not_n(self) -> None:
         _server(self.dir / "e", "e-mcp")
         tf = self.dir / "targets.yaml"
-        tf.write_text(f"targets:\n  - repo: o/e\n    path: {self.dir / 'e'}\n",
-                      encoding="utf-8")
+        tf.write_text(
+            f"targets:\n  - repo: o/e\n    path: {self.dir / 'e'}\n", encoding="utf-8"
+        )
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             rc = ps.main(["--targets", str(tf), "--print-egress"])

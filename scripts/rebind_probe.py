@@ -127,6 +127,7 @@ Env:
   BOOT_TARGET_ROOT / MCP_SERVER_IMPORT / BOOT_TRANSPORTS
                         shared with the boot gate — same target, same launch plan
 """
+
 from __future__ import annotations
 
 import http.client
@@ -170,10 +171,10 @@ PASS_NO_TOKEN = "no-token"
 PASS_VALID_TOKEN = "valid-token"
 
 # Per-probe outcomes.
-LET_THROUGH = "let-through"          # the transport processed the request
-REJECTED = "rejected"                # the transport refused it (4xx/5xx)
-REJECTED_AUTH = "rejected-auth"      # 401 — auth refused, so not attributable here
-ERRORED = "errored"                  # the request itself failed
+LET_THROUGH = "let-through"  # the transport processed the request
+REJECTED = "rejected"  # the transport refused it (4xx/5xx)
+REJECTED_AUTH = "rejected-auth"  # 401 — auth refused, so not attributable here
+ERRORED = "errored"  # the request itself failed
 
 # Per-pass / per-transport verdicts.
 ENFORCED = "enforced"
@@ -191,6 +192,7 @@ OUT_NOT_APPLICABLE = "not-applicable"
 # does the target advertise a knob at all?
 # --------------------------------------------------------------------------
 
+
 @dataclass
 class Knob:
     """Whether the target's own tree names an inbound allow-list variable.
@@ -200,13 +202,17 @@ class Knob:
     that ships the variable and still lets a foreign Host through has a control
     that does not work. Same observation, different verdict — so the difference
     must come from the target, not from us."""
+
     advertised: bool = False
     names: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"advertised": self.advertised, "names": self.names,
-                "sources": self.sources[:8]}
+        return {
+            "advertised": self.advertised,
+            "names": self.names,
+            "sources": self.sources[:8],
+        }
 
 
 def detect_knob(root: Path, names: tuple[str, ...] = ALLOWLIST_ENV) -> Knob:
@@ -218,8 +224,10 @@ def detect_knob(root: Path, names: tuple[str, ...] = ALLOWLIST_ENV) -> Knob:
     variable the operator has to set.
     """
     knob = Knob()
-    patterns = {name: re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
-                for name in names}
+    patterns = {
+        name: re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
+        for name in names
+    }
     for path in tbp._iter_scan_files(root):
         text = tbp._read_capped(path)
         if not text:
@@ -240,17 +248,23 @@ def detect_knob(root: Path, names: tuple[str, ...] = ALLOWLIST_ENV) -> Knob:
 # the probe matrix
 # --------------------------------------------------------------------------
 
+
 @dataclass
 class ProbeCase:
     name: str
     host: str
-    expect: str          # "reject" | "accept"
+    expect: str  # "reject" | "accept"
     why: str
     origin: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "host": self.host, "origin": self.origin,
-                "expect": self.expect, "why": self.why}
+        return {
+            "name": self.name,
+            "host": self.host,
+            "origin": self.origin,
+            "expect": self.expect,
+            "why": self.why,
+        }
 
 
 def build_cases(allowed_host: str, foreign_host: str, port: int) -> list[ProbeCase]:
@@ -275,7 +289,7 @@ def build_cases(allowed_host: str, foreign_host: str, port: int) -> list[ProbeCa
             host=f"{allowed_host}:{wrong_port}",
             expect="reject",
             why="the allowed hostname on a port that is in no allow-list entry — "
-                "rejected only by a list that is in force and compares port-exactly",
+            "rejected only by a list that is in force and compares port-exactly",
         ),
         ProbeCase(
             name="foreign-origin",
@@ -289,7 +303,7 @@ def build_cases(allowed_host: str, foreign_host: str, port: int) -> list[ProbeCa
             host=f"{allowed_host}:{port}",
             expect="accept",
             why="the control probe: without it a rejection above proves only that "
-                "something said no, not that the configured allow-list said it",
+            "something said no, not that the configured allow-list said it",
         ),
     ]
 
@@ -303,26 +317,35 @@ class CaseResult:
     detail: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {**self.case.as_dict(), "status": self.status,
-                "outcome": self.outcome, "matched": self.matched,
-                "detail": self.detail}
+        return {
+            **self.case.as_dict(),
+            "status": self.status,
+            "outcome": self.outcome,
+            "matched": self.matched,
+            "detail": self.detail,
+        }
 
 
 @dataclass
 class PassResult:
     label: str
     token_configured: bool
-    auth_enforced: str            # "yes" | "no" | "unknown"
+    auth_enforced: str  # "yes" | "no" | "unknown"
     cases: list[CaseResult] = field(default_factory=list)
     verdict: str = INCONCLUSIVE
     detail: str = ""
     path: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {"pass": self.label, "token_configured": self.token_configured,
-                "auth_enforced": self.auth_enforced, "verdict": self.verdict,
-                "detail": self.detail, "path": self.path,
-                "cases": [c.as_dict() for c in self.cases]}
+        return {
+            "pass": self.label,
+            "token_configured": self.token_configured,
+            "auth_enforced": self.auth_enforced,
+            "verdict": self.verdict,
+            "detail": self.detail,
+            "path": self.path,
+            "cases": [c.as_dict() for c in self.cases],
+        }
 
 
 @dataclass
@@ -336,16 +359,21 @@ class TransportResult:
     elapsed_s: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
-        return {"transport": self.transport, "mode": self.mode,
-                "verdict": self.verdict, "detail": self.detail,
-                "elapsed_s": round(self.elapsed_s, 3),
-                "evidence": self.evidence,
-                "passes": [p.as_dict() for p in self.passes]}
+        return {
+            "transport": self.transport,
+            "mode": self.mode,
+            "verdict": self.verdict,
+            "detail": self.detail,
+            "elapsed_s": round(self.elapsed_s, 3),
+            "evidence": self.evidence,
+            "passes": [p.as_dict() for p in self.passes],
+        }
 
 
 # --------------------------------------------------------------------------
 # one request
 # --------------------------------------------------------------------------
+
 
 def _classify(status: int, let_through: bool) -> str:
     if status == 401:
@@ -355,8 +383,14 @@ def _classify(status: int, let_through: bool) -> str:
     return LET_THROUGH if let_through else REJECTED
 
 
-def attempt(transport: str, port: int, path: str, case: ProbeCase,
-            timeout: float, token: str = "") -> tuple[int, bool, bool, str]:
+def attempt(
+    transport: str,
+    port: int,
+    path: str,
+    case: ProbeCase,
+    timeout: float,
+    token: str = "",
+) -> tuple[int, bool, bool, str]:
     """Issue one probe. Returns (status, let_through, usable, detail).
 
     ``let_through`` — the transport processed the request at all. That is what
@@ -377,18 +411,27 @@ def attempt(transport: str, port: int, path: str, case: ProbeCase,
         let_through = reply.status == 200
         return reply.status, let_through, let_through, tbp._tail(reply.body, 160)
 
-    reply = tbp.http_post(port, path, case.host,
-                          tbp._rpc("initialize", 1, tbp._initialize_params()),
-                          timeout, extra_headers=headers)
+    reply = tbp.http_post(
+        port,
+        path,
+        case.host,
+        tbp._rpc("initialize", 1, tbp._initialize_params()),
+        timeout,
+        extra_headers=headers,
+    )
     let_through = reply.status in (200, 202)
-    usable = (reply.status == 200 and isinstance(reply.payload, dict)
-              and "result" in reply.payload)
+    usable = (
+        reply.status == 200
+        and isinstance(reply.payload, dict)
+        and "result" in reply.payload
+    )
     return reply.status, let_through, usable, tbp._tail(reply.body, 160)
 
 
 # --------------------------------------------------------------------------
 # one pass (one boot)
 # --------------------------------------------------------------------------
+
 
 def allowlist_value(allowed_host: str, port: int) -> str:
     """The allow-list we configure. The loopback entries are not padding: an
@@ -399,8 +442,9 @@ def allowlist_value(allowed_host: str, port: int) -> str:
     return f"127.0.0.1:{port},localhost:{port},{allowed_host}:{port}"
 
 
-def pass_env(base: dict[str, str], allowed_host: str, port: int,
-             token: str) -> dict[str, str]:
+def pass_env(
+    base: dict[str, str], allowed_host: str, port: int, token: str
+) -> dict[str, str]:
     """The environment one pass boots the target with: the allow-list under every
     spelling a target might read, an Origin list, and the auth token — or, for the
     token-less pass, the auth variables explicitly REMOVED. Inheriting a token
@@ -423,10 +467,20 @@ def pass_env(base: dict[str, str], allowed_host: str, port: int,
     return env
 
 
-def run_pass(plan: tbp.LaunchPlan, label: str, token: str, timeout: float, cwd: Path,
-             bind_host: str, allowed_host: str, foreign_host: str,
-             paths: list[str], base_env: dict[str, str] | None = None,
-             port: int | None = None, path: str = "") -> tuple[PassResult, str]:
+def run_pass(
+    plan: tbp.LaunchPlan,
+    label: str,
+    token: str,
+    timeout: float,
+    cwd: Path,
+    bind_host: str,
+    allowed_host: str,
+    foreign_host: str,
+    paths: list[str],
+    base_env: dict[str, str] | None = None,
+    port: int | None = None,
+    path: str = "",
+) -> tuple[PassResult, str]:
     """Boot the target once and run the four probes against it.
 
     ``path`` short-circuits endpoint discovery with a path already found. The
@@ -445,14 +499,21 @@ def run_pass(plan: tbp.LaunchPlan, label: str, token: str, timeout: float, cwd: 
     run_env = tbp.launch_env(plan, bind_host, port, env)
     argv = tbp.substitute(plan.argv, bind_host, port)
 
-    result = PassResult(label=label, token_configured=bool(token),
-                        auth_enforced="unknown")
+    result = PassResult(
+        label=label, token_configured=bool(token), auth_enforced="unknown"
+    )
 
     try:
         proc = subprocess.Popen(
-            argv, cwd=str(cwd), env=run_env,
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, start_new_session=True,
+            argv,
+            cwd=str(cwd),
+            env=run_env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
         )
     except (OSError, ValueError) as exc:
         return result, f"could not spawn the target: {type(exc).__name__}: {exc}"
@@ -466,8 +527,10 @@ def run_pass(plan: tbp.LaunchPlan, label: str, token: str, timeout: float, cwd: 
     try:
         reason = tbp.wait_for_port(port, deadline, proc)
         if reason:
-            return result, (f"the server never came up: {reason}; output: "
-                            f"{tbp._tail(tbp._drain(out_q, captured))}")
+            return result, (
+                f"the server never came up: {reason}; output: "
+                f"{tbp._tail(tbp._drain(out_q, captured))}"
+            )
 
         # Discover the endpoint path under a loopback Host, which our configured
         # allow-list contains. Doing it once means every probe below hits the same
@@ -476,12 +539,15 @@ def run_pass(plan: tbp.LaunchPlan, label: str, token: str, timeout: float, cwd: 
             remaining = max(deadline - time.monotonic(), 1.0)
             loop_host = f"127.0.0.1:{port}"
             if plan.transport == tbp.SSE:
-                path, opening = _resolve_sse_path(port, paths, loop_host,
-                                                  min(remaining, 10.0), token)
+                path, opening = _resolve_sse_path(
+                    port, paths, loop_host, min(remaining, 10.0), token
+                )
                 if opening is None:
                     return result, f"no SSE endpoint answered on {', '.join(paths)}"
             else:
-                path, opening = tbp._resolve_path(port, paths, loop_host, min(remaining, 10.0))
+                path, opening = tbp._resolve_path(
+                    port, paths, loop_host, min(remaining, 10.0)
+                )
                 if opening is None:
                     return result, f"no endpoint answered on {', '.join(paths)}"
         result.path = path
@@ -490,11 +556,12 @@ def run_pass(plan: tbp.LaunchPlan, label: str, token: str, timeout: float, cwd: 
             remaining = max(deadline - time.monotonic(), 1.0)
             try:
                 status, let_through, usable, body = attempt(
-                    plan.transport, port, path, case, min(remaining, 10.0), token)
+                    plan.transport, port, path, case, min(remaining, 10.0), token
+                )
             except (OSError, http.client.HTTPException) as exc:
-                result.cases.append(CaseResult(
-                    case, 0, ERRORED, False,
-                    f"{type(exc).__name__}: {exc}"))
+                result.cases.append(
+                    CaseResult(case, 0, ERRORED, False, f"{type(exc).__name__}: {exc}")
+                )
                 continue
             outcome = _classify(status, let_through)
             if case.expect == "accept":
@@ -508,11 +575,21 @@ def run_pass(plan: tbp.LaunchPlan, label: str, token: str, timeout: float, cwd: 
         # check survived a valid token" is a weaker claim than it looks.
         if token:
             remaining = max(deadline - time.monotonic(), 1.0)
-            bogus = ProbeCase(name="auth-control", host=f"{allowed_host}:{port}",
-                              expect="reject", why="wrong token against an allowed Host")
+            bogus = ProbeCase(
+                name="auth-control",
+                host=f"{allowed_host}:{port}",
+                expect="reject",
+                why="wrong token against an allowed Host",
+            )
             try:
-                _, let_through, _, _ = attempt(plan.transport, port, path, bogus,
-                                               min(remaining, 10.0), token + "-invalid")
+                _, let_through, _, _ = attempt(
+                    plan.transport,
+                    port,
+                    path,
+                    bogus,
+                    min(remaining, 10.0),
+                    token + "-invalid",
+                )
                 result.auth_enforced = "no" if let_through else "yes"
             except (OSError, http.client.HTTPException):
                 result.auth_enforced = "unknown"
@@ -524,13 +601,16 @@ def run_pass(plan: tbp.LaunchPlan, label: str, token: str, timeout: float, cwd: 
         tbp._close_streams(proc)
 
 
-def _resolve_sse_path(port: int, candidates: list[str], host_header: str,
-                      timeout: float, token: str) -> tuple[str, tbp.HttpReply | None]:
+def _resolve_sse_path(
+    port: int, candidates: list[str], host_header: str, timeout: float, token: str
+) -> tuple[str, tbp.HttpReply | None]:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     last: tbp.HttpReply | None = None
     for path in candidates:
         try:
-            reply = tbp.http_get_sse(port, path, host_header, timeout, extra_headers=headers)
+            reply = tbp.http_get_sse(
+                port, path, host_header, timeout, extra_headers=headers
+            )
         except (OSError, http.client.HTTPException):
             continue
         last = reply
@@ -557,29 +637,37 @@ def _pass_verdict(result: PassResult) -> tuple[str, str]:
             f"(HTTP {control.status}) — the target did not take the allow-list we "
             "configured, so nothing it rejected can be credited to that list. Point "
             "REBIND_ALLOWED_HOST at a name the target really allows, or make its "
-            "list configurable")
+            "list configurable"
+        )
 
-    hostile = [by_name[n] for n in ("foreign-host", "wrong-port", "foreign-origin")
-               if n in by_name]
+    hostile = [
+        by_name[n]
+        for n in ("foreign-host", "wrong-port", "foreign-origin")
+        if n in by_name
+    ]
     if any(c.outcome == ERRORED for c in hostile):
         return INCONCLUSIVE, "at least one probe could not be carried out"
 
     leaked = [c for c in hostile if not c.matched]
     if leaked:
         return NOT_ENFORCED, "served under " + ", ".join(
-            f"{c.case.name} (HTTP {c.status})" for c in leaked)
+            f"{c.case.name} (HTTP {c.status})" for c in leaked
+        )
 
     auth_only = [c for c in hostile if c.outcome == REJECTED_AUTH]
     if auth_only:
         return INCONCLUSIVE, (
-            "every hostile probe was refused, but " + ", ".join(c.case.name for c in auth_only)
-            + " came back 401 — that is authentication refusing us, not the host check")
+            "every hostile probe was refused, but "
+            + ", ".join(c.case.name for c in auth_only)
+            + " came back 401 — that is authentication refusing us, not the host check"
+        )
     return ENFORCED, "every hostile probe refused, the allowed Host served"
 
 
 # --------------------------------------------------------------------------
 # one transport (both passes)
 # --------------------------------------------------------------------------
+
 
 def _partially_enforced(passes: list[PassResult]) -> bool:
     """Did the target refuse at least one hostile probe while serving another?
@@ -597,16 +685,35 @@ def _partially_enforced(passes: list[PassResult]) -> bool:
     return False
 
 
-def probe_transport(plan: tbp.LaunchPlan, timeout: float, cwd: Path, bind_host: str,
-                    allowed_host: str, foreign_host: str, paths: list[str],
-                    token: str, env: dict[str, str] | None = None) -> TransportResult:
+def probe_transport(
+    plan: tbp.LaunchPlan,
+    timeout: float,
+    cwd: Path,
+    bind_host: str,
+    allowed_host: str,
+    foreign_host: str,
+    paths: list[str],
+    token: str,
+    env: dict[str, str] | None = None,
+) -> TransportResult:
     started = time.monotonic()
     passes: list[PassResult] = []
     errors: list[str] = []
     known_path = ""
     for label, tok in ((PASS_NO_TOKEN, ""), (PASS_VALID_TOKEN, token)):
-        result, hard = run_pass(plan, label, tok, timeout, cwd, bind_host,
-                                allowed_host, foreign_host, paths, env, path=known_path)
+        result, hard = run_pass(
+            plan,
+            label,
+            tok,
+            timeout,
+            cwd,
+            bind_host,
+            allowed_host,
+            foreign_host,
+            paths,
+            env,
+            path=known_path,
+        )
         if hard:
             result.verdict, result.detail = INCONCLUSIVE, hard
             errors.append(f"{label}: {hard}")
@@ -618,23 +725,38 @@ def probe_transport(plan: tbp.LaunchPlan, timeout: float, cwd: Path, bind_host: 
 
     if errors:
         return TransportResult(
-            plan.transport, plan.mode, INCONCLUSIVE,
+            plan.transport,
+            plan.mode,
+            INCONCLUSIVE,
             "the control could not be measured — " + "; ".join(errors),
-            passes, {"errors": errors}, elapsed)
+            passes,
+            {"errors": errors},
+            elapsed,
+        )
 
     # The token case, stated on its own because it is the one a reader will look
     # for: the host check held without auth and folded the moment a valid token
     # was presented. That server has authentication, not a rebinding control.
-    if verdicts.get(PASS_NO_TOKEN) == ENFORCED and verdicts.get(PASS_VALID_TOKEN) == NOT_ENFORCED:
+    if (
+        verdicts.get(PASS_NO_TOKEN) == ENFORCED
+        and verdicts.get(PASS_VALID_TOKEN) == NOT_ENFORCED
+    ):
         return TransportResult(
-            plan.transport, plan.mode, NOT_ENFORCED,
+            plan.transport,
+            plan.mode,
+            NOT_ENFORCED,
             "a VALID auth token walked past the host check that held without one — "
             "the control is not independent of authentication, and the attacking "
             "page holds a token by construction",
-            passes, {"case": "token-bypasses-host-check"}, elapsed)
+            passes,
+            {"case": "token-bypasses-host-check"},
+            elapsed,
+        )
 
     if any(v == NOT_ENFORCED for v in verdicts.values()):
-        detail = "; ".join(f"{p.label}: {p.detail}" for p in passes if p.verdict == NOT_ENFORCED)
+        detail = "; ".join(
+            f"{p.label}: {p.detail}" for p in passes if p.verdict == NOT_ENFORCED
+        )
         # Absent, or present and wrong? Directly observable, so do not leave it to
         # the text scan: a target that refused SOME hostile probes and served
         # others took our allow-list and then applied it badly (compared without
@@ -642,51 +764,93 @@ def probe_transport(plan: tbp.LaunchPlan, timeout: float, cwd: Path, bind_host: 
         # deployment that never switched the control on.
         if _partially_enforced(passes):
             return TransportResult(
-                plan.transport, plan.mode, NOT_ENFORCED,
+                plan.transport,
+                plan.mode,
+                NOT_ENFORCED,
                 detail + " — the allow-list IS in force (other probes were refused), "
-                         "so this is a control that is applied wrongly, not one that "
-                         "was never configured",
-                passes, {"case": "partial-enforcement"}, elapsed)
-        return TransportResult(plan.transport, plan.mode, NOT_ENFORCED, detail,
-                               passes, {"case": "host-check-absent"}, elapsed)
+                "so this is a control that is applied wrongly, not one that "
+                "was never configured",
+                passes,
+                {"case": "partial-enforcement"},
+                elapsed,
+            )
+        return TransportResult(
+            plan.transport,
+            plan.mode,
+            NOT_ENFORCED,
+            detail,
+            passes,
+            {"case": "host-check-absent"},
+            elapsed,
+        )
 
     if any(v == INCONCLUSIVE for v in verdicts.values()):
-        detail = "; ".join(f"{p.label}: {p.detail}" for p in passes if p.verdict == INCONCLUSIVE)
-        return TransportResult(plan.transport, plan.mode, INCONCLUSIVE, detail,
-                               passes, {"case": "not-attributable"}, elapsed)
+        detail = "; ".join(
+            f"{p.label}: {p.detail}" for p in passes if p.verdict == INCONCLUSIVE
+        )
+        return TransportResult(
+            plan.transport,
+            plan.mode,
+            INCONCLUSIVE,
+            detail,
+            passes,
+            {"case": "not-attributable"},
+            elapsed,
+        )
 
     weak = [p.label for p in passes if p.token_configured and p.auth_enforced == "no"]
-    detail = "the allow-list held against a foreign Host, the allowed hostname on a "\
-             "wrong port, and a foreign Origin — under both passes"
+    detail = (
+        "the allow-list held against a foreign Host, the allowed hostname on a "
+        "wrong port, and a foreign Origin — under both passes"
+    )
     if weak:
-        detail += (" (note: the target served a deliberately WRONG token, so it does not "
-                   "enforce auth here — the token pass shows the host check is not "
-                   "weakened by an Authorization header, not that it outranks a real "
-                   "auth layer)")
-    return TransportResult(plan.transport, plan.mode, ENFORCED, detail, passes,
-                           {"case": "enforced"}, elapsed)
+        detail += (
+            " (note: the target served a deliberately WRONG token, so it does not "
+            "enforce auth here — the token pass shows the host check is not "
+            "weakened by an Authorization header, not that it outranks a real "
+            "auth layer)"
+        )
+    return TransportResult(
+        plan.transport,
+        plan.mode,
+        ENFORCED,
+        detail,
+        passes,
+        {"case": "enforced"},
+        elapsed,
+    )
 
 
 # --------------------------------------------------------------------------
 # the gate's verdict
 # --------------------------------------------------------------------------
 
+
 def classify(results: list[TransportResult], knob: Knob) -> tuple[str, int, list[str]]:
     """Fold the per-transport verdicts, plus what the target advertises, into the
     gate's three outcomes."""
     reasons: list[str] = []
     if not results:
-        return OUT_NOT_APPLICABLE, EXIT_GREEN, [
-            "no network transport is configured — a Host header, and therefore a "
-            "rebinding surface, only exists over HTTP"]
+        return (
+            OUT_NOT_APPLICABLE,
+            EXIT_GREEN,
+            [
+                "no network transport is configured — a Host header, and therefore a "
+                "rebinding surface, only exists over HTTP"
+            ],
+        )
 
     inconclusive = [r for r in results if r.verdict == INCONCLUSIVE]
     not_enforced = [r for r in results if r.verdict == NOT_ENFORCED]
     # Two shapes that are never "not configured", because both prove the target
     # HAS the control and got it wrong: one that works until a token shows up, and
     # one that refuses some hostile probes while serving others.
-    present_and_broken = [r for r in not_enforced if r.evidence.get("case") in
-                          ("token-bypasses-host-check", "partial-enforcement")]
+    present_and_broken = [
+        r
+        for r in not_enforced
+        if r.evidence.get("case")
+        in ("token-bypasses-host-check", "partial-enforcement")
+    ]
 
     if inconclusive:
         for r in inconclusive:
@@ -703,13 +867,16 @@ def classify(results: list[TransportResult], knob: Knob) -> tuple[str, int, list
             reasons.append(f"{r.transport}: {r.detail}")
         if knob.advertised:
             reasons.append(
-                "the target's own tree names " + ", ".join(knob.names)
-                + " — the knob is there and the transport does not honour it")
+                "the target's own tree names "
+                + ", ".join(knob.names)
+                + " — the knob is there and the transport does not honour it"
+            )
             return OUT_FINDINGS, EXIT_FINDINGS, reasons
         reasons.append(
             "the target names no inbound allow-list variable anywhere, so nothing "
             "was configured to enforce. On a non-loopback bind this is the "
-            "documented fail-open state, not a defect — and not a pass either")
+            "documented fail-open state, not a defect — and not a pass either"
+        )
         return OUT_NOT_CONFIGURED, EXIT_NOT_CONFIGURED, reasons
 
     return OUT_ENFORCED, EXIT_GREEN, [f"{r.transport}: {r.detail}" for r in results]
@@ -718,8 +885,9 @@ def classify(results: list[TransportResult], knob: Knob) -> tuple[str, int, list
 _ICON = {ENFORCED: "✅", NOT_ENFORCED: "❌", INCONCLUSIVE: "⚠️"}
 
 
-def render(results: list[TransportResult], knob: Knob, outcome: str,
-           reasons: list[str]) -> str:
+def render(
+    results: list[TransportResult], knob: Knob, outcome: str, reasons: list[str]
+) -> str:
     head = {
         OUT_ENFORCED: "✅ The inbound host allow-list is enforced.",
         OUT_NOT_CONFIGURED: "🟡 Control NOT CONFIGURED — neither a pass nor a finding.",
@@ -735,11 +903,17 @@ def render(results: list[TransportResult], knob: Knob, outcome: str,
     lines.append("")
 
     for r in results:
-        lines.append(f"{_ICON.get(r.verdict, '?')} {r.transport} [{r.mode}] — {r.detail}")
+        lines.append(
+            f"{_ICON.get(r.verdict, '?')} {r.transport} [{r.mode}] — {r.detail}"
+        )
         for p in r.passes:
             probes = ", ".join(
-                f"{c.case.name}={'ok' if c.matched else 'MISS'}({c.status})" for c in p.cases)
-            lines.append(f"    · {p.label} (auth enforced: {p.auth_enforced}): {probes}")
+                f"{c.case.name}={'ok' if c.matched else 'MISS'}({c.status})"
+                for c in p.cases
+            )
+            lines.append(
+                f"    · {p.label} (auth enforced: {p.auth_enforced}): {probes}"
+            )
     if reasons:
         lines += ["", "## Why"] + [f"- {x}" for x in reasons]
 
@@ -764,12 +938,19 @@ def main(argv: list[str] | None = None) -> int:
         allowed_host = env.get("REBIND_ALLOWED_HOST") or DEFAULT_ALLOWED_HOST
         foreign_host = env.get("REBIND_FOREIGN_HOST") or DEFAULT_FOREIGN_HOST
         token = env.get("REBIND_AUTH_TOKEN") or secrets.token_urlsafe(24)
-        http_paths = [p for p in (env.get("REBIND_HTTP_PATHS") or "/mcp/,/mcp,/").split(",") if p]
-        sse_paths = [p for p in (env.get("REBIND_SSE_PATHS") or "/sse/,/sse").split(",") if p]
+        http_paths = [
+            p for p in (env.get("REBIND_HTTP_PATHS") or "/mcp/,/mcp,/").split(",") if p
+        ]
+        sse_paths = [
+            p for p in (env.get("REBIND_SSE_PATHS") or "/sse/,/sse").split(",") if p
+        ]
         derivation = tbp.derive(root)
         knob = detect_knob(root)
     except Exception as exc:  # noqa: BLE001 - the harness itself failed
-        print(f"rebind: harness could not run: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"rebind: harness could not run: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         return EXIT_CANNOT_RUN
 
     transports = [t for t in derivation.transports if t in NETWORK_TRANSPORTS]
@@ -779,11 +960,23 @@ def main(argv: list[str] | None = None) -> int:
         paths = sse_paths if transport == tbp.SSE else http_paths
         print(f"==> rebind {transport} [{plan.mode}]", file=sys.stderr)
         try:
-            results.append(probe_transport(plan, timeout, root, bind_host, allowed_host,
-                                           foreign_host, paths, token))
+            results.append(
+                probe_transport(
+                    plan,
+                    timeout,
+                    root,
+                    bind_host,
+                    allowed_host,
+                    foreign_host,
+                    paths,
+                    token,
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - a probe blowing up is a harness bug
-            print(f"rebind: probe for {transport} raised: {type(exc).__name__}: {exc}",
-                  file=sys.stderr)
+            print(
+                f"rebind: probe for {transport} raised: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
             return EXIT_CANNOT_RUN
 
     outcome, exit_code, reasons = classify(results, knob)
@@ -792,16 +985,24 @@ def main(argv: list[str] | None = None) -> int:
     report_path = env.get("REBIND_REPORT")
     if report_path:
         try:
-            Path(report_path).write_text(json.dumps({
-                "schema": 1,
-                "outcome": outcome,
-                "exit_code": exit_code,
-                "reasons": reasons,
-                "knob": knob.as_dict(),
-                "allowed_host": allowed_host,
-                "foreign_host": foreign_host,
-                "transports": [r.as_dict() for r in results],
-            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            Path(report_path).write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "outcome": outcome,
+                        "exit_code": exit_code,
+                        "reasons": reasons,
+                        "knob": knob.as_dict(),
+                        "allowed_host": allowed_host,
+                        "foreign_host": foreign_host,
+                        "transports": [r.as_dict() for r in results],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         except OSError as exc:
             print(f"rebind: could not write {report_path}: {exc}", file=sys.stderr)
 
