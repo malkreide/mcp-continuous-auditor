@@ -157,6 +157,26 @@ Phase 0 baseline → 1 read-only auditor → 2 promptfoo CI gate → 3 PR-only w
 > Worker only cuts a `fix/<slug>` PR after your explicit Telegram OK, per finding —
 > there is no committed automation that turns a finding into a PR on its own.
 
+## Related repositories
+
+### The MCP quality chain
+
+Five repositories, one lifecycle. Each answers a different question, in the order they come up — this one comes last, and it is the only one that keeps asking. The shared GitHub topic is [`mcp-quality-chain`](https://github.com/topics/mcp-quality-chain), which lists all five on one page.
+
+| Stage | Repository | Question it answers |
+|---|---|---|
+| before the build | [`mcp-data-source-probe-skill`](https://github.com/malkreide/mcp-data-source-probe-skill) | Is the source usable, and what does it hold? Its step 1.4 recall ground truth is what this project's `min_count` floors are measured against |
+| in the build | [`mcp-data-fidelity-skill`](https://github.com/malkreide/mcp-data-fidelity-skill) | Does it return what the source actually holds? Its rule 5 — recall in the tests, not the description — is the reason the probes carry floors rather than schema assertions |
+| in the build | [`mcp-transport-hardening-skill`](https://github.com/malkreide/mcp-transport-hardening-skill) | Does it come up, and does it turn away the right callers? The transport path the canary probe exercises live |
+| after the build | [`mcp-audit-skill`](https://github.com/malkreide/mcp-audit-skill) | Does it hold up against the catalogue? Its `OPS-005` (pipeline honesty) came from this repository — [#29](https://github.com/malkreide/mcp-continuous-auditor/pull/29), a test suite no workflow ever ran |
+| in operation | **`mcp-continuous-auditor`** | **This project:** does it still hold up tomorrow? |
+
+Alongside, not part of the chain: [`mcp-builder`](https://github.com/anthropics/skills/tree/main/skills/mcp-builder) — Anthropic's generic build guidance. It is someone else's repository and cannot carry the topic.
+
+The four skills say what a correct server looks like; this project is the part that keeps checking after everyone has stopped looking. Every probe here exists because a server was green and wrong at the same time — which is the failure class all five were written for.
+
+The servers being audited are the [Swiss Public Data MCP](https://github.com/malkreide/swiss-public-data-mcp) portfolio, which carries its own topic [`swiss-public-data-mcp`](https://github.com/topics/swiss-public-data-mcp).
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md)
