@@ -10,7 +10,9 @@ that is where every bug in this probe's history actually sat.
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -501,6 +503,102 @@ class RenderTest(unittest.TestCase):
         for marker in ("BROKEN-IMP", "SMOKE-?", "UNCAPPED", "DRIFT"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, text)
+
+
+class ManifestTest(unittest.TestCase):
+    """Die Abdeckung gehoert ins Ergebnis, nicht als Kommentar daneben."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _manifest(self, servers: list[dict]) -> Path:
+        p = Path(self.tmp.name) / "manifest.json"
+        p.write_text(json.dumps({"servers": servers}), encoding="utf-8")
+        return p
+
+    def test_entries_without_a_package_are_a_named_omission(self) -> None:
+        """``pypi_dist: null`` heisst: es gibt kein Artefakt zu messen.
+
+        Ein begruendeter Verzicht — begruendet, weil das Manifest es sagt, und
+        nicht, weil irgendeine Liste den Eintrag nicht erwaehnt hat.
+        """
+        path = self._manifest(
+            [
+                {"id": "a-mcp", "pypi_dist": "a-mcp"},
+                {"id": "nur-github", "pypi_dist": None},
+            ]
+        )
+        expected, targets, skipped = pp.read_manifest(path)
+        self.assertEqual(targets, ["a-mcp"])
+        self.assertEqual([n for n, _ in skipped], ["nur-github"])
+        self.assertTrue(skipped[0][1], "ein Verzicht ohne Begruendung ist keiner")
+        self.assertEqual(expected, 2)
+
+    def test_the_total_counts_every_entry_not_just_the_probeable_ones(self) -> None:
+        """Regression: die Soll-Zahl zaehlte anfangs nur Eintraege mit Paket.
+
+        Damit kam ein vollstaendiger Lauf auf `geprueft + uebersprungen` = 3
+        gegen eine Soll-Zahl von 2 und meldete die Abdeckung als unvollstaendig
+        — Exit 1 bei lauter gruenen Ergebnissen. Die Soll-Zahl darf nicht von
+        derselben Einschaetzung abhaengen, die der Abdeckungscheck pruefen soll.
+        """
+        path = self._manifest(
+            [
+                {"id": "a-mcp", "pypi_dist": "a-mcp"},
+                {"id": "b-mcp", "pypi_dist": None},
+                {"id": "c-mcp", "pypi_dist": None},
+            ]
+        )
+        expected, targets, skipped = pp.read_manifest(path)
+        self.assertEqual(expected, 3)
+        self.assertEqual(len(targets) + len(skipped), expected)
+
+    def test_an_empty_manifest_is_refused(self) -> None:
+        """`0/0 geprueft` mit Exit 0 waere von einem gepruefen Portfolio nicht
+        zu unterscheiden — genau die Verwechslung, gegen die es hier geht."""
+        with self.assertRaises(SystemExit):
+            pp.read_manifest(self._manifest([]))
+
+    def test_a_missing_pypi_dist_key_is_not_read_as_null(self) -> None:
+        """Fehlend und null sind verschiedene Aussagen.
+
+        Benennt der Erzeuger das Feld um, wuerde `.get()` jeden Eintrag zu
+        einem begruendeten Verzicht machen: nichts gemessen, Abdeckung
+        vollstaendig, Exit 0. Also der falsche gruene Lauf, den dieser
+        Mechanismus verhindern soll — eine Schicht weiter aussen.
+        """
+        with self.assertRaises(SystemExit):
+            pp.read_manifest(self._manifest([{"id": "a-mcp", "dist_name": "a-mcp"}]))
+
+    def test_a_pypi_dist_that_is_neither_name_nor_null_is_refused(self) -> None:
+        for bad in ("", "   ", 42, []):
+            with self.subTest(value=bad), self.assertRaises(SystemExit):
+                pp.read_manifest(self._manifest([{"id": "a-mcp", "pypi_dist": bad}]))
+
+    def test_a_manifest_without_a_servers_list_is_refused(self) -> None:
+        p = Path(self.tmp.name) / "broken.json"
+        p.write_text(json.dumps({"eintraege": []}), encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            pp.read_manifest(p)
+
+    def test_a_skip_without_a_reason_is_rejected(self) -> None:
+        for bad in ("meteoswiss-mcp", "meteoswiss-mcp:   "):
+            with self.subTest(arg=bad), self.assertRaises(SystemExit):
+                pp.parse_allow_skip([bad])
+
+    def test_a_skip_with_a_reason_is_kept_verbatim(self) -> None:
+        self.assertEqual(
+            pp.parse_allow_skip(["meteoswiss-mcp:upstream down, Ticket #12"]),
+            {"meteoswiss-mcp": "upstream down, Ticket #12"},
+        )
+
+    def test_a_colon_in_the_reason_survives(self) -> None:
+        """``--allow-skip x:siehe https://…`` darf nicht an der URL zerbrechen."""
+        self.assertEqual(
+            pp.parse_allow_skip(["x-mcp:siehe https://example.org/a"]),
+            {"x-mcp": "siehe https://example.org/a"},
+        )
 
 
 if __name__ == "__main__":

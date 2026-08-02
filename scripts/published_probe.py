@@ -113,13 +113,32 @@ importing the package. Two tiers, because they are two different days:
   ``UNCAPPED``                  no higher major is published yet. The trap is
                                armed and has not sprung; reported, not a finding.
 
+COVERAGE IS PART OF THE RESULT
+------------------------------
+Everything above is about not mistaking "I did not see it" for "it is not
+there". One level up, the same mistake is available to whoever assembles the
+argument list. On 2026-07-31 a portfolio-wide run of this script reported "33 of
+33 ok". Both numbers were true and the set was wrong: ``portfolio.json`` listed
+43 active servers, and ten had never been on the command line — seven of them
+``core``, including ``meteoswiss-mcp``, whose broken release is the incident
+``shipped_probe.py`` was written for.
+
+A hand-assembled argument list is a hand-maintained value, and it drifts for the
+reason every hand-maintained value in this portfolio has drifted: nothing
+downstream disagrees with it.
+
+So ``--manifest`` takes the target list from the portfolio's own source of truth
+(``coverage_manifest.py --format json`` in ``swiss-public-data-mcp``), every such
+run ends with a coverage line, and an incomplete run exits non-zero unless each
+omission was named together with a reason.
+
 Exit codes:
   0  every resolved User-Agent matches the installed version (or the package sets
      none), everything imports, the entrypoint announced its start, and no
      import-critical range is already open across a published major
   1  drift, a foreign User-Agent, a broken import, a failed or unconfirmed start,
-     an open range across a published major, or a User-Agent that could not be
-     resolved (``unverified`` — which is not a pass)
+     an open range across a published major, a User-Agent that could not be
+     resolved (``unverified`` — which is not a pass), or incomplete coverage
   2  the distribution could not be installed, or ``--version`` was pinned and the
      venv came back holding something else
 
@@ -128,6 +147,9 @@ Usage:
   python scripts/published_probe.py --format json bakom-mcp srgssr-mcp
   python scripts/published_probe.py --constraint 'mcp<2' swiss-statistics-mcp
   python scripts/published_probe.py --version 0.3.4 swiss-energy-mcp   # after a release
+  python scripts/published_probe.py --manifest manifest.json           # whole portfolio
+  python scripts/published_probe.py --manifest manifest.json \
+      --allow-skip meteoswiss-mcp:"upstream down, ticket #12"
 """
 
 from __future__ import annotations
@@ -1126,9 +1148,98 @@ def _as_dict(r: Result) -> dict[str, Any]:
     }
 
 
+def read_manifest(path: Path) -> tuple[int, list[str], list[tuple[str, str]]]:
+    """Split a coverage manifest into a total, targets, and justified omissions.
+
+    Produced by ``coverage_manifest.py --format json`` in the portfolio repo. An
+    entry with ``pypi_dist: null`` publishes no package, so there is no artefact
+    for this probe to measure — that omission is justified, and it is justified
+    *because the manifest says so*, not because a list somewhere happened not to
+    mention it. That difference is the whole point.
+
+    The total counts EVERY manifest entry, probeable or not. Counting only the
+    probeable ones would make the denominator depend on the same judgement the
+    coverage check exists to audit.
+
+    The manifest is validated rather than read optimistically, because the two
+    ways it can be wrong both end in a false green:
+
+    * an **empty** ``servers`` list would report ``0/0 geprueft`` and exit 0 —
+      indistinguishable from an audited portfolio;
+    * a **missing** ``pypi_dist`` key would be read like an explicit ``null``,
+      so if the producer ever renames the field, every entry silently becomes a
+      justified omission and nothing is measured at all.
+
+    Both would recreate exactly the failure this whole mechanism exists to
+    prevent, one layer further out. An absent key and a deliberate ``null`` are
+    different claims and must not share a code path.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    servers = data.get("servers")
+    if not isinstance(servers, list):
+        raise SystemExit(f"{path}: kein 'servers'-Feld mit einer Liste")
+    if not servers:
+        raise SystemExit(
+            f"{path}: leere Zielliste. Ein Lauf ohne Ziele meldet sonst '0/0 geprueft' "
+            "und Exit 0 — nicht unterscheidbar von einem geprueften Portfolio"
+        )
+
+    targets, unpublished = [], []
+    for i, s in enumerate(servers):
+        if not isinstance(s, dict) or "id" not in s:
+            raise SystemExit(f"{path}: Eintrag {i} hat kein 'id'-Feld")
+        if "pypi_dist" not in s:
+            raise SystemExit(
+                f"{path}: Eintrag {s['id']} hat kein Feld 'pypi_dist'. Fehlend und "
+                "null sind verschiedene Aussagen: null heisst 'kein Paket', "
+                "fehlend heisst 'das Manifest passt nicht zu diesem Werkzeug'"
+            )
+        dist = s["pypi_dist"]
+        if dist is None:
+            unpublished.append((s["id"], "kein Paket auf dem Index (laut Manifest)"))
+        elif isinstance(dist, str) and dist.strip():
+            targets.append(dist)
+        else:
+            raise SystemExit(f"{path}: Eintrag {s['id']}: 'pypi_dist' ist weder Name noch null")
+
+    return len(servers), targets, unpublished
+
+
+def parse_allow_skip(items: list[str]) -> dict[str, str]:
+    """``name:reason`` pairs. The reason is mandatory — that is the mechanism.
+
+    Skipping is allowed; skipping silently is not. Requiring the reason on the
+    command line puts the omission into the run's own output instead of leaving
+    it with whoever typed the command.
+    """
+    out: dict[str, str] = {}
+    for item in items:
+        name, sep, reason = item.partition(":")
+        if not sep or not reason.strip():
+            raise SystemExit(f"--allow-skip braucht 'name:grund', bekommen: {item!r}")
+        out[name.strip()] = reason.strip()
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="published_probe")
-    ap.add_argument("dists", nargs="+", help="distribution names as published on the index")
+    ap.add_argument(
+        "dists",
+        nargs="*",
+        help="distribution names as published on the index (or use --manifest)",
+    )
+    ap.add_argument(
+        "--manifest",
+        type=Path,
+        help="Zielliste aus coverage_manifest.py --format json; erzwingt die Abdeckung",
+    )
+    ap.add_argument(
+        "--allow-skip",
+        action="append",
+        default=[],
+        metavar="NAME:GRUND",
+        help="einen Eintrag der Zielliste begruenden statt pruefen; wiederholbar",
+    )
     ap.add_argument(
         "--constraint",
         help="extra pip requirement, e.g. 'mcp<2' for a package that no longer imports "
@@ -1157,13 +1268,28 @@ def main() -> int:
     ap.add_argument("--keep-venv", action="store_true", help="leave the venv for inspection")
     args = ap.parse_args()
 
-    if args.version and len(args.dists) > 1:
+    allowed = parse_allow_skip(args.allow_skip)
+    expected = 0
+    skipped: list[tuple[str, str]] = []
+
+    if args.manifest:
+        if args.dists:
+            raise SystemExit("--manifest und eine Dist-Liste schliessen sich aus")
+        expected, probeable, skipped = read_manifest(args.manifest)
+        targets = [d for d in probeable if d not in allowed]
+        skipped += [(d, allowed[d]) for d in probeable if d in allowed]
+    elif args.dists:
+        targets = args.dists
+    else:
+        raise SystemExit("weder Dist-Namen noch --manifest angegeben")
+
+    if args.version and len(targets) > 1:
         print("published: --version pins ONE distribution; pass one name with it",
               file=sys.stderr)
         return 2
 
     results = []
-    for dist in args.dists:
+    for dist in targets:
         try:
             results.append(probe(
                 dist, args.constraint, args.keep_venv,
@@ -1175,13 +1301,51 @@ def main() -> int:
                 check_caps=not args.no_cap_check))
         except subprocess.TimeoutExpired:
             results.append(Result(dist=dist, status="install_failed", detail="timeout"))
+        except Exception as e:  # noqa: BLE001 - eine Dist darf den Sweep nicht abbrechen
+            # Ohne das endet ein Portfolio-Lauf beim ersten Ausrutscher und
+            # berichtet ueber ein Praefix der Zielliste, als waere es die Liste.
+            results.append(
+                Result(dist=dist, status="install_failed", detail=f"{type(e).__name__}: {e}")
+            )
+
+    # Ein Ziel ohne Ergebnis waere ein stiller Ausfall — genau die Sorte, die
+    # aussieht wie ein sauberer Lauf. Beides zaehlt gegen dieselbe Soll-Zahl.
+    missing = [d for d in targets if d not in {r.dist for r in results}]
+    coverage_ok = not args.manifest or (
+        len(results) + len(skipped) == expected and not missing
+    )
 
     if args.format == "json":
-        print(json.dumps([_as_dict(r) for r in results], indent=2, ensure_ascii=False))
+        # Ohne --manifest bleibt die Ausgabe die blanke Liste wie bisher; mit
+        # --manifest wird sie ein Objekt, weil die Abdeckung Teil des Ergebnisses
+        # ist und nicht als Kommentar danebenstehen darf.
+        payload = [_as_dict(r) for r in results]
+        out: Any = payload
+        if args.manifest:
+            out = {
+                "coverage": {
+                    "expected": expected,
+                    "probed": len(results),
+                    "skipped": [{"name": n, "reason": why} for n, why in skipped],
+                    "missing": missing,
+                    "complete": coverage_ok,
+                },
+                "results": payload,
+            }
+        print(json.dumps(out, indent=2, ensure_ascii=False))
     else:
         for r in results:
             print(render(r))
+        if args.manifest:
+            line = f"{len(results)}/{expected} geprueft"
+            if skipped:
+                line += " — uebersprungen: " + ", ".join(f"{n} ({why})" for n, why in skipped)
+            if missing:
+                line += " — OHNE ERGEBNIS: " + ", ".join(missing)
+            print(line)
 
+    if not coverage_ok:
+        return 1
     if any(r.status == "install_failed" for r in results):
         return 2
     return 0 if all(r.ok for r in results) else 1
