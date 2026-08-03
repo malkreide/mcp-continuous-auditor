@@ -37,6 +37,15 @@ The model layer (llm-rubric + red-team, the `graded` profile) runs in **CI** on
 every PR with secrets — see the CI template — so Tier 0 does not need a grader key
 on the host for the nightly `determ` run.
 
+## Keeping it up to date
+
+At Tier 0 there is one checkout, so updating the auditor is `git checkout <sha>`
+plus the test suite — `nightly-audit.sh` resolves the classifier from its own
+directory, so the two halves cannot drift apart. That changes at Tier 2, where
+Worker and Broker are separate checkouts and the update has an order that
+matters. Both paths, and how to tell which one you are on:
+[updating.md](updating.md).
+
 ## Recommended host
 
 A **dedicated, network-isolated device** (a Raspberry Pi 5 or a small Linux VM in

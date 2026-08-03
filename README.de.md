@@ -177,9 +177,11 @@ tests/            stdlib-Unit-Tests (687 in 30 Dateien) — laufen via
 docs/plans/       der v2-Bauplan
 docs/cron/        der tägliche nightly-audit-Cron (Ablauf, Modell-Hard-Fail, Install)
 docs/deployment/  Raspberry-Pi (empfohlener Host), Phase-5 forkd/microVM-Isolation,
-                  worker-broker-rollout.md = beide Seiten in der richtigen
-                  REIHENFOLGE aktualisieren (Broker zuerst — ein alter Broker
-                  meldet die Findings eines neuen Workers als grün)
+                  updating.md = was ein Rollout je Tier bedeutet und woran
+                  man die eigene Form erkennt (ein Checkout vs. Broker/Worker-Split)
+                  worker-broker-rollout.md = nur Tier 2: beide Seiten in der
+                  richtigen REIHENFOLGE aktualisieren (Broker zuerst — ein alter
+                  Broker meldet die Findings eines neuen Workers als grün)
 docs/budget/      Phase-5 Budget-Leitplanken (Token-Ceiling, Circuit Breaker)
 docs/observability/ Phase-5 TensorZero-Gateway (Cost-Caps, A/B, Audit-Trail)
 ```

@@ -134,6 +134,12 @@ openclaw cron edit  <id> --model "<ref>" --fallbacks ""   # change model, stay s
 openclaw cron remove <id>          # uninstall
 ```
 
+The job reads `scripts/nightly-audit.sh` fresh on every run, so updating the
+auditor is a `git checkout` in the checkout the cron runs from — no reinstall
+unless the cron *spec* itself changed. When a release adds a **gate**, that is an
+operational step rather than a code change, and it has an order at Tier 2. Both
+paths: [docs/deployment/updating.md](../deployment/updating.md).
+
 ## Relationship to the other jobs
 
 - **`ci.yml`** (per-PR, in the target repo) is the merge gate. The nightly job

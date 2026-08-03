@@ -3,6 +3,12 @@
 > Gilt für jede Änderung, die dem Evidence-File ein **Pflichtfeld** hinzufügt.
 > Aktuell betroffen: `transport_boot` (#31), `host_allowlist` (#33),
 > `tests_collected` (#34), `shipped_artifact` (#36), `lockfile`.
+>
+> **Nur für Tier 2** — den microVM-Split mit zwei getrennten Checkouts. Wer den
+> Auditor als *einen* Checkout fährt (Tier 0/1, der Cron ruft
+> `scripts/nightly-audit.sh` direkt), hat dieses Problem nicht: dort kommen
+> beide Hälften aus demselben Baum. Der Update-Pfad dafür steht in
+> [updating.md](updating.md) und ist zwei Befehle lang.
 
 Der Auditor läuft an zwei Stellen mit **zwei getrennten Kopien desselben Repos**:
 
