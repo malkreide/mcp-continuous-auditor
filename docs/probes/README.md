@@ -18,6 +18,7 @@ green and wrong at the same time.
 | doc-claim | Do the identifiers the documentation cites exist? | [doc-claim.md](doc-claim.md) |
 | parity | Does the translated documentation still say the same thing? | [parity.md](parity.md) |
 | provenance | Which commit is this report about? | [provenance.md](provenance.md) |
+| pr-health | Which open pull requests are not green — including the ones that are not red either? | [pr-health.md](pr-health.md) |
 
 Three more gates run inside the nightly audit rather than as standalone probes,
 and are documented at the top of their own files:
