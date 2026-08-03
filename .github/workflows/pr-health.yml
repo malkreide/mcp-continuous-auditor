@@ -1,0 +1,93 @@
+name: PR health
+
+# Findet offene Pull Requests im Portfolio, die nicht gruen sind — vor allem
+# die, die auch nicht rot aussehen.
+#
+# Anlass: #50 und #58 dieses Repos standen auf `mergeable_state: dirty`. Das
+# heisst nicht "beim Mergen gibt es Konflikte", sondern GitHub kann keine
+# Merge-Ref bauen und startet deshalb ueberhaupt keine Workflows. Beide hatten
+# null Check-Runs. Ein Blick auf "keine roten Checks" sah dasselbe wie bei
+# einem gruenen Pull Request.
+#
+# Warum geplant und nicht im Pfad jedes Pull Requests: der Lauf braucht das
+# Netz und einen Token ueber Repo-Grenzen hinweg. Seine Fehlschlaege haetten
+# dort zwei Ursachen, die gleich aussehen — ein echter Befund und ein kurz
+# nicht erreichbares GitHub. Bewusst geplant und nicht "aus CI ausgeschlossen":
+# ausgeschlossene Pruefungen verrotten (DRIFT-005).
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch: {}
+
+# Kein Top-Level-Grant. Der eingebaute GITHUB_TOKEN reicht ohnehin nicht: er
+# gilt nur fuer DIESES Repo, gefragt sind 47.
+permissions: {}
+
+concurrency:
+  group: pr-health
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Portfolio-Manifest holen
+        uses: actions/checkout@v4
+        with:
+          repository: malkreide/swiss-public-data-mcp
+          path: .portfolio
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Der Token braucht Lesezugriff auf Pull Requests aller Portfolio-Repos.
+      # Fehlt er, bricht der Lauf ab statt gruen durchzulaufen: ein Sweep, der
+      # nichts geprueft hat, und einer, der nichts gefunden hat, duerfen sich
+      # nicht denselben Ausgang teilen (OPS-005).
+      - name: Token vorhanden?
+        env:
+          TOKEN: ${{ secrets.PORTFOLIO_READ_TOKEN }}
+        run: |
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::Secret PORTFOLIO_READ_TOKEN fehlt (fein granulierter PAT," \
+                 "Lesezugriff auf Pull Requests der Portfolio-Repos). Ohne ihn" \
+                 "prueft dieser Lauf nichts — und das darf nicht wie ein" \
+                 "sauberer Lauf aussehen."
+            exit 1
+          fi
+
+      - name: Zielliste erzeugen
+        run: python .portfolio/scripts/coverage_manifest.py --format json > manifest.json
+
+      # Ein Lauf, nicht zwei: 47 Repos sind rund 200 API-Aufrufe, und ein
+      # zweiter Durchgang nur fuer das Textformat wuerde sie verdoppeln — bei
+      # einem Ergebnis, das zwischen den beiden Laeufen abweichen kann.
+      - name: Offene Pull Requests pruefen
+        env:
+          GITHUB_TOKEN: ${{ secrets.PORTFOLIO_READ_TOKEN }}
+        run: |
+          set +e
+          python scripts/pr_health.py --manifest manifest.json --format json > pr-health.json
+          rc=$?
+          python -c "
+          import json,sys
+          d=json.load(open('pr-health.json'))
+          c=d['coverage']
+          print(f\"{c['swept']}/{c['expected']} Repos geprueft, {len(c['skipped'])} uebersprungen\")
+          for s in c['skipped']: print('  uebersprungen:', s['repo'], '—', s['reason'])
+          for e in c['errors']:  print('  NICHT ERHOBEN:', e['repo'], '—', e['detail'])
+          for f in d['findings']:
+              print(f\"  {f['repo']}#{f['number']} [{f['status']}] {f['evidence']}\")
+          "
+          exit $rc
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-health
+          path: pr-health.json
+          if-no-files-found: warn
