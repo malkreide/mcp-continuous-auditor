@@ -168,8 +168,11 @@ tests/            stdlib unit tests (687 in 30 files) — run by .github/workflo
 docs/plans/       the v2 build plan
 docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)
 docs/deployment/  Raspberry Pi (recommended host), Phase 5 forkd/microVM isolation,
-                  worker-broker-rollout.md = updating both sides in the right ORDER
-                  (Broker first — an old Broker reports a new Worker's findings as green)
+                  updating.md = what a rollout means per tier, and how to tell
+                  which shape you run (one checkout vs. the Broker/Worker split)
+                  worker-broker-rollout.md = Tier 2 only: updating both sides in
+                  the right ORDER (Broker first — an old Broker reports a new
+                  Worker's findings as green)
 docs/budget/      Phase 5 budget guardrails (token ceiling, circuit breaker)
 docs/observability/ Phase 5 TensorZero gateway (cost-caps, A/B, audit-trail)
 ```
