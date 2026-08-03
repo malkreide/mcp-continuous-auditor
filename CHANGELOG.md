@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the lockfile gate runs in the nightly audit, and it runs BEFORE `uv sync`
+
+`lockfile_probe.py` shipped standalone. It is now step **1b** of
+`scripts/nightly-audit.sh`, and where it sits in that script is the substance of
+this change rather than a detail of it.
+
+**`uv sync` re-locks.** Measured, not assumed: against a checkout whose `uv.lock`
+recorded `mcp[cli]>=1.28.1` while `pyproject.toml` said `>=2.0.0,<3`, a single
+`uv sync --offline` rewrote the recorded specifier to the pyproject one — the
+install then failed for want of a cached wheel, and the drift was gone either
+way. The nightly runs `uv sync --all-extras --dev` immediately after
+provisioning, so a lockfile gate placed with the other gates would read a file
+its own harness had just repaired and report every target clean. That is not a
+gate, it is a mirror.
+
+So it runs on the checkout as cloned, before anything touches it, launched with
+`python3` rather than `uv run` — the target venv does not exist yet at that
+point, which is why the probe is stdlib-only. Nothing else in the script would
+fail if somebody moved the block down, so `tests/test_gate_timeouts.py` pins the
+order, the boundedness, and the absence of `uv run`.
+
+- **Exit 3 ("no lockfile") does not turn the run red.** It gets its own gate line
+  (`🟡 no lockfile in the target — not measured`) and its own block in the
+  report. Across this portfolio 19 of 20 servers commit no lock, and a gate that
+  went red on all of them for a defensible choice would be switched off within a
+  day, taking the one real finding with it. It is equally not a pass: the report
+  says a lock nobody syncs from and no lock at all look identical from here.
+- **Exit 4 (`MOVED_DURING_RUN`) and 126/127 are hard failures, not findings.** A
+  run that read two different trees, or none, has established nothing about the
+  target, and charging it a dependency defect would be a claim nothing measured.
+- **`LOCKFILE_GATE=off`** disables it; **`GATE_TIMEOUT_LOCKFILE`** bounds it
+  (default 300s — `uv lock --check` may consult the index).
+
+**This is a rollout step, not a cosmetic one.** `lockfile` joins `_GATE_NAMES`,
+so an evidence file that does not carry it reads as 127 and hard-fails — correct
+for a Worker image that genuinely did not run the gate. Roll the Worker and the
+Broker together; `docs/deployment/worker-broker-rollout.md` lists the new field
+and its verification snippet checks for it.
+
+The case it was wired in for is on the record: `swiss-procurement-mcp` #37 merged
+`structlog>=24.1,<27` and `starlette>=0.37,<2` into `pyproject.toml` at 14:42 UTC
+and did not regenerate `uv.lock`. The gap was found by hand and closed at 20:33
+UTC. Run against that merge commit, the probe reports both diverging specifiers
+and `LOCK_STALE` — six hours earlier, and without anyone looking.
+
 ### Added — every report names the commit it is about (`probe_provenance.py`)
 
 An identity-probe finding (`VERSION = "0.4.0"` as a hand-maintained literal) was

@@ -256,6 +256,45 @@ class EveryGateIsBoundedTest(unittest.TestCase):
                 f"the pre-run must not feed the gate verdict: {line}",
             )
 
+    def test_the_lockfile_gate_is_bounded(self) -> None:
+        unbounded = self._unbounded(lambda ln: "lockfile_probe.py" in ln)
+        self.assertEqual(unbounded, [], f"unbounded lockfile call: {unbounded}")
+
+    def test_the_lockfile_gate_runs_before_uv_sync(self) -> None:
+        """The ordering IS the gate, and it is the one thing that can silently
+        rot here.
+
+        `uv sync` re-locks. Measured against a checkout whose `uv.lock` recorded
+        `mcp[cli]>=1.28.1` while `pyproject.toml` said `>=2.0.0,<3`, a single
+        `uv sync --offline` rewrote the recorded specifier to the pyproject one
+        before failing on a missing wheel — the drift was gone either way. A
+        lockfile gate placed after the sync reads a file its own harness just
+        repaired and reports every target clean: not a gate, a mirror.
+
+        Nothing else in this script would fail if somebody moved the block down
+        to sit with the other gates, which is exactly why this test exists.
+        """
+        probe = self.text.index("lockfile_probe.py")
+        sync = self.text.index("uv sync --all-extras --dev")
+        self.assertLess(
+            probe,
+            sync,
+            "the lockfile gate must run BEFORE `uv sync`, which regenerates the "
+            "lockfile it is there to compare",
+        )
+
+    def test_the_lockfile_gate_does_not_use_the_target_environment(self) -> None:
+        """`python3`, never `uv run`.
+
+        At that point in the script the target venv does not exist yet — the
+        sync that creates it is the very thing this gate must precede. The probe
+        is stdlib-only for exactly this reason.
+        """
+        calls = [ln for ln in self.lines if "lockfile_probe.py" in ln]
+        self.assertTrue(calls, "no lockfile_probe.py invocation found")
+        for line in calls:
+            self.assertNotIn("uv run", line, f"lockfile gate needs no venv: {line}")
+
 
 if __name__ == "__main__":
     unittest.main()

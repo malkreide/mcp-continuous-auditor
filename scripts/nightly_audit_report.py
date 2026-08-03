@@ -184,6 +184,7 @@ _GATE_NAMES = (
     "transport_boot",
     "host_allowlist",
     "shipped_artifact",
+    "lockfile",
 )
 
 # The DNS-rebinding gate is the one gate whose exit code is not binary. 3 means
@@ -199,6 +200,21 @@ REBIND_NOT_CONFIGURED = 3
 # defect in the target and not a pass either — measured against a target whose
 # HTTP transport is healthy but selected with a CLI flag the gate did not send.
 BOOT_NOT_MEASURED = 3
+
+# The lockfile gate's third state, and the one that carries the most weight of
+# the three: 3 means the target ships no lockfile at all. Across this portfolio
+# that is the COMMON answer — 19 of 20 servers commit none — and a library that
+# ships no lock has made a defensible choice. Turning it red would mute the gate
+# within a day and take the one real finding with it. So it is reported, in its
+# own words, and it does not move the outcome.
+LOCK_NOT_MEASURED = 3
+
+# 4 is `probe_provenance`'s MOVED_DURING_RUN: HEAD or the working tree changed
+# between the probe's first and last read, so the run reached no verdict. That is
+# the harness's problem, never the target's, and it is classified with 126/127
+# rather than as a finding — charging a defect to a repository on the strength of
+# a run that did not read one tree is exactly the error the code exists to avoid.
+LOCK_MOVED = 4
 
 
 def _load_evidence(path: Path) -> dict[str, Any]:
@@ -395,6 +411,20 @@ def _boot_status(rc: int) -> str:
     return _status(rc)
 
 
+def _lockfile_status(rc: int) -> str:
+    """The lockfile gate's four-way rendering.
+
+    "No lockfile" is the answer for 19 of the 20 servers in this portfolio, and
+    it must not wear a tick: nothing was compared, so nothing was established
+    about where those bounds are in force.
+    """
+    if rc == LOCK_NOT_MEASURED:
+        return "🟡 no lockfile in the target — not measured (exit 3)"
+    if rc == LOCK_MOVED:
+        return "⛔ MOVED_DURING_RUN — the checkout changed under the probe (exit 4)"
+    return _status(rc)
+
+
 def _rebind_status(rc: int) -> str:
     """The rebinding gate's own three-way rendering. A control that is not
     configured must not read as "✅ pass" — the whole reason it is reported is
@@ -432,6 +462,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             ("transport boot gate", args.transport_boot),
             ("DNS-rebinding gate", args.host_allowlist),
             ("shipped-artifact gate", args.shipped_artifact),
+            ("lockfile gate", args.lockfile),
             ("promptfoo", args.promptfoo_rc),
         )
         if _hung(rc)
@@ -469,6 +500,17 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
     shipped_artifact_fail = args.shipped_artifact not in (0, 126, 127) and not _hung(
         args.shipped_artifact
     )
+    # The lockfile gate, four ways. Only 2 is a finding: 3 is "no lockfile"
+    # (surfaced on its own, never as a pass), 4 is a checkout that moved under
+    # the probe, and 126/127 are the harness. See LOCK_NOT_MEASURED.
+    lockfile_unmeasured = args.lockfile == LOCK_NOT_MEASURED
+    lockfile_fail = args.lockfile not in (
+        0,
+        LOCK_NOT_MEASURED,
+        LOCK_MOVED,
+        126,
+        127,
+    ) and not _hung(args.lockfile)
     host_allowlist_unconfigured = args.host_allowlist == REBIND_NOT_CONFIGURED
     host_allowlist_fail = args.host_allowlist not in (
         0,
@@ -539,6 +581,18 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             "often an unreachable index. The published artifact was NOT compared, which "
             "is emphatically not 'in sync'"
         )
+    if args.lockfile in infra_codes:
+        hard_fail_reasons.append(
+            f"lockfile gate could not run (exit {args.lockfile}) — the declared bound "
+            "was NOT compared against the lock that installs, which is not the same as "
+            "them agreeing"
+        )
+    if args.lockfile == LOCK_MOVED:
+        hard_fail_reasons.append(
+            "the lockfile gate reported MOVED_DURING_RUN (exit 4) — the checkout "
+            "changed between its first and last read, so it produced no verdict. That "
+            "is a harness problem, never a defect in the target"
+        )
     if hung:
         # HARD failure, not a finding. A hung gate returned no verdict, and a
         # `findings` outcome would route it to a tracking issue asserting a defect
@@ -579,8 +633,10 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         or transport_boot_fail
         or host_allowlist_fail
         or shipped_artifact_fail
+        or lockfile_fail
         or hard_fail
-    )  # transport_boot_unmeasured deliberately absent: not a defect, see below
+    )  # transport_boot_unmeasured and lockfile_unmeasured deliberately absent:
+    #    neither is a defect, see BOOT_NOT_MEASURED / LOCK_NOT_MEASURED
 
     if hard_fail:
         outcome, exit_code = "hard-fail", EXIT_HARD_FAIL
@@ -615,6 +671,8 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
         "host_allowlist_fail": host_allowlist_fail,
         "host_allowlist_unconfigured": host_allowlist_unconfigured,
         "shipped_artifact_fail": shipped_artifact_fail,
+        "lockfile_fail": lockfile_fail,
+        "lockfile_unmeasured": lockfile_unmeasured,
         # Reported, never decisive: `outcome` above is unchanged by this block.
         # The pre-run is a second probe, not the shipped gate's verdict, and
         # letting it move the outcome would be the "a hung gate became a
@@ -634,6 +692,7 @@ def build_summary(args: argparse.Namespace) -> dict[str, Any]:
             "transport_boot_gate": args.transport_boot,
             "host_allowlist_gate": args.host_allowlist,
             "shipped_artifact_gate": args.shipped_artifact,
+            "lockfile_gate": args.lockfile,
         },
         "promptfoo": pfc,
     }
@@ -732,6 +791,8 @@ def render_report(s: dict[str, Any]) -> str:
         f"{_rebind_status(s['gates']['host_allowlist_gate'])}",
         f"- shipped-artifact gate (install from PyPI + run it): "
         f"{_status(s['gates']['shipped_artifact_gate'])}",
+        f"- lockfile gate (declared bound vs. the lock that installs): "
+        f"{_lockfile_status(s['gates']['lockfile_gate'])}",
         f"  - release metadata pre-run: {_shipped_metadata_line(s)}",
         f"- promptfoo (contract + red-team): {_status(s['gates']['promptfoo_rc'])}",
         f"- promptfoo profile: **{s.get('promptfoo_profile', 'unknown')}**",
@@ -881,6 +942,20 @@ def render_report(s: dict[str, Any]) -> str:
             "ran green every night while PyPI served a release with three broken "
             "tools. See the Worker's `shipped.log` / `shipped.json` for which."
         )
+    if s.get("lockfile_fail"):
+        findings.append(
+            "**The declared dependency bound is not in force where the install "
+            "happens** — `pyproject.toml` and the lockfile the deployment syncs "
+            "from disagree. The lock may record an older specifier (the bound was "
+            "merged and the lock never regenerated), pin a version the declaration "
+            "does not admit, or be flatly out of date by the resolver's own check. "
+            "Every other gate reads `pyproject.toml` and is blind to this: "
+            "swiss-procurement-mcp #37 merged the upper bounds and left `uv.lock` "
+            "untouched, and for six hours `main` carried the fix in the file "
+            "everybody reads and the open range in the file that installs. See the "
+            "Worker's `lockfile.log` / `lockfile.json` for which dependency and "
+            "which two specifiers."
+        )
     if s["toolchain_fail"]:
         findings.append(
             "**Toolchain failure** — ruff/mypy/pytest is red (see gates above)."
@@ -903,6 +978,21 @@ def render_report(s: dict[str, Any]) -> str:
             "target's `pyproject.toml` under `[tool.mcp_auditor.boot.commands]` "
             "and the check becomes real again. See the Worker's "
             "`transport-boot.json` for which transport.",
+        ]
+
+    if s.get("lockfile_unmeasured"):
+        lines += [
+            "",
+            "## 🟡 No lockfile — the gate had nothing to compare",
+            "",
+            "The target commits neither `uv.lock` nor `poetry.lock`, so the bound in "
+            "`pyproject.toml` is the only declaration there is and nothing can have "
+            "drifted from it. That is a defensible choice for a library, and it is "
+            "why this state does not turn the run red — 19 of the 20 servers in this "
+            "portfolio are in it, and a gate that went red on all of them would be "
+            "switched off within a day. **It is also not a pass:** this run says "
+            "nothing about how that target is actually installed. A lock nobody "
+            "syncs from and no lock at all look identical from here.",
         ]
 
     # Its own block, deliberately outside "Findings" and outside the gate list's
@@ -975,6 +1065,15 @@ def main() -> int:
         help="shipped-artifact gate exit code (0 the published package "
         "matches and runs / 2 absent, stale, or it does not run / "
         "127 the harness could not run, e.g. an unreachable index)",
+    )
+    p.add_argument(
+        "--lockfile",
+        type=int,
+        dest="lockfile",
+        help="lockfile gate exit code (0 the lock states what pyproject states / "
+        "2 LOCK_DRIFT / LOCK_UNSATISFIED / LOCK_STALE / 3 the target ships no "
+        "lockfile — NOT MEASURED, neither a pass nor a finding / 4 the checkout "
+        "moved during the run / 127 the harness could not run)",
     )
     p.add_argument(
         "--tests-collected",

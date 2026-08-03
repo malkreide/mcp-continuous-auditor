@@ -87,6 +87,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -135,6 +136,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -191,6 +193,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 1,
                 },
             },
@@ -227,6 +230,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -254,6 +258,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -305,6 +310,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -335,6 +341,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -363,6 +370,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -393,6 +401,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 1,
                 },
             },
@@ -433,6 +442,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 2,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -469,6 +479,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 127,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -527,6 +538,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 0,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -557,6 +569,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 3,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -594,6 +607,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 2,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -630,6 +644,7 @@ class ClassifierTest(unittest.TestCase):
                     "transport_boot": 0,
                     "host_allowlist": 127,
                     "shipped_artifact": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                 },
             },
@@ -683,6 +698,7 @@ class ClassifierTest(unittest.TestCase):
             "transport_boot": 0,
             "host_allowlist": 0,
             "shipped_artifact": 0,
+            "lockfile": 0,
             "promptfoo_rc": 0,
         }
         gates.update(over)
@@ -947,6 +963,116 @@ class ClassifierTest(unittest.TestCase):
         self.assertEqual(s["outcome"], "hard-fail")
         self.assertFalse(s["green"])
 
+    # --- the lockfile gate, four ways ---------------------------------------
+
+    def _with_lockfile(self, rc: int) -> dict:
+        return self._classify(
+            self._write(
+                "ev.json",
+                {
+                    "target": "o/r",
+                    "target_sha": "abc1234",
+                    "tests_collected": 7,
+                    "gates": {
+                        "ruff": 0,
+                        "mypy": 0,
+                        "pytest": 0,
+                        "schema_drift": 0,
+                        "transport_boot": 0,
+                        "host_allowlist": 0,
+                        "shipped_artifact": 0,
+                        "promptfoo_rc": 0,
+                        "lockfile": rc,
+                    },
+                },
+            ),
+            # A clean promptfoo output, so the gate under test is the only thing
+            # deciding the outcome — an absent one hard-fails on its own.
+            self._write(
+                "pf.json", {"results": {"stats": {"errors": 0}, "results": []}}
+            ),
+        )
+
+    def test_a_lockfile_finding_turns_the_run_red(self) -> None:
+        s = self._with_lockfile(2)
+        self.assertEqual(s["outcome"], "findings")
+        self.assertTrue(s["lockfile_fail"])
+        self.assertIn("not in force where the install happens", s["_report"])
+
+    def test_no_lockfile_is_reported_and_stays_green(self) -> None:
+        """Exit 3 across 19 of 20 portfolio servers.
+
+        If this turned the run red the gate would be switched off within a day,
+        and the one real finding would go with it. It must not turn green into
+        findings — and it must not disappear either.
+        """
+        s = self._with_lockfile(3)
+        self.assertEqual(s["outcome"], "green")
+        self.assertFalse(s["lockfile_fail"])
+        self.assertTrue(s["lockfile_unmeasured"])
+        self.assertIn("No lockfile — the gate had nothing to compare", s["_report"])
+
+    def test_no_lockfile_does_not_wear_a_tick(self) -> None:
+        """A gate line reading "✅ pass" for a comparison that never happened is
+        the exact substitution every third state in this file exists to stop."""
+        self.assertNotIn(
+            "lockfile gate (declared bound vs. the lock that installs): ✅",
+            self._with_lockfile(3)["_report"],
+        )
+
+    def test_a_moved_checkout_is_a_hard_failure_not_a_finding(self) -> None:
+        """Exit 4 is `probe_provenance`'s MOVED_DURING_RUN.
+
+        The probe read two different trees, so it reached no verdict. Charging
+        that to the target as a dependency defect would be a claim nothing
+        measured.
+        """
+        s = self._with_lockfile(4)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertFalse(s["lockfile_fail"])
+        self.assertIn("MOVED_DURING_RUN", " ".join(s["hard_fail_reasons"]))
+
+    def test_an_unrunnable_lockfile_gate_is_not_a_pass(self) -> None:
+        s = self._with_lockfile(127)
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertFalse(s["lockfile_fail"])
+        self.assertIn("was NOT compared", " ".join(s["hard_fail_reasons"]))
+
+    def test_a_hung_lockfile_gate_reads_as_a_hang(self) -> None:
+        s = self._with_lockfile(124)
+        self.assertTrue(s["hung"])
+        self.assertIn("lockfile gate", s["hung_gates"])
+        self.assertFalse(s["lockfile_fail"])
+
+    def test_an_evidence_file_without_the_gate_hard_fails(self) -> None:
+        """The documented rollout contract, for this gate specifically.
+
+        A Worker image still running the previous nightly-audit.sh genuinely did
+        not run the lockfile gate, and must not be classified as green. Roll the
+        Worker and the Broker together.
+        """
+        ev = self._write(
+            "ev.json",
+            {
+                "target": "o/r",
+                "target_sha": "abc1234",
+                "tests_collected": 7,
+                "gates": {
+                    "ruff": 0,
+                    "mypy": 0,
+                    "pytest": 0,
+                    "schema_drift": 0,
+                    "transport_boot": 0,
+                    "host_allowlist": 0,
+                    "shipped_artifact": 0,
+                    "promptfoo_rc": 0,
+                },  # lockfile missing — an older Worker image
+            },
+        )
+        s = self._classify(ev, "")
+        self.assertEqual(s["outcome"], "hard-fail")
+        self.assertEqual(s["gates"]["lockfile_gate"], 127)
+
 
 class ShippedMetadataPreRunTest(unittest.TestCase):
     """The shipped gate's fast pre-run, as it reaches the summary.
@@ -1002,6 +1128,7 @@ class ShippedMetadataPreRunTest(unittest.TestCase):
                     "schema_drift": 0,
                     "transport_boot": 0,
                     "host_allowlist": 0,
+                    "lockfile": 0,
                     "promptfoo_rc": 0,
                     **gates,
                 },

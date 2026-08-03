@@ -2,7 +2,7 @@
 
 > Gilt für jede Änderung, die dem Evidence-File ein **Pflichtfeld** hinzufügt.
 > Aktuell betroffen: `transport_boot` (#31), `host_allowlist` (#33),
-> `tests_collected` (#34), `shipped_artifact` (#36).
+> `tests_collected` (#34), `shipped_artifact` (#36), `lockfile`.
 
 Der Auditor läuft an zwei Stellen mit **zwei getrennten Kopien desselben Repos**:
 
@@ -156,7 +156,7 @@ python3 - "$run" <<'PY'
 import json, sys, pathlib
 run = pathlib.Path(sys.argv[1])
 ev = json.loads((run/"nightly-evidence.json").read_text())
-need = ["transport_boot","host_allowlist","shipped_artifact"]
+need = ["transport_boot","host_allowlist","shipped_artifact","lockfile"]
 missing = [k for k in need if k not in ev.get("gates",{})]
 print("gates :", json.dumps(ev.get("gates",{}), sort_keys=True))
 print("tests_collected:", ev.get("tests_collected","ABSENT"))
@@ -166,7 +166,7 @@ print("outcome:", s["outcome"], "| exit:", s["exit_code"])
 PY
 ```
 
-Ein `127` bei einem der drei neuen Gates heisst: der Worker fährt noch alten Code
+Ein `127` bei einem der neuen Gates heisst: der Worker fährt noch alten Code
 oder das Gate konnte nicht starten — **kein** Grund, ihn abzuschalten, sondern
 Anlass, in `.audit/logs/` nachzusehen.
 

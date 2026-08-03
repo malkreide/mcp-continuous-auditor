@@ -36,6 +36,7 @@ _GREEN_GATES = {
     "transport_boot": 0,
     "host_allowlist": 0,
     "shipped_artifact": 0,
+    "lockfile": 0,
     "promptfoo_rc": 0,
 }
 

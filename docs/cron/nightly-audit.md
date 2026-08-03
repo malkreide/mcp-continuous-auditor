@@ -20,6 +20,8 @@ never an opinion (`openclaw/workspace/SOUL.md`).
 03:00  cron fires (isolated turn)
   └─ bash scripts/nightly-audit.sh
        1. git pull target (read-only, no push)      ← AGENTS.md / TOOLS.md
+       1b. lockfile gate    (declared bound vs. the lock that installs)
+           — runs BEFORE `uv sync`, which re-locks and would erase the evidence
        2. ruff + mypy + pytest
        3. schema-drift gate  (generate_schemas.py --check)
        4. promptfoo eval     (tool-output contract + OWASP red-team)
@@ -36,13 +38,14 @@ never an opinion (`openclaw/workspace/SOUL.md`).
 
 ### The exit-code contract
 
-`scripts/nightly_audit_report.py` reduces the five gate exit codes plus the
+`scripts/nightly_audit_report.py` reduces the gate exit codes plus the
 promptfoo JSON to one outcome:
 
 - **0 green** — every gate passed.
 - **2 findings** — schema drift (the deterministic schema gate diverged, or a
   promptfoo `is-json`/contract assert failed), a red-team hit (an OWASP plugin
-  case succeeded against the surface), and/or a red ruff/mypy/pytest.
+  case succeeded against the surface), a lockfile whose recorded bound disagrees
+  with `pyproject.toml`, and/or a red ruff/mypy/pytest.
 - **1 hard-fail** — a gate could not *run*: a missing binary, a failed
   `uv sync`, promptfoo could not start, or **promptfoo reported provider/model
   errors**. An unresolvable or unauthorised model is a hard failure, never a

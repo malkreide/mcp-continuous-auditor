@@ -32,7 +32,7 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
   Where it cannot resolve a value it reports `UNVERIFIED`, never clean — [docs/probes/published.md](docs/probes/published.md).
 - **Lockfile probe** — `pyproject.toml` states the bound; does the lockfile the deployment installs from state it too? The bounds PR merged green with `uv.lock` unregenerated: the fix was in the file everybody reads and absent from the file that installs.
   `scripts/lockfile_probe.py` compares the recorded `requires-dist` and the pinned versions, and asks `uv lock --check` / `poetry check --lock` where they exist. `--check` is hard-coded: `uv lock` without it rewrites the evidence.
-  `LOCK_DRIFT` prints both diverging specifiers; `LOCK_UNSATISFIED` says the pinned version violates the declaration — [docs/probes/lockfile.md](docs/probes/lockfile.md).
+  `LOCK_DRIFT` prints both diverging specifiers; in the nightly gate it runs **before `uv sync`**, because `uv sync` re-locks and a gate placed after it reads a file its own harness just repaired — [docs/probes/lockfile.md](docs/probes/lockfile.md).
 - **Doc-claim probe** — do the identifiers the documentation cites exist in the code? An `ARCH-003` justification named ten rubric codes, none of them in `GREEN_RUBRICS`, and review did not catch it.
   `scripts/doc_claim_probe.py` resolves every backticked code, path and membership claim in `README`/`SECURITY` against the non-Markdown files of the repository.
   Standards citations and identifiers belonging to another repository are exempt — and *listed*, because an invisible exemption is a blind spot — [docs/probes/doc-claim.md](docs/probes/doc-claim.md).
