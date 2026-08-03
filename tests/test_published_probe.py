@@ -616,7 +616,7 @@ class ManifestTest(unittest.TestCase):
             ]
         )
         expected, targets, skipped = pp.read_manifest(path)
-        self.assertEqual(targets, ["a-mcp"])
+        self.assertEqual(targets, [("a-mcp", None)])
         self.assertEqual([n for n, _ in skipped], ["nur-github"])
         self.assertTrue(skipped[0][1], "ein Verzicht ohne Begruendung ist keiner")
         self.assertEqual(expected, 2)
@@ -667,6 +667,41 @@ class ManifestTest(unittest.TestCase):
         p.write_text(json.dumps({"eintraege": []}), encoding="utf-8")
         with self.assertRaises(SystemExit):
             pp.read_manifest(p)
+
+    def test_a_declared_start_event_reaches_the_target(self) -> None:
+        """Der Marker, an dem ein Server sein Bedienen ankuendigt, gehoert ihm.
+
+        Eine Vorgabe fuer alle produzierte im Portfolio 38 von 42 Mal
+        `smoke_unverified` — nicht weil die Server schwiegen, sondern weil sie
+        es anders formulieren. Eine Pruefung, die fast ueberall unbestaetigt
+        meldet, wird weggeklickt, und dann uebersieht sie den einen echten Fall
+        (zh-education-mcp 0.2.4 startete gar nicht).
+        """
+        path = self._manifest(
+            [{"id": "a-mcp", "pypi_dist": "a-mcp", "start_event": "a_mcp.startup"}]
+        )
+        _, targets, _ = pp.read_manifest(path)
+        self.assertEqual(targets, [("a-mcp", "a_mcp.startup")])
+
+    def test_a_missing_start_event_is_none_not_an_error(self) -> None:
+        """`start_event` ist optional — anders als `pypi_dist`.
+
+        Fehlend heisst hier "noch nicht erhoben". Das ist ein anderer Zustand
+        als bei `pypi_dist`, wo Fehlen bedeutet, dass das Manifest nicht zu
+        diesem Werkzeug passt: dort kann Stillschweigen alles gruen faerben,
+        hier faellt der Aufrufer nur auf seine Vorgabe zurueck.
+        """
+        path = self._manifest([{"id": "a-mcp", "pypi_dist": "a-mcp"}])
+        _, targets, _ = pp.read_manifest(path)
+        self.assertEqual(targets, [("a-mcp", None)])
+
+    def test_an_empty_start_event_does_not_silently_pass_as_a_marker(self) -> None:
+        """`""` faellt auf die Vorgabe zurueck statt auf "jede Zeile passt"."""
+        path = self._manifest(
+            [{"id": "a-mcp", "pypi_dist": "a-mcp", "start_event": ""}]
+        )
+        _, targets, _ = pp.read_manifest(path)
+        self.assertFalse(targets[0][1] or None)
 
     def test_a_skip_without_a_reason_is_rejected(self) -> None:
         for bad in ("meteoswiss-mcp", "meteoswiss-mcp:   "):

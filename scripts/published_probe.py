@@ -804,15 +804,25 @@ def classify_smoke(
             evidence=evidence,
             detail="announced its start and did not crash",
         )
+    # What it DID say, so the reader can tell "silent" from "says it
+    # differently". Without this the two are one message, and a portfolio where
+    # most servers phrase their start otherwise produces 38 identical
+    # `no_event` lines that say nothing about which one is actually mute — the
+    # kind of check people stop reading, and then it misses the real case.
+    said = "\n".join(
+        line.strip() for line in (text or "").splitlines() if line.strip()
+    )[:400]
     return Smoke(
         status="no_event",
         entrypoint=entrypoint,
         exit_code=exit_code,
+        evidence=said,
         detail=(
             f"the console script ran for {seconds:.0f}s with stdin closed and did "
             f"not crash, but never announced {event!r}. That is not a pass: this "
             "probe did not see the server reach serving, and not seeing it is not "
             "evidence that it did"
+            + (f". It did say: {said!r}" if said else ". It said nothing at all")
         ),
     )
 
@@ -1337,7 +1347,10 @@ def read_manifest(path: Path) -> tuple[int, list[str], list[tuple[str, str]]]:
         if dist is None:
             unpublished.append((s["id"], "kein Paket auf dem Index (laut Manifest)"))
         elif isinstance(dist, str) and dist.strip():
-            targets.append(dist)
+            # `start_event` ist optional: fehlt es oder ist es null, heisst das
+            # "nicht erhoben", nicht "hat keins". Der Aufrufer faellt dann auf
+            # seine Vorgabe zurueck — und der Befund sagt, dass er das tat.
+            targets.append((dist, s.get("start_event")))
         else:
             raise SystemExit(
                 f"{path}: Eintrag {s['id']}: 'pypi_dist' ist weder Name noch null"
@@ -1435,10 +1448,10 @@ def main() -> int:
         if args.dists:
             raise SystemExit("--manifest und eine Dist-Liste schliessen sich aus")
         expected, probeable, skipped = read_manifest(args.manifest)
-        targets = [d for d in probeable if d not in allowed]
-        skipped += [(d, allowed[d]) for d in probeable if d in allowed]
+        targets = [(d, ev) for d, ev in probeable if d not in allowed]
+        skipped += [(d, allowed[d]) for d, _ in probeable if d in allowed]
     elif args.dists:
-        targets = args.dists
+        targets = [(d, None) for d in args.dists]
     else:
         raise SystemExit("weder Dist-Namen noch --manifest angegeben")
 
@@ -1455,7 +1468,7 @@ def main() -> int:
     prov = probe_provenance.capture_auditor()
 
     results = []
-    for dist in targets:
+    for dist, declared_event in targets:
         try:
             results.append(
                 probe(
@@ -1465,7 +1478,7 @@ def main() -> int:
                     version=args.version,
                     smoke=not args.no_smoke,
                     smoke_seconds=args.smoke_seconds,
-                    start_event=args.start_event,
+                    start_event=declared_event or args.start_event,
                     index_url=args.index_url,
                     check_caps=not args.no_cap_check,
                 )
@@ -1486,7 +1499,7 @@ def main() -> int:
     # Ein Ziel ohne Ergebnis waere ein stiller Ausfall — genau die Sorte, die
     # aussieht wie ein sauberer Lauf. Beides zaehlt gegen dieselbe Soll-Zahl.
     prov.recheck()
-    missing = [d for d in targets if d not in {r.dist for r in results}]
+    missing = [d for d, _ in targets if d not in {r.dist for r in results}]
     coverage_ok = not args.manifest or (
         len(results) + len(skipped) == expected and not missing
     )
