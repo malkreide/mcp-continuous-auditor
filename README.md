@@ -1,6 +1,6 @@
 # MCP Continuous Auditor
 
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![Node](https://img.shields.io/badge/node-20+-green)

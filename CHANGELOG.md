@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-03 — the probe family, and what a report may not claim
+
+Six weeks of accumulation get a version. `0.1.0` described an auditor with one
+deterministic gate (promptfoo plus schema drift) against one target repository.
+What ships here is a **family of probes**, each answering a question that the
+gate before it could not see — and, running through all of them, one rule about
+what a report is allowed to say.
+
+**The probes, in the order the gaps appeared.** Recall floors, because a
+collapsed result set keeps its JSON shape and a structural diff cannot see it.
+Identity, because a hand-maintained version in the User-Agent drifts silently —
+12 of 30 servers were sending a wrong one, 4 of them a wrong major. Shipped,
+because CI tests the branch and users install the artifact. Yank, published,
+lockfile, doc-claim and bilingual parity followed, each from a case where every
+existing check was green and the answer was still wrong.
+
+**The rule underneath them.** Every probe distinguishes *«could not measure»*
+from *«in order»* — `NO_TAGS`, `STALE_ARTIFACT`, `UNCONFIRMED`, `UNVERIFIED`,
+`LOCK_DRIFT` — and every report names the commit it is about. If the tree moved
+mid-run, the status is `MOVED_DURING_RUN` and the exit code is `4`: no verdict,
+because the run did not read one tree. A probe that degrades into a plausible
+success is the exact failure it exists to catch.
+
+**Operationally**, the nightly audit gained the gates that go with those probes,
+including the lockfile gate placed deliberately *before* `uv sync`, because
+`uv sync` re-locks and a gate after it reads a file its own harness just
+repaired.
+
+Version `0.2.0` rather than `0.1.1`: several of these entries change existing
+behaviour (`release_gap.py` merged into `shipped_probe.py`, its compatibility
+shim removed, two tests re-encoding a changed policy). Under semantic versioning
+before `1.0.0`, that is a minor bump — the API is not yet stable, and this
+release does not claim it is.
+
+The individual entries below are unchanged; only this summary and the heading
+are new.
+
 ### Added — the lockfile gate runs in the nightly audit, and it runs BEFORE `uv sync`
 
 `lockfile_probe.py` shipped standalone. It is now step **1b** of
