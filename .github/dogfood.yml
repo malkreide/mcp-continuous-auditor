@@ -1,0 +1,188 @@
+# Dogfooding classification — one entry per executing step of every shipped
+# `*.yml.template`.
+#
+# The auditor ships CI templates that impose gates on the repos it audits. For
+# each of those gates there are exactly four honest answers, and this file is
+# where the answer is written down:
+#
+#   mirrored     the auditor runs an equivalent on its own code. `by` names the
+#                own step; the guard verifies that step really exists.
+#   target-only  genuinely inapplicable here (needs an importable MCP server, a
+#                published package, a model key). `note` required.
+#   setup        plumbing that imposes no gate — checkout, install, sync,
+#                artefact upload. `note` optional.
+#   gap          applicable here, and not run. `note` required. Surfaced as a CI
+#                warning on every run, deliberately not a hard failure — see the
+#                note in scripts/dogfood_gate.py on why.
+#
+# Every step is listed, `uses:`-based ones included. An earlier version skipped
+# those on the reasoning that actions are not gates — which held for
+# `actions/checkout` and stopped there: two templates open issues and PRs
+# through actions, and the guard called itself complete without ever having
+# seen them. Found in review of #55.
+#
+# A template step with no entry here turns the guard red. That is the point:
+# the gap that started this file (`Lint` → `uv run ruff check`, shipped to every
+# target, never run here across 57 own Python files) was not a decision anyone
+# took — it was one nobody was ever asked to take.
+#
+# Keys are `<template file>::<job>::<step name>`, verbatim from the YAML.
+
+steps:
+  # ---------------------------------------------------------------- ci.yml.template
+  "ci.yml.template::verify::Set up Python":
+    status: setup
+
+  "ci.yml.template::verify::Sync dependencies":
+    status: setup
+
+  "ci.yml.template::verify::Lint":
+    status: mirrored
+    by: "lint.yml::ruff::Lint"
+    note: >-
+      The original gap. `ruff check` shipped to every target from the start and
+      ran here for the first time in #52. `lint.yml` now also carries
+      `ruff format --check`, which the template does not demand.
+
+  "ci.yml.template::verify::Type-check":
+    status: gap
+    note: >-
+      `mypy` is demanded of every target and is not run here, although it would
+      apply: scripts/ carries 378 annotated function signatures and 22 modules
+      opt into `from __future__ import annotations`. Introducing it is a real
+      decision with real work behind it — this entry exists so the decision is
+      visible instead of absent.
+
+  "ci.yml.template::verify::Test":
+    status: mirrored
+    by: "tests.yml::unittest::Unit tests, with no dependency-driven skips tolerated"
+    note: >-
+      Different runner, same gate: the template runs `pytest` against the
+      target's src/, the auditor discovers its stdlib `unittest` suite. The own
+      step is stricter — it fails on a dependency-driven skip, which `pytest`
+      would report as a pass.
+
+  "ci.yml.template::determ::Sync Python deps (the target's own SDK provides the in-memory client)":
+    status: setup
+
+  "ci.yml.template::determ::Schema-drift gate — regenerate from type hints, fail on any diff":
+    status: target-only
+    note: >-
+      `schemas/generate_schemas.py` derives schemas from an importable MCP
+      server's type hints; its own docstring says «Run this in the TARGET
+      MCP-server repo». There is no server here. The script itself is not
+      unexercised: tests/test_smoke_target.py drives it against a fixture
+      server.
+
+  "ci.yml.template::determ::Install pinned promptfoo (npm ci from committed lockfile)":
+    status: setup
+
+  "ci.yml.template::determ::Run promptfoo determ profile (no model key required)":
+    status: target-only
+    note: >-
+      Evaluates the target server's tools in-process. No server here, so
+      nothing to evaluate.
+
+  "ci.yml.template::graded::Sync Python deps (the target's own SDK provides the in-memory client)":
+    status: setup
+
+  "ci.yml.template::graded::Enforce writer != grader family (independent check)":
+    status: target-only
+    note: >-
+      Guards the writer/grader independence of a promptfoo run. Only meaningful
+      where that run happens.
+
+  "ci.yml.template::graded::Install pinned promptfoo (npm ci from committed lockfile)":
+    status: setup
+
+  "ci.yml.template::graded::Run promptfoo graded profile (llm-rubric + committed red-team)":
+    status: target-only
+    note: >-
+      Model-graded evaluation of the target server's tools. No server here.
+
+  "ci.yml.template::graded::Evaluate the generated red-team set (if committed)":
+    status: target-only
+    note: >-
+      Evaluates red-team cases against the target server's tools. No server
+      here.
+
+  # ---------------------------------------------------------- live-probe.yml.template
+  "live-probe.yml.template::probe::Probe live endpoints (stdlib only, no deps)":
+    status: target-only
+    note: >-
+      `scripts/live_probe.py` probes the upstream endpoints a target server
+      depends on. The auditor has no upstream of its own.
+
+  "live-probe.yml.template::probe::Install the server for the recall canary":
+    status: setup
+
+  "live-probe.yml.template::probe::Recall canary — call the tools, assert the floors":
+    status: target-only
+    note: >-
+      Calls the target server's tools and asserts recall floors. No tools here.
+      The pure core (`evaluate()`) is covered by tests/test_recall_floors.py.
+
+  "live-probe.yml.template::probe::Merge both reports":
+    status: setup
+
+  # -------------------------------------------------------- redteam-regen.yml.template
+  "redteam-regen.yml.template::regen::Regenerate committed red-team cases":
+    status: target-only
+    note: >-
+      Regenerates red-team cases against the target server. No server here.
+
+  # ------------------------------------------------ uses-basierte Schritte
+  # Reine Plumbing-Schritte. Sie stehen hier, damit die Liste vollstaendig ist,
+  # nicht weil sie etwas auferlegen.
+
+  "ci.yml.template::verify::actions/checkout@v4":
+    status: setup
+
+  "ci.yml.template::verify::Install uv":
+    status: setup
+
+  "ci.yml.template::determ::actions/checkout@v4":
+    status: setup
+
+  "ci.yml.template::determ::actions/setup-node@v4":
+    status: setup
+
+  "ci.yml.template::determ::Install uv":
+    status: setup
+
+  "ci.yml.template::graded::actions/checkout@v4":
+    status: setup
+
+  "ci.yml.template::graded::actions/setup-node@v4":
+    status: setup
+
+  "ci.yml.template::graded::Install uv":
+    status: setup
+
+  "live-probe.yml.template::probe::actions/checkout@v4":
+    status: setup
+
+  "live-probe.yml.template::probe::actions/setup-python@v5":
+    status: setup
+
+  "live-probe.yml.template::probe::Upload reports":
+    status: setup
+
+  "redteam-regen.yml.template::regen::actions/checkout@v4":
+    status: setup
+
+  "redteam-regen.yml.template::regen::actions/setup-node@v4":
+    status: setup
+
+  "live-probe.yml.template::probe::Open or update the drift tracking issue":
+    status: target-only
+    note: >-
+      Opens an issue in the TARGET repo when its live probe finds drift. The
+      auditor has no upstream of its own to drift against. Not plumbing —
+      shipped behaviour, and the reason the uses-Schritte gehoeren hierher.
+
+  "redteam-regen.yml.template::regen::Open a PR if the red-team set changed":
+    status: target-only
+    note: >-
+      Opens a PR in the TARGET repo with regenerated red-team cases. There is
+      no red-team set here to regenerate.
