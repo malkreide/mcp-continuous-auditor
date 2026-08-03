@@ -37,8 +37,16 @@ def _pr(**over: object) -> dict:
 def _manifest(**over: object) -> Path:
     base = {
         "repositories": [
-            {"id": "a-mcp", "repository": "https://github.com/o/a-mcp", "archived": False},
-            {"id": "b-mcp", "repository": "https://github.com/o/b-mcp", "archived": False},
+            {
+                "id": "a-mcp",
+                "repository": "https://github.com/o/a-mcp",
+                "archived": False,
+            },
+            {
+                "id": "b-mcp",
+                "repository": "https://github.com/o/b-mcp",
+                "archived": False,
+            },
         ]
     }
     base.update(over)
@@ -49,7 +57,9 @@ def _manifest(**over: object) -> Path:
 
 class ClassifyTest(unittest.TestCase):
     def test_clean_with_checks_is_no_finding(self) -> None:
-        self.assertIsNone(ph.classify(_pr(), checks=3, age_minutes=60, grace_minutes=10))
+        self.assertIsNone(
+            ph.classify(_pr(), checks=3, age_minutes=60, grace_minutes=10)
+        )
 
     def test_dirty_is_unbuildable(self) -> None:
         """The incident: GitHub cannot build a merge ref, so no workflow starts."""
@@ -88,7 +98,9 @@ class ClassifyTest(unittest.TestCase):
         )
 
     def test_zero_checks_past_the_grace_period(self) -> None:
-        self.assertEqual(ph.classify(_pr(), checks=0, age_minutes=11, grace_minutes=10), "no_checks")
+        self.assertEqual(
+            ph.classify(_pr(), checks=0, age_minutes=11, grace_minutes=10), "no_checks"
+        )
 
     def test_zero_checks_within_the_grace_period_is_silent(self) -> None:
         """Below the grace period, "no checks" and "about to start" look alike."""
@@ -107,7 +119,9 @@ class ClassifyTest(unittest.TestCase):
         Getting this wrong would turn every draft into a finding, and a probe
         that fires on everything is one nobody reads.
         """
-        self.assertIsNone(ph.classify(_pr(mergeable_state="draft", draft=True), 1, 60, 10))
+        self.assertIsNone(
+            ph.classify(_pr(mergeable_state="draft", draft=True), 1, 60, 10)
+        )
 
 
 class WiringTest(unittest.TestCase):
@@ -246,24 +260,31 @@ class ManifestTest(unittest.TestCase):
     def test_non_slug_repository_is_refused(self) -> None:
         with self.assertRaises(SystemExit):
             ph.read_manifest(
-                _manifest(repositories=[{"id": "a", "repository": "git@github.com:o/a.git"}])
+                _manifest(
+                    repositories=[{"id": "a", "repository": "git@github.com:o/a.git"}]
+                )
             )
 
 
 class ExitCodeTest(unittest.TestCase):
     """The three outcomes must stay apart: nothing found / found / did not look."""
 
-    def _run(self, routes: dict[str, object] | None, repos: list[dict], *extra: str) -> tuple[int, str]:
+    def _run(
+        self, routes: dict[str, object] | None, repos: list[dict], *extra: str
+    ) -> tuple[int, str]:
         orig = ph._get
         if routes is None:
+
             def fake(url: str, token: str) -> object:
                 raise OSError("Netz weg")
         else:
+
             def fake(url: str, token: str) -> object:
                 for frag, payload in routes.items():
                     if frag in url:
                         return payload
                 raise AssertionError(url)
+
         ph._get = fake  # type: ignore[assignment]
         self.addCleanup(lambda: setattr(ph, "_get", orig))
         os.environ["GITHUB_TOKEN"] = "tok"
@@ -280,7 +301,12 @@ class ExitCodeTest(unittest.TestCase):
     ]
     _CLEAN: ClassVar[dict[str, object]] = {
         "/pulls?state=open": [{"number": 1}],
-        "/pulls/1": {"number": 1, "title": "t", "mergeable_state": "clean", "head": {"sha": "abc"}},
+        "/pulls/1": {
+            "number": 1,
+            "title": "t",
+            "mergeable_state": "clean",
+            "head": {"sha": "abc"},
+        },
         "/check-runs": {"total_count": 2},
         "/commits/abc": {"commit": {"committer": {"date": "2020-01-01T00:00:00Z"}}},
     }
@@ -294,7 +320,10 @@ class ExitCodeTest(unittest.TestCase):
         """A finding and an incomplete sweep are different outcomes."""
         routes = dict(self._CLEAN)
         routes["/pulls/1"] = {
-            "number": 1, "title": "t", "mergeable_state": "dirty", "head": {"sha": "abc"}
+            "number": 1,
+            "title": "t",
+            "mergeable_state": "dirty",
+            "head": {"sha": "abc"},
         }
         rc, _ = self._run(routes, self._REPO)
         self.assertEqual(rc, 2)

@@ -100,7 +100,9 @@ class Finding:
         return f"{self.repo}#{self.number} [{self.status}] {self.title[:60]} — {ev}"
 
 
-def read_manifest(path: Path) -> tuple[int, list[tuple[str, str]], list[tuple[str, str]]]:
+def read_manifest(
+    path: Path,
+) -> tuple[int, list[tuple[str, str]], list[tuple[str, str]]]:
     """Split the manifest into a total, targets, and justified omissions.
 
     The total counts EVERY declared repository, skipped or not. Counting only
@@ -144,7 +146,11 @@ def read_manifest(path: Path) -> tuple[int, list[tuple[str, str]], list[tuple[st
         # was es ist: ein kaputter Eintrag im Manifest.
         slug = url.removeprefix("https://github.com/")
         parts = slug.split("/")
-        if not url.startswith("https://github.com/") or len(parts) != 2 or not all(parts):
+        if (
+            not url.startswith("https://github.com/")
+            or len(parts) != 2
+            or not all(parts)
+        ):
             raise SystemExit(
                 f"{path}: {r['id']}: 'repository' ist keine "
                 f"github.com/<owner>/<name>-URL ({url!r})"
@@ -204,7 +210,9 @@ def check_run_count(repo: str, sha: str, token: str) -> int:
 
 
 def commit_age_minutes(repo: str, sha: str, token: str, now: dt.datetime) -> float:
-    data = _get(f"{_API}/repos/{repo}/commits/{urllib.parse.quote(sha, safe='')}", token)
+    data = _get(
+        f"{_API}/repos/{repo}/commits/{urllib.parse.quote(sha, safe='')}", token
+    )
     when = data.get("commit", {}).get("committer", {}).get("date")
     if not when:
         # No timestamp is not "brand new". Treating it as fresh would suppress
@@ -253,7 +261,9 @@ def inspect(repo: str, token: str, grace: float, now: dt.datetime) -> list[Findi
                         "draft": pr.get("draft"),
                         "head": sha[:7],
                         "check_runs": checks,
-                        "head_age_min": round(age) if age != float("inf") else "unbekannt",
+                        "head_age_min": round(age)
+                        if age != float("inf")
+                        else "unbekannt",
                     },
                 )
             )
@@ -262,8 +272,15 @@ def inspect(repo: str, token: str, grace: float, now: dt.datetime) -> list[Findi
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="pr_health")
-    p.add_argument("--manifest", required=True, type=Path, help="coverage_manifest.py --format json")
-    p.add_argument("--token-env", default="GITHUB_TOKEN", help="env var holding the PAT")
+    p.add_argument(
+        "--manifest",
+        required=True,
+        type=Path,
+        help="coverage_manifest.py --format json",
+    )
+    p.add_argument(
+        "--token-env", default="GITHUB_TOKEN", help="env var holding the PAT"
+    )
     p.add_argument(
         "--grace-minutes",
         type=float,
