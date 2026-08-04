@@ -32,6 +32,29 @@ jobs:
   sweep:
     runs-on: ubuntu-latest
     steps:
+      # Zuerst, nicht nach dem Setup: fehlt der Token, ist jeder weitere
+      # Schritt Arbeit fuer einen Lauf, der ohnehin abbricht.
+      #
+      # Der Token braucht Lesezugriff auf alle drei Endpunkte, die der Sweep
+      # anfaesst — Pull Requests allein reicht nicht, und der Lauf mit nur
+      # dieser einen Berechtigung scheitert erst mitten im Sweep an einem 403.
+      # Fehlt der Token ganz, bricht der Lauf ab statt gruen durchzulaufen: ein
+      # Sweep, der nichts geprueft hat, und einer, der nichts gefunden hat,
+      # duerfen sich nicht denselben Ausgang teilen (OPS-005).
+      - name: Token vorhanden?
+        env:
+          TOKEN: ${{ secrets.PORTFOLIO_READ_TOKEN }}
+        run: |
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::Secret PORTFOLIO_READ_TOKEN fehlt. Noetig ist ein fein" \
+                 "granulierter PAT auf die Portfolio-Repos mit Repository-Rechten" \
+                 "Pull requests: Read (offene PRs, mergeable_state), Checks: Read" \
+                 "(Anzahl Check-Runs) und Contents: Read (Commit-Alter) — Metadata:" \
+                 "Read setzt GitHub selbst. Ohne ihn prueft dieser Lauf nichts —" \
+                 "und das darf nicht wie ein sauberer Lauf aussehen."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Portfolio-Manifest holen
@@ -43,22 +66,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-
-      # Der Token braucht Lesezugriff auf Pull Requests aller Portfolio-Repos.
-      # Fehlt er, bricht der Lauf ab statt gruen durchzulaufen: ein Sweep, der
-      # nichts geprueft hat, und einer, der nichts gefunden hat, duerfen sich
-      # nicht denselben Ausgang teilen (OPS-005).
-      - name: Token vorhanden?
-        env:
-          TOKEN: ${{ secrets.PORTFOLIO_READ_TOKEN }}
-        run: |
-          if [ -z "${TOKEN}" ]; then
-            echo "::error::Secret PORTFOLIO_READ_TOKEN fehlt (fein granulierter PAT," \
-                 "Lesezugriff auf Pull Requests der Portfolio-Repos). Ohne ihn" \
-                 "prueft dieser Lauf nichts — und das darf nicht wie ein" \
-                 "sauberer Lauf aussehen."
-            exit 1
-          fi
 
       - name: Zielliste erzeugen
         run: python .portfolio/scripts/coverage_manifest.py --format json > manifest.json

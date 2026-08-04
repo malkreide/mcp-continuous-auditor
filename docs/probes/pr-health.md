@@ -100,8 +100,21 @@ GITHUB_TOKEN=… python scripts/pr_health.py --manifest manifest.json
 ```
 
 `.github/workflows/pr-health.yml` runs it daily. It needs
-`PORTFOLIO_READ_TOKEN` — a fine-grained PAT with read access to pull requests
-across the portfolio repos; the workflow's own `GITHUB_TOKEN` is scoped to this
-repository alone, and 47 are in question. Without the secret the workflow
-**fails** rather than no-opping: a sweep that checked nothing and a sweep that
-found nothing must not share an outcome.
+`PORTFOLIO_READ_TOKEN` — a fine-grained PAT covering the portfolio repos; the
+workflow's own `GITHUB_TOKEN` is scoped to this repository alone, and 47 are in
+question. Without the secret the workflow **fails** rather than no-opping: a
+sweep that checked nothing and a sweep that found nothing must not share an
+outcome.
+
+The sweep reads three endpoint families, so "read access to pull requests" is
+not enough on its own — a token with only that permission gets through the
+first call and then takes a 403 mid-sweep:
+
+| Repository permission | Endpoint | Used for |
+|---|---|---|
+| Pull requests: Read | `/repos/…/pulls`, `/repos/…/pulls/{n}` | the open list, and `mergeable_state` |
+| Checks: Read | `/repos/…/commits/{sha}/check-runs` | the check-run count behind `no_checks` |
+| Contents: Read | `/repos/…/commits/{sha}` | commit timestamp for `--grace-minutes` |
+
+`Metadata: Read` comes with every fine-grained PAT and is not a separate
+choice. Nothing here writes, so no write scope belongs on this token.
