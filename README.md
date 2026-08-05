@@ -201,7 +201,7 @@ Five repositories, one lifecycle. Each answers a different question, in the orde
 |---|---|---|
 | before the build | [`mcp-data-source-probe-skill`](https://github.com/malkreide/mcp-data-source-probe-skill) | Is the source usable, and what does it hold? Its step 1.4 recall ground truth is what this project's `min_count` floors are measured against |
 | in the build | [`mcp-data-fidelity-skill`](https://github.com/malkreide/mcp-data-fidelity-skill) | Does it return what the source actually holds? Its rule 5 — recall in the tests, not the description — is the reason the probes carry floors rather than schema assertions |
-| in the build | [`mcp-transport-hardening-skill`](https://github.com/malkreide/mcp-transport-hardening-skill) | Does it come up, and does it turn away the right callers? The transport path the canary probe exercises live |
+| in the build | [`mcp-transport-hardening-skill`](https://github.com/malkreide/mcp-transport-hardening-skill) | Does it come up, turn away the right callers, and stay stateless? Its rules 1–4 are what `transport_boot_probe.py` boots the target to check — both repositories cite the same incident, `parlament-mcp#29` — and its stateless and legacy-SSE rules are what `spec_probe.py` reports as `SPEC_DRIFT` and `LEGACY_TRANSPORT` |
 | after the build | [`mcp-audit-skill`](https://github.com/malkreide/mcp-audit-skill) | Does it hold up against the catalogue? Its `OPS-005` (pipeline honesty) came from this repository — [#29](https://github.com/malkreide/mcp-continuous-auditor/pull/29), a test suite no workflow ever ran |
 | in operation | **`mcp-continuous-auditor`** | **This project:** does it still hold up tomorrow? |
 

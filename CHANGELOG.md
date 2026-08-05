@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the chain row for `mcp-transport-hardening-skill`, and the probe it credits
+
+That skill went to **v2.0.0**, seven rules to twelve, following spec
+`2026-07-28`. Its row here still asked only «does it come up, and does it turn
+away the right callers?» — which is now two thirds of the question. The
+stateless half is missing, and this repository is the one that measures it:
+`spec_probe.py` exists precisely because «which spec is this server on?» had no
+answer anywhere before it.
+
+**And the row credited the wrong probe.** It said the transport path was «the
+transport path the canary probe exercises live». The canary
+(`recall_canary.py`) calls a server's own tools and asserts a recall floor — it
+is the answer to `mcp-data-fidelity-skill`, not to transport hardening. The
+probe that boots the target under each configured transport and speaks real MCP
+to it is `transport_boot_probe.py`, whose own docstring cites
+`parlament-mcp#29` — the same incident the transport skill's rules 1 and 2 come
+from. Both repositories were describing the same event and only one of them
+named it.
+
+Corrected in both language versions, with `spec_probe.py`'s `SPEC_DRIFT` and
+`LEGACY_TRANSPORT` named for the stateless and legacy-SSE rules. No probe, gate
+or schema changed — this is the map, not the territory.
+
 ### Fixed — the nightly routing closes its issues, and knows when it may not
 
 The other half of the delivery path #66 repaired. `sync_findings_issues.py` ran
