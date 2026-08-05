@@ -39,6 +39,9 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 - **Bilingual parity probe** — the portfolio is bilingual and only the English side moves first. Both files render, so a section missing on one side is invisible.
   `scripts/parity_probe.py` compares heading skeletons, per-section bullet counts, tagged code blocks and link targets — never the prose, which is *supposed* to differ.
   `TRANSLATION_LAG` counts commits that touched the base after the translation was last updated: the case every structural check passes — [docs/probes/parity.md](docs/probes/parity.md).
+- **Reference-drift probe** — a skill repository ships code meant to be copied into servers, and after the copy nobody is ever looking at both halves. On 2026-08-03 one template carried five defects that eleven servers had already fixed, one at a time; none of the eleven reviews could see it.
+  `scripts/reference_drift_probe.py` compares the *properties* the template guarantees — never its text, which every adopter renames — over a mapping declared in an adoption manifest ([adoption.example.toml](adoption.example.toml)) and never guessed; a missing manifest is itself the finding.
+  `REFERENCE_STALE` is reported ahead of `REFERENCE_UNADOPTED` because a stale template is a defect being distributed, and a unanimity layer catches the fixes nobody wrote a property for — [docs/probes/reference-drift.md](docs/probes/reference-drift.md).
 - **Spec probe** — which MCP protocol version does the server actually *speak*? The boot gate carried one hand-maintained literal (`"2025-06-18"`), sent it in every request, and threw the server's answer away — so no report here could name a target's spec.
   `scripts/spec_probe.py` compares the source, the *installed* SDK, `portfolio.json`'s `mcp_spec_version` and the live wire, and reports `SPEC_DRIFT`, `LEGACY_TRANSPORT` with a deadline countdown, or `UNVERIFIED` — never «could not measure» as «in sync».
   `SPEC_UNDECLARED` is a note and not a finding, because under the current SDKs the version belongs to the SDK — [docs/probes/spec.md](docs/probes/spec.md).
@@ -133,7 +136,8 @@ openclaw/         OpenClaw gateway config + policy-as-code (SOUL/AGENTS/TOOLS)
 openclaw/cron/    nightly-audit cron job spec + installer (daily 03:00 → Telegram)
 skills/           python-auditor, fastmcp-testing, promptfoo-eval,
                   identity-probe, published-probe, shipped-probe, yank-probe,
-                  lockfile-probe, doc-claim-probe, parity-probe
+                  lockfile-probe, doc-claim-probe, parity-probe,
+                  reference-drift-probe
                   (shipped-probe absorbed the former release-gap skill)
 schemas/          generated tool-output JSON-Schemas = the drift detector
 promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures
@@ -160,13 +164,20 @@ scripts/          audit harness, live-probe, nightly-audit core, budget guard,
                   doc_claim_probe.py = every identifier the docs cite must
                   resolve in the code; parity_probe.py = the EN/DE pair must
                   stay structurally parallel
+                  reference_drift_probe.py = the code a skill repo ships for
+                  copying, against the servers that copied it — in BOTH
+                  directions, over a mapping declared in an adoption manifest
+                  and never guessed, comparing the properties the template
+                  guarantees rather than its text
                   probe_provenance.py = the HEAD SHA every report carries, and
                   the MOVED_DURING_RUN status when the tree changed underneath
 targets.example.yaml  format reference for the fan-out target list; the real
                   targets.yaml is gitignored (inventory, not source)
+adoption.example.toml  format reference for the reference-drift mapping; the
+                  real one lives in the skill repo, beside its templates
 relay/            optional Cloudflare Worker for real-time Telegram push intake
 tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
-tests/            stdlib unit tests (687 in 30 files) — run by .github/workflows/tests.yml
+tests/            stdlib unit tests (902 in 37 files) — run by .github/workflows/tests.yml
 .github/          tests.yml = the auditor's own suite; *.yml.template = CI for the target repo
 docs/plans/       the v2 build plan
 docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)

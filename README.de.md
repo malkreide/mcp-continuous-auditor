@@ -39,6 +39,9 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 - **Bilinguale Paritäts-Probe** — das Portfolio ist zweisprachig, und nur die englische Seite bewegt sich zuerst. Beide Dateien rendern, eine fehlende Sektion auf einer Seite ist unsichtbar.
   `scripts/parity_probe.py` vergleicht Überschriften-Skelette, Aufzählungszahlen je Sektion, ausgezeichnete Code-Blöcke und Linkziele — nie die Prosa, die *sich* unterscheiden soll.
   `TRANSLATION_LAG` zählt Commits, die das Original nach der letzten Aktualisierung der Übersetzung berührt haben: der Fall, den jede strukturelle Prüfung besteht — [docs/probes/parity.md](docs/probes/parity.md).
+- **Reference-Drift-Probe** — ein Skill-Repo liefert Code aus, der in Server kopiert werden soll, und nach dem Kopieren schaut niemand mehr auf beide Hälften zugleich. Am 3.8.2026 trug eine Vorlage fünf Defekte, die elf Server längst einzeln behoben hatten; kein einziges der elf Reviews konnte es sehen.
+  `scripts/reference_drift_probe.py` vergleicht die *Eigenschaften*, die die Vorlage zusichert — nie ihren Text, den jeder Übernehmende umbenennt — über eine im Adoptions-Manifest deklarierte Zuordnung ([adoption.example.toml](adoption.example.toml)), nie über eine geratene; ein fehlendes Manifest ist selbst der Befund.
+  `REFERENCE_STALE` steht vor `REFERENCE_UNADOPTED`, denn eine veraltete Vorlage ist ein Defekt in Verteilung, und eine Einstimmigkeitsschicht findet die Fixes, für die niemand eine Eigenschaft aufgeschrieben hat — [docs/probes/reference-drift.md](docs/probes/reference-drift.md).
 - **Spec-Probe** — welche MCP-Protokollversion *spricht* der Server tatsächlich? Das Boot-Gate trug ein einziges handgepflegtes Literal (`"2025-06-18"`), schickte es in jedem Request und verwarf die Antwort des Servers — kein Report hier konnte die Spec eines Ziels benennen.
   `scripts/spec_probe.py` vergleicht Quelltext, *installiertes* SDK, `mcp_spec_version` aus `portfolio.json` und den Draht und meldet `SPEC_DRIFT`, `LEGACY_TRANSPORT` mit Frist-Countdown oder `UNVERIFIED` — nie «nicht messbar» als «in sync».
   `SPEC_UNDECLARED` ist eine Notiz und kein Befund, denn unter den aktuellen SDKs gehört die Version dem SDK — [docs/probes/spec.md](docs/probes/spec.md).
@@ -138,7 +141,8 @@ openclaw/         OpenClaw-Gateway-Config + Policy-as-Code (SOUL/AGENTS/TOOLS)
 openclaw/cron/    nightly-audit Cron-Job-Spec + Installer (täglich 03:00 → Telegram)
 skills/           python-auditor, fastmcp-testing, promptfoo-eval,
                   identity-probe, published-probe, shipped-probe, yank-probe,
-                  lockfile-probe, doc-claim-probe, parity-probe
+                  lockfile-probe, doc-claim-probe, parity-probe,
+                  reference-drift-probe
                   (shipped-probe hat den früheren release-gap-Skill aufgenommen)
 schemas/          generierte Tool-Output-JSON-Schemas = der Drift-Detektor
 promptfoo/        deterministische Asserts, Schema-Drift, Red-Team + Fixtures
@@ -167,13 +171,20 @@ scripts/          Audit-Harness, Live-Probe, nightly-audit-Cron-Kern, Budget-Gua
                   doc_claim_probe.py = jeder von der Doku zitierte Identifikator
                   muss im Code auflösbar sein; parity_probe.py = das EN/DE-Paar
                   muss strukturell parallel bleiben
+                  reference_drift_probe.py = der Code, den ein Skill-Repo zum
+                  Kopieren ausliefert, gegen die Server, die ihn kopiert haben
+                  — in BEIDE Richtungen, über eine im Adoptions-Manifest
+                  deklarierte, nie geratene Zuordnung, und im Vergleich der
+                  zugesicherten Eigenschaften statt des Texts
                   probe_provenance.py = der HEAD-SHA, den jeder Report trägt,
                   und der Status MOVED_DURING_RUN, wenn der Baum sich bewegt hat
 targets.example.yaml  Formatreferenz für die Ziel-Liste der Fächerung; die echte
                   targets.yaml ist gitignored (Inventar, kein Quellcode)
+adoption.example.toml  Formatreferenz für die Zuordnung der Reference-Drift-
+                  Probe; die echte liegt im Skill-Repo, neben den Vorlagen
 relay/            optionaler Cloudflare-Worker für Telegram-Push-Intake in Echtzeit
 tensorzero/       Phase 5: LLM-Gateway-Config + Stack (Cost-Caps, A/B, Audit-Trail)
-tests/            stdlib-Unit-Tests (687 in 30 Dateien) — laufen via
+tests/            stdlib-Unit-Tests (902 in 37 Dateien) — laufen via
                   .github/workflows/tests.yml
 .github/          tests.yml = die eigene Suite des Auditors;
                   *.yml.template = CI für das Ziel-Repo
