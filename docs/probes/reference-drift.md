@@ -202,7 +202,16 @@ Every failure to read is a named `UNVERIFIED` entry, never an absence:
 
 Every run states its **coverage** — n of m declared sites read. Findings from
 the sites that *were* read still stand; the run simply may not be read as
-evidence about the ones that were not. A `SITE_UNREADABLE` entry prints the
+evidence about the ones that were not.
+
+The two halves of the declared check have different prerequisites, and it is
+worth being precise about which. Whether a *server* lags needs that server to
+have been read. Whether the *template* satisfies a property the manifest itself
+declares needs nothing but the template — it is a claim about one file. So that
+half runs with no checkouts at all, and says in the finding that how far the
+servers have moved was not measured. The first version gated both on the
+checkouts, which meant a fresh manifest produced no declared finding on the
+machine it was written on: the run where it matters most. A `SITE_UNREADABLE` entry prints the
 `since` date from the manifest, because a mapping declared in May and pointing at
 a symbol that has since moved is a finding about the manifest, not about the
 code.
@@ -225,7 +234,7 @@ python scripts/reference_drift_probe.py --target <skill-repo> --repos-root ~/src
 |---|---|
 | 0 | the template and every readable adoption site agree |
 | 2 | finding — `REFERENCE_STALE`, `REFERENCE_UNADOPTED`, `MANIFEST_MISSING`, `MANIFEST_INVALID`, `TEMPLATE_UNMAPPED` |
-| 3 | not measured — no `reference/` directory, or no adoption site was readable |
+| 3 | not measured — no `reference/` directory, or nothing to report and no adoption site was readable |
 | 4 | `MOVED_DURING_RUN` — see [provenance.md](provenance.md) |
 | 127 | the harness could not run |
 

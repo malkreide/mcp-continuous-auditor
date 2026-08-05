@@ -404,9 +404,35 @@ class StaleDeclaredTest(BedCase):
         self.assertIn("REFERENCE_STALE", self.codes(report))
         detail = self.details(report)
         self.assertIn("wall_clock_budget", detail)
-        self.assertIn("3 of 3", detail)
+        self.assertIn("3 of 3 adoption site(s) read do", detail)
         # And no UNADOPTED noise: the sites are ahead, not behind.
         self.assertNotIn("REFERENCE_UNADOPTED", self.codes(report))
+
+    def test_it_fires_with_no_checkouts_at_all(self):
+        """The claim is about ONE file; it must not wait for the servers.
+
+        A fresh manifest is written on a machine that usually has no server
+        checkouts. Gating this on them meant the most important finding was
+        invisible on exactly that run.
+        """
+        self.bed.template(GOOD_TEMPLATE.replace("time.monotonic", "time.time"))
+        self.bed.manifest(MANIFEST)
+        report = rdp.run(self.bed.skill)  # no --repos-root
+        self.assertIn("REFERENCE_STALE", self.codes(report))
+        self.assertEqual(report.exit_code(), rdp.EXIT_FINDINGS)
+        detail = self.details(report)
+        self.assertIn("wall_clock_budget", detail)
+        # …and it says plainly what it did NOT measure.
+        self.assertIn("was not measured", detail)
+        self.assertEqual({u.code for u in report.unverified}, {"REPO_NOT_ON_DISK"})
+
+    def test_no_unadopted_without_a_readable_site(self):
+        """The other half genuinely needs the checkouts, and stays quiet."""
+        self.bed.template(GOOD_TEMPLATE)
+        self.bed.manifest(MANIFEST)
+        report = rdp.run(self.bed.skill)
+        self.assertEqual(report.findings, [], self.details(report))
+        self.assertEqual(report.exit_code(), rdp.EXIT_NOT_MEASURED)
 
     def test_declared_and_implemented_nowhere_says_so(self):
         stale = GOOD_TEMPLATE.replace("time.monotonic", "time.time")

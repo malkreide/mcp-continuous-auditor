@@ -80,6 +80,12 @@ Nothing is fetched. A repository that is not under `--repos-root` and has no
 unparseable template is `REFERENCE_UNREADABLE`. Every run states its coverage —
 n of m declared sites read — so a narrow run cannot pass for a clean one.
 
+Whether the **template** satisfies a property the manifest declares is a claim
+about one file, so it is checked with no checkouts at all, and the finding says
+that how far the servers have moved was not measured. Only `REFERENCE_UNADOPTED`
+needs the checkouts. That is what makes a manifest checkable on the machine it is
+written on.
+
 ## Fixing a finding
 
 `REFERENCE_STALE` first, always. It is the one still being copied. Fix the
