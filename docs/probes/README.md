@@ -32,6 +32,14 @@ and are documented at the top of their own files:
   still return the shape *and the volume* it used to? The first checks the
   endpoint, the second the server's own tools, which is the whole chain.
 
+## What has actually been run
+
+[coverage.md](coverage.md) applies the rule below to this repository itself: it
+records what each probe has been exercised against, and names the column that is
+still empty. **The auditor is not deployed, so no probe here has ever spoken to a
+live MCP server** — every wire-level result so far is against a fixture or a
+checkout the probe started itself.
+
 ## The shared rule
 
 Every one of these reports distinguishes three answers, never two:
