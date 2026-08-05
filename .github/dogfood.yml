@@ -36,13 +36,30 @@ steps:
   "ci.yml.template::verify::Sync dependencies":
     status: setup
 
+  "ci.yml.template::verify::Ruff must be pinned by the lockfile, not resolved fresh":
+    status: mirrored
+    by: "lint.yml::ruff::Ruff pin sync (lint.yml ↔ .pre-commit-config.yaml)"
+    note: >-
+      Same guarantee, different mechanism, because the two repos hold the pin in
+      different places. The auditor pins ruff explicitly in `lint.yml` and holds
+      that pin against `.pre-commit-config.yaml`; a target syncs its whole
+      toolchain from `uv.lock`, so there the requirement is that the lockfile
+      exists and names ruff. Both fail closed when the version is free to move.
   "ci.yml.template::verify::Lint":
     status: mirrored
     by: "lint.yml::ruff::Lint"
     note: >-
       The original gap. `ruff check` shipped to every target from the start and
-      ran here for the first time in #52. `lint.yml` now also carries
-      `ruff format --check`, which the template does not demand.
+      ran here for the first time in #52.
+
+  "ci.yml.template::verify::Format":
+    status: mirrored
+    by: "lint.yml::ruff::Format"
+    note: >-
+      `lint.yml` has carried `ruff format --check` since #52 while the template
+      demanded only `ruff check` — the auditor held itself to a gate it did not
+      ship. This entry used to read, on the `Lint` row above, "which the template
+      does not demand". It does now.
 
   "ci.yml.template::verify::Type-check":
     status: gap
@@ -174,12 +191,16 @@ steps:
   "redteam-regen.yml.template::regen::actions/setup-node@v4":
     status: setup
 
-  "live-probe.yml.template::probe::Open or update the drift tracking issue":
+  "live-probe.yml.template::probe::Route the drift tracking issue (open / update / close)":
     status: target-only
     note: >-
-      Opens an issue in the TARGET repo when its live probe finds drift. The
-      auditor has no upstream of its own to drift against. Not plumbing —
-      shipped behaviour, and the reason the uses-Schritte gehoeren hierher.
+      Opens, updates or closes an issue in the TARGET repo from its live probe's
+      verdict. The auditor has no upstream of its own to drift against, so the
+      job cannot run here. The classification it depends on is not target-only,
+      though, and does not hide in this template: it lives in
+      scripts/drift_issue.py with tests/test_drift_issue.py against it, which is
+      what the auditor runs on its own code. This entry used to describe an
+      inline `github-script` block that no test could reach.
 
   "redteam-regen.yml.template::regen::Open a PR if the red-team set changed":
     status: target-only
