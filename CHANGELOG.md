@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the spec probe was reading a summary, and got four rules wrong
+
+`spec_probe.py` was written against a written summary of MCP `2026-07-28` rather
+than the specification. It said so in its own output and measured rather than
+assumed where it could — and it was still wrong about all three rules it named,
+plus a fourth in the promptfoo profile. Two of the four would have produced
+exactly the false finding the probe exists to prevent: a `LEGACY_TRANSPORT`
+against a fully migrated server.
+
+Read from the [specification](https://modelcontextprotocol.io/specification/2026-07-28)
+on 2026-08-05:
+
+1. **`_meta` was in the wrong place, with the wrong keys.** It belongs in
+   `params`, not at the JSON-RPC message root, and its keys are namespaced —
+   `io.modelcontextprotocol/protocolVersion` / `clientInfo` /
+   `clientCapabilities`. The `MCP-Protocol-Version` header **MUST** match the
+   `_meta` value, and a mismatch is a mandatory `400` with `-32020
+   HeaderMismatch`. A compliant server would have rejected the probe's own
+   stateless call, and the probe would have called that «still requires
+   `initialize`». The same bug was in `transport_boot_probe.py`, where it would
+   have re-created the false «the server never came up» the `STATELESS` status
+   had just removed.
+
+2. **`Mcp-Name` was sent on every call, empty.** It mirrors `params.name` or
+   `params.uri` and is required only for `tools/call`, `resources/read` and
+   `prompts/get`. An empty header with no body field to match is a
+   `HeaderMismatch` by the same rule that requires it. Same false finding,
+   second route. `transport_boot_probe` now also sends the `Mcp-Method` header
+   it was missing entirely.
+
+3. **The deprecation clock is not one clock.** The twelve-month window governs
+   Roots, Sampling, Logging and DCR (deprecated `2026-07-28`, eligible
+   `2027-07-28`). The HTTP+SSE transport was deprecated in `2025-03-26` and its
+   earliest removal is «three months after SEP-2596 reaches Final» — a date the
+   registry does not give, so it is **not computable**. The `2027-07-28` the
+   probe printed for an answering `/sse` endpoint appears nowhere in the
+   specification. `Mcp-Session-Id` is not deprecated at all: removed outright,
+   no window. And «earliest removal» is **eligibility, never a deadline** —
+   «Features may remain Deprecated, without removal, for much longer than the
+   minimum deprecation window.»
+
+4. **`cacheScope`'s vocabulary was invented.** The determ assert listed
+   `session|client|global|none`; the spec says `public` | `private`. It would
+   have failed every compliant server and passed none — the precise inversion of
+   what an assert is for.
+
+`--spec-verified` is gone. A flag that promised to change only wording was the
+wrong shape for this: the rules are now read from the document, and every one of
+them names the page it came from in the source, so the next reader re-checks
+instead of trusting the file. `SPEC_SOURCE` and `SPEC_VERIFIED_ON` go into every
+report. `deprecation_deadline` in the JSON report is renamed
+`twelve_month_eligibility`, because a single field applied to every signal is how
+the invented date got in.
+
+Also corrected: `server/discover` is stronger than assumed — **servers MUST
+implement it**, it is the client that MAY call it — and its advertised versions
+are now read. Results carry a required `resultType` from this revision on, which
+an older server cannot produce by accident, so it is recorded as positive
+evidence.
+
 ### Fixed — a migrated server is no longer reported as a broken one
 
 `scripts/transport_boot_probe.py` opened every probe with `initialize`. Spec
@@ -43,7 +103,7 @@ written to catch, in the auditor's own source.
 
 The probe compares four sources — the target's code, the **installed** SDK, the
 index repo's `mcp_spec_version`, and the live wire — and reports `SPEC_DRIFT`,
-`LEGACY_TRANSPORT` (with the remaining days of the twelve-month window), or
+`LEGACY_TRANSPORT` (each signal on its own deprecation footing), or
 `UNVERIFIED`. The artifact level is the one the source cannot reach: during this
 migration a target's source does not change at all, the SDK version does.
 
@@ -52,11 +112,9 @@ protocol version belongs to the SDK; 39 of the 42 servers declare nothing and ar
 right not to, and a predicate that turned red on all 39 would be switched off
 within a day.
 
-The probe was written against a written summary of the spec rather than the spec
-document, so the wire mode **measures** the rules it would otherwise assume: the
-stateless call is sent twice, once with `Mcp-Method`/`Mcp-Name` and once without,
-and both status codes are reported. `--spec-verified` changes the report's wording
-once the rules have been checked; it never changes a verdict.
+The wire mode sends the stateless call twice, once with the required request
+headers and once without, and reports both status codes — which is what tells a
+server that **enforces** them from one that merely tolerates them.
 
 `--now` pins the date. A countdown is time-dependent, which breaks the
 provenance promise from the other side — the same commit would otherwise produce

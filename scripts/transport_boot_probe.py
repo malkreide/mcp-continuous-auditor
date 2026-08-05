@@ -671,25 +671,38 @@ def _initialize_params() -> dict[str, Any]:
     }
 
 
-def _stateless_meta() -> dict[str, Any]:
-    """The `_meta` block a stateless (2026-07-28) request carries.
+# Verbatim from the 2026-07-28 transport page. The keys are NAMESPACED and
+# `_meta` lives inside `params`, not at the message root. Getting either wrong is
+# not cosmetic: the `MCP-Protocol-Version` header MUST match the `_meta` value,
+# and a mismatch is a mandatory `400` with `-32020 HeaderMismatch`. A compliant
+# server would reject the probe's own stateless call, which this gate would then
+# read as "the server does not come up" — the very false finding the STATELESS
+# status was added to prevent, reintroduced through the request body.
+_META_VERSION = "io.modelcontextprotocol/protocolVersion"
+_META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
+_META_CLIENT_CAPS = "io.modelcontextprotocol/clientCapabilities"
 
-    Under the stateless core there is no handshake to negotiate in, so every
-    request brings its own protocol version, clientInfo and capabilities. A
-    server on the older spec ignores an unknown `_meta` key, so sending it costs
-    nothing and is what makes ONE request shape work against both.
+
+def _stateless_params() -> dict[str, Any]:
+    """`params` for a stateless (2026-07-28) request: no handshake to negotiate
+    in, so every request brings its own version, client info and capabilities.
+
+    A server on the older spec ignores an unknown `_meta` key, so sending it
+    costs nothing and is what makes ONE request shape work against both eras.
     """
     return {
-        "protocolVersion": _PROTOCOL_VERSION,
-        "clientInfo": _CLIENT_INFO,
-        "capabilities": {},
+        "_meta": {
+            _META_VERSION: _PROTOCOL_VERSION,
+            _META_CLIENT_INFO: _CLIENT_INFO,
+            _META_CLIENT_CAPS: {},
+        }
     }
 
 
 def _opening_call(stateless: bool, ident: int = 1) -> dict[str, Any]:
     """The first request of a probe: a handshake, or a real call without one."""
     if stateless:
-        return {**_rpc("tools/list", ident), "_meta": _stateless_meta()}
+        return _rpc("tools/list", ident, _stateless_params())
     return _rpc("initialize", ident, _initialize_params())
 
 
@@ -1174,6 +1187,15 @@ def http_post(
         "Accept": "application/json, text/event-stream",
         "MCP-Protocol-Version": _PROTOCOL_VERSION,
     }
+    # REQUIRED for compliance from 2026-07-28 on (transport page, "Standard
+    # Request Headers"), and inert to every older server. `Mcp-Name` is
+    # deliberately NOT sent: it mirrors `params.name`/`params.uri` and is
+    # required only for tools/call, resources/read and prompts/get — none of
+    # which this gate issues. An empty one would be a header with no body field
+    # to match, which a validating server must reject with -32020.
+    method = payload.get("method")
+    if isinstance(method, str) and method:
+        headers["Mcp-Method"] = method
     if session_id:
         headers["Mcp-Session-Id"] = session_id
     headers.update(extra_headers or {})

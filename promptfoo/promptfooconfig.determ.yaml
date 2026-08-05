@@ -130,9 +130,12 @@ tests:
   # measured on a real connection.
   #
   # What IS honestly assertable here is the payload half of the same spec:
-  # tools/list, prompts/list and resources/list must carry `ttlMs` and
-  # `cacheScope` and must come back in a deterministic order. Both are properties
-  # of the response object, which the in-memory client hands over unchanged.
+  # tools/list, prompts/list and resources/list MUST carry `ttlMs` and
+  # `cacheScope` (a `CacheableResult`, changelog minor change 5) and SHOULD come
+  # back in a deterministic order (minor change 3 — a SHOULD, not a MUST, which
+  # is why the order assert below checks uniqueness rather than a fixed
+  # sequence). Both are properties of the response object, which the in-memory
+  # client hands over unchanged.
   #
   # BASELINE-GATED, on purpose. Whether the installed SDK surfaces `ttlMs` at all
   # is a fact about the SDK, and a red pipeline on an SDK that predates the field
@@ -153,9 +156,10 @@ tests:
     vars:
       list: tools
     assert:
-      # Spec 2026-07-28 requires a deterministic order. A duplicate name makes
-      # any order meaningless, and an empty listing is not a passing listing —
-      # a server with no tools cannot have been what the caller asked about.
+      # Spec 2026-07-28 says servers SHOULD return tools in a deterministic
+      # order. A duplicate name makes any order meaningless, and an empty
+      # listing is not a passing listing — a server with no tools cannot have
+      # been what the caller asked about.
       - type: javascript
         value: |
           (() => {
@@ -175,6 +179,12 @@ tests:
       # is the server getting the new spec wrong, which is the thing worth
       # catching. Tighten to a hard requirement once the portfolio baseline is on
       # an SDK that surfaces them; see docs/probes/spec.md.
+      #
+      # The vocabulary is `public` | `private` — read from the spec's changelog
+      # (minor change 5), NOT guessed. An earlier version of this assert listed
+      # `session|client|global|none`, which was invented: it would have FAILED
+      # every compliant server and passed none, the precise inversion of what an
+      # assert is for.
       - type: javascript
         value: |
           (() => {
@@ -182,7 +192,7 @@ tests:
             const ttlOk = o.ttlMs === null
               || (typeof o.ttlMs === 'number' && Number.isFinite(o.ttlMs) && o.ttlMs >= 0);
             const scopeOk = o.cacheScope === null
-              || ['session', 'client', 'global', 'none'].includes(String(o.cacheScope));
+              || ['public', 'private'].includes(String(o.cacheScope));
             return ttlOk && scopeOk;
           })()
 
