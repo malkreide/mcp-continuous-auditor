@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the auditor's own coverage claim: nothing here has met a live server
+
+`docs/probes/coverage.md`. Every probe in this repository distinguishes clean
+from finding from **not measured**, and `portfolio_scan` refuses an overall
+verdict when a sweep did not cover what it claimed to. That rule had never been
+applied one level up, to the auditor itself — and applied, it says something
+uncomfortable: **`mcp-continuous-auditor` is not deployed, so no probe here has
+ever spoken to a live MCP server.**
+
+The page records what each probe HAS been exercised against — unit fixtures, a
+real repository, a package index — and leaves the wire column empty where it is
+empty. `spec_probe --url` is the named gap: its `wire` source is the only one
+that is evidence rather than somebody's claim, it is verified against both local
+fixtures (migrated and legacy shapes), and it has never been pointed at a
+deployment. The command that would close it is in the page, together with how to
+read each of the three outcomes — including that an unreachable endpoint is
+**not a result**.
+
+Also recorded: what needs a host and therefore does not run at all
+(`nightly-audit.sh`, the `openclaw/cron` jobs, the Worker/Broker pipeline, the
+`live-probe`/`redteam-regen` templates), against the two schedules that do run
+inside GitHub Actions and need none (`pr-health`, `telegram-intake`).
+
+Cross-linked from `docs/probes/README.md`, `docs/probes/spec.md` and
+`docs/deployment/tier-0.md`, so the claim is visible from the pages that would
+otherwise imply the opposite. A green suite is a green fixture; the difference
+between this repository and the servers it audits is not that this one has been
+verified, but that this one says so.
+
 ### Fixed — the spec probe was reading a summary, and got four rules wrong
 
 `spec_probe.py` was written against a written summary of MCP `2026-07-28` rather

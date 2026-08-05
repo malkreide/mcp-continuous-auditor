@@ -189,6 +189,13 @@ re-derived.
 
 ## Running it
 
+> The `--url` mode has **never been run against a deployed server**. It is
+> verified against both local fixtures — the migrated and the legacy shape — which
+> proves the probe reads a wire correctly and proves nothing about any particular
+> server. The auditor has no deployment; see
+> [coverage.md](coverage.md) for the full picture and
+> [tier-0.md](../deployment/tier-0.md) for what closing it takes.
+
 ```bash
 # source + artifact, inside the target's environment
 python scripts/spec_probe.py --target ../zurich-opendata-mcp --installed

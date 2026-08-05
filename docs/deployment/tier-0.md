@@ -1,5 +1,10 @@
 # Tier 0 — the recommended entry (Docker sandbox + direct path)
 
+> **Nothing here is running yet.** No Tier-0 host exists, so every probe result in
+> this repository is against a fixture or a checkout the probe started itself —
+> see [`docs/probes/coverage.md`](../probes/coverage.md) for what that leaves
+> unmeasured. Standing up Tier 0 is what turns that column from ❌ into a date.
+
 Start here. Tier 0 runs the whole auditor on **any Linux box** with just OpenClaw's
 Docker sandbox and the deterministic gates — **no** nested KVM, vsock/udev,
 cloud-init, TensorZero or ClickHouse. Those are real hardening tiers (below), not
