@@ -47,6 +47,7 @@ page exists for, and it is empty on purpose.
 | lockfile | ✅ | ✅ | — | n/a |
 | doc-claim | ✅ | ✅ this repo | — | n/a |
 | parity | ✅ | ✅ this repo | — | n/a |
+| reference-drift | ✅ | ❌ — no `reference/adoption.toml` is written yet | — | n/a |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
 | spec | ✅ | ✅ this repo | — | ❌ **never** |
 | transport boot | ✅ | ✅ locally launched checkouts | — | ❌ — it starts the server itself |
