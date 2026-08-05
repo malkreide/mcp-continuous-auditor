@@ -37,8 +37,35 @@ jobs:
         run: uv python install 3.11
       - name: Sync dependencies
         run: uv sync --all-extras --dev
+      # Ruff comes out of the target's OWN dev dependencies (`uv sync` above), so
+      # the pin belongs in the target's committed `uv.lock` — not in this file,
+      # which cannot override a synced environment without bypassing it. What
+      # this step adds is the requirement: without a lockfile entry `uv sync`
+      # re-resolves ruff on every run, and the next release that touches the
+      # formatter turns this job red on untouched code — in every repo this
+      # template was ever copied into, on the same day.
+      - name: Ruff must be pinned by the lockfile, not resolved fresh
+        run: |
+          if [ ! -f uv.lock ]; then
+            echo "::error::No committed uv.lock. Every tool this job runs, ruff included, is re-resolved on each run; an upstream release can turn CI red on untouched code. Commit the lockfile (\`uv lock\`)."
+            exit 1
+          fi
+          if ! grep -q '^name = "ruff"$' uv.lock; then
+            echo "::error::ruff is not in uv.lock. Add it to the dev dependencies so its version is pinned and a bump is a reviewable change."
+            exit 1
+          fi
+          uv run ruff --version
       - name: Lint
-        run: uv run ruff check
+        run: uv run ruff check .
+      # `ruff check` establishes nothing about formatting: a green linter beside a
+      # red `ruff format --check` is an ordinary state, not a contradiction. Own
+      # step so the log names which of the two failed.
+      #
+      # Deliberately no `--line-length`: the width is the TARGET repo's decision,
+      # read from its own ruff.toml / pyproject.toml. This template assumes none,
+      # and must not — the portfolio runs 88, 100, 110 and 120 side by side.
+      - name: Format
+        run: uv run ruff format --check .
       - name: Type-check
         run: uv run mypy .
       - name: Test

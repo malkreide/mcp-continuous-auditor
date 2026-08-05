@@ -3,11 +3,17 @@
 # TEMPLATE for the TARGET MCP-server repo (e.g. zurich-opendata-mcp), NOT the
 # auditor. Ships as `.yml.template` so GitHub does not run it in the auditor repo
 # (no live endpoints, no issue noise). To activate in the target repo: copy to
-# `.github/workflows/live-probe.yml`.
+# `.github/workflows/live-probe.yml`, and copy the three scripts it drives —
+# `scripts/live_probe.py`, `scripts/recall_canary.py`, `scripts/drift_issue.py`.
+# All three are stdlib-only, so nothing else needs installing for them.
 #
 # Weekly, it queries the REAL Zürich endpoints ONCE each, compares the response
-# STRUCTURE (not values) against the recorded fixtures, and opens (or updates) a
-# single tracking issue on drift. The deterministic offline gate stays in ci.yml
+# STRUCTURE (not values) against the recorded fixtures, and opens, updates or
+# CLOSES a single tracking issue accordingly. Closing is not a nicety: an issue
+# that only ever grows becomes noise, and a noisy guard gets switched off. What
+# makes closing safe is that "no finding" and "the probes never ran" are kept
+# apart — see the routing step at the end of this file. The deterministic
+# offline gate stays in ci.yml
 # (promptfoo + schemas/generate_schemas.py --check) — this job only watches for
 # upstream change so a drift becomes a ticket, never a surprise red PR.
 #
@@ -93,48 +99,45 @@ jobs:
           fi
           cat live-probe-report-combined.md
 
-      # Fires on schema drift OR a breached recall floor. Gate on `alert`, not on
-      # `drift`: `drift` still means schema-only, so a recall collapse alone
-      # would never reach an issue.
-      - name: Open or update the drift tracking issue
-        if: steps.probe.outputs.alert == 'true' || steps.canary.outputs.alert == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const body = fs.readFileSync('live-probe-report-combined.md', 'utf8');
-            const marker = '<!-- live-probe-drift -->';
-            const title = '[live-probe] Schema drift or recall drop vs recorded baseline';
-            const { owner, repo } = context.repo;
-            const issueBody = `${marker}\n\n${body}\n\n— run ${context.runId} (${context.sha.slice(0,7)})`;
-
-            // Ensure the label exists (createIssue would 422 on an unknown label).
-            try {
-              await github.rest.issues.getLabel({ owner, repo, name: 'schema-drift' });
-            } catch (e) {
-              await github.rest.issues.createLabel({
-                owner, repo, name: 'schema-drift', color: 'b60205',
-                description: 'Upstream/live schema drift detected by the weekly live-probe',
-              });
-            }
-
-            const existing = await github.rest.issues.listForRepo({
-              owner, repo, state: 'open', labels: 'schema-drift', per_page: 100,
-            });
-            const hit = existing.data.find(i => (i.body || '').includes(marker));
-
-            if (hit) {
-              await github.rest.issues.createComment({
-                owner, repo, issue_number: hit.number,
-                body: `Still present on the latest weekly probe:\n\n${body}`,
-              });
-              core.notice(`Updated existing drift issue #${hit.number}`);
-            } else {
-              const created = await github.rest.issues.create({
-                owner, repo, title, body: issueBody, labels: ['schema-drift'],
-              });
-              core.notice(`Opened drift issue #${created.data.number}`);
-            }
+      # Route the finding to the ONE addressee a scheduled job has: a tracking
+      # issue. Three states, in a script rather than the inline `github-script`
+      # block this replaces.
+      #
+      # The block had two. "No finding was produced" and "everything is in order"
+      # were the same value, which is survivable only for as long as nothing ever
+      # closes the issue — and nothing did, so the issue only ever grew. An issue
+      # that only grows is read as noise within weeks, and the answer to noise is
+      # to switch the guard off; the missing close is what decides whether this
+      # job survives at all. Add a close to a two-valued classification, though,
+      # and the guard closes on the strength of a comparison that never happened.
+      # `unknown` is the state that makes closing safe: probe crashed, canary
+      # skipped because the install failed, report missing or empty — touch
+      # nothing, in either direction.
+      #
+      # `always()` is load-bearing. `clear` and `unknown` only exist if this step
+      # runs on a green week and on a broken one; the old condition gated on
+      # `alert == 'true'`, so both of those weeks skipped it silently.
+      #
+      # Step outcomes and probe verdicts go through the environment, not through
+      # `${{ }}` interpolated into the shell — the standard hardening for a step
+      # that builds a command line out of workflow context.
+      - name: Route the drift tracking issue (open / update / close)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+          PROBE_ALERT: ${{ steps.probe.outputs.alert }}
+          CANARY_OUTCOME: ${{ steps.canary.outcome }}
+          CANARY_ALERT: ${{ steps.canary.outputs.alert }}
+        run: |
+          python scripts/drift_issue.py \
+            --marker live-probe-drift \
+            --label schema-drift \
+            --label-color b60205 \
+            --title "[live-probe] Schema drift or recall drop vs recorded baseline" \
+            --body-file live-probe-report-combined.md \
+            --probe "live-probe:${PROBE_OUTCOME}:${PROBE_ALERT}:live-probe-report.md" \
+            --probe "recall-canary:${CANARY_OUTCOME}:${CANARY_ALERT}:recall-canary-report.md"
 
       - name: Upload reports
         if: always()

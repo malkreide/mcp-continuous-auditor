@@ -54,3 +54,20 @@ that mistake is invisible in exactly the way the defects here are. Every exit
 code in this directory keeps the three apart, and every "UNVERIFIED",
 "NOT MEASURED", "UNCONFIRMED" and "MOVED_DURING_RUN" in the output is that rule
 being applied.
+
+## The rule reaches the delivery, not just the report
+
+A probe that keeps the three answers apart and then hands them to a delivery
+path that knows only two has given the distinction away at the last step.
+`live-probe.yml.template` did exactly that: the probes reported three states,
+and the inline block that turned them into a tracking issue collapsed them into
+"alert" and "not alert". It survived only because the block never closed
+anything — with no close, "not alert" costs nothing.
+
+The close is what the guard needs to stay credible (an issue that only grows is
+noise, and noise gets guards switched off), and it is also what makes the
+collapse dangerous: closing on "not alert" closes on a comparison that may never
+have happened. `scripts/drift_issue.py` is that step done under the same rule —
+**finding**, **clear**, **unknown**, where unknown opens nothing and closes
+nothing. It is a script and not a heredoc for the same reason: the collapse sat
+in inline YAML for the life of the file because nothing there can be tested.

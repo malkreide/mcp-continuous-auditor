@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the shipped templates now hold to two rules the auditor already had
+
+Two gaps in `.github/workflows/*.yml.template`. A defect in a template multiplies
+across every repository it was copied into, which is what makes both of these
+worth more than their size.
+
+**`ci.yml.template` demanded less than `lint.yml` runs.** The template shipped
+`uv run ruff check` and nothing else, while the auditor has run `ruff check` *and*
+`ruff format --check` on its own code since #52. `.github/dogfood.yml` recorded the
+asymmetry in prose — "which the template does not demand" — and left it standing.
+`ruff check` establishes nothing about formatting; a green linter beside a red
+`ruff format --check` is an ordinary state. Both now ship as separate steps, so the
+log names which of the two failed.
+
+Alongside them, a step stating where the pin belongs. Ruff comes from the target's
+own dev dependencies, so the version is the target's `uv.lock` — the right place
+for it, but only if there is one. Without a lockfile entry `uv sync` re-resolves on
+every run, and the next release that touches the formatter turns CI red on
+untouched code in every generated repository at once. The step fails closed on a
+missing lockfile or a missing ruff entry. No `--line-length` anywhere: the width is
+the target's decision, read from its own config, and the portfolio runs 88, 100,
+110 and 120 side by side.
+
+**`live-probe.yml.template` had a guard that could only ever get louder.** It
+opened a drift issue and commented on it, and never closed it. An issue that only
+grows is read as noise within weeks, and the answer to noise is to switch the guard
+off — so the missing close decides whether the job survives, not how polite it is.
+
+Adding a close to what was there would have been worse than leaving it. The inline
+`github-script` block classified two states, gated on `alert == 'true'`, so "no
+finding" and "the probes never ran" were the same value; a close on that value
+closes an open issue on the strength of a comparison that never happened, and the
+close then reads as evidence the finding was fixed. This repository already has the
+rule that prevents it — clean / finding / **not measured**, `docs/probes/README.md`
+— applied to every probe's report and to nothing that delivered one.
+
+`scripts/drift_issue.py` applies it to the delivery: **finding** opens or updates,
+**clear** closes, **unknown** touches nothing in either direction. Unknown covers
+the crashed probe, the canary skipped because `pip install -e .` failed, and the
+report that is missing or empty. The predictable consequence — an open issue stays
+open while the probes cannot run — is the intended one. The routing step now runs
+under `always()`, without which clear and unknown are unreachable, and passes step
+outcomes through the environment rather than interpolating them into a shell.
+
+It is a script with `tests/test_drift_issue.py` against it rather than a heredoc
+because the two-state collapse sat in inline YAML for the life of the file:
+nothing there can be unit-tested, so nothing there can be mutation-tested. 14
+mutations, one per guarantee — fold unknown into clear, drop the report check,
+accept a skipped step as having run, ignore the dedup marker, close without
+commenting first — and all 14 are caught by a named test. No survivors.
+
 ### Added — the auditor's own coverage claim: nothing here has met a live server
 
 `docs/probes/coverage.md`. Every probe in this repository distinguishes clean
