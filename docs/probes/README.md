@@ -17,6 +17,7 @@ green and wrong at the same time.
 | lockfile | Is the declared bound in force where the install happens? | [lockfile.md](lockfile.md) |
 | doc-claim | Do the identifiers the documentation cites exist? | [doc-claim.md](doc-claim.md) |
 | parity | Does the translated documentation still say the same thing? | [parity.md](parity.md) |
+| spec | Which MCP protocol version does this server actually speak? | [spec.md](spec.md) |
 | provenance | Which commit is this report about? | [provenance.md](provenance.md) |
 | pr-health | Which open pull requests are not green — including the ones that are not red either? | [pr-health.md](pr-health.md) |
 
@@ -24,7 +25,8 @@ Three more gates run inside the nightly audit rather than as standalone probes,
 and are documented at the top of their own files:
 
 * `scripts/transport_boot_probe.py` — does the server come up on the transports
-  it declares, and does it answer `initialize` + `tools/list`?
+  it declares, and does it answer `tools/list` — with a handshake, or without one
+  under the stateless core of spec `2026-07-28`?
 * `scripts/rebind_probe.py` — is the inbound host allow-list actually enforced?
 * `scripts/live_probe.py` and `scripts/recall_canary.py` — does the live endpoint
   still return the shape *and the volume* it used to? The first checks the

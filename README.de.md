@@ -39,6 +39,9 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 - **Bilinguale Paritäts-Probe** — das Portfolio ist zweisprachig, und nur die englische Seite bewegt sich zuerst. Beide Dateien rendern, eine fehlende Sektion auf einer Seite ist unsichtbar.
   `scripts/parity_probe.py` vergleicht Überschriften-Skelette, Aufzählungszahlen je Sektion, ausgezeichnete Code-Blöcke und Linkziele — nie die Prosa, die *sich* unterscheiden soll.
   `TRANSLATION_LAG` zählt Commits, die das Original nach der letzten Aktualisierung der Übersetzung berührt haben: der Fall, den jede strukturelle Prüfung besteht — [docs/probes/parity.md](docs/probes/parity.md).
+- **Spec-Probe** — welche MCP-Protokollversion *spricht* der Server tatsächlich? Das Boot-Gate trug ein einziges handgepflegtes Literal (`"2025-06-18"`), schickte es in jedem Request und verwarf die Antwort des Servers — kein Report hier konnte die Spec eines Ziels benennen.
+  `scripts/spec_probe.py` vergleicht Quelltext, *installiertes* SDK, `mcp_spec_version` aus `portfolio.json` und den Draht und meldet `SPEC_DRIFT`, `LEGACY_TRANSPORT` mit Frist-Countdown oder `UNVERIFIED` — nie «nicht messbar» als «in sync».
+  `SPEC_UNDECLARED` ist eine Notiz und kein Befund, denn unter den aktuellen SDKs gehört die Version dem SDK — [docs/probes/spec.md](docs/probes/spec.md).
 - **Jeder Report benennt seinen Commit** — ein Identity-Befund war im Moment der Messung korrekt und zehn Minuten später falsch, weil `main` weitergezogen war und der Report keinen SHA nannte.
   `scripts/probe_provenance.py` erfasst `HEAD` plus einen Digest des unversionierten Standes zu Beginn jeder Probe und liest beides am Ende erneut.
   Hat sich der Baum bewegt, lautet der Status `MOVED_DURING_RUN` und der Exit-Code `4` — kein Ergebnis, denn der Lauf hat nicht einen Baum gelesen — [docs/probes/provenance.md](docs/probes/provenance.md).

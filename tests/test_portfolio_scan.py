@@ -293,6 +293,126 @@ class PredicateTest(unittest.TestCase):
         self.assertEqual(ps.pred_host_allowlist_knob(self._ctx(root2)).status, ps.OK)
 
 
+class MigrationPredicateTest(unittest.TestCase):
+    """`sdk_upper_bound` and `sdk_flavour` — the spec-2026-07-28 migration pair.
+
+    They are two predicates and not one on purpose. `sdk_major` answers WHICH
+    major; `sdk_upper_bound` answers whether that answer can change without
+    anybody editing the repository; `sdk_flavour` answers WHOSE major it is —
+    `mcp>=2` and `fastmcp>=2` both report `2` and are not the same statement,
+    because the two are different projects that cannot share an environment.
+    One cell cannot carry three facts honestly.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _ctx(self, name: str, sdk: str) -> ps.Ctx:
+        root = _server(self.dir / name, name, sdk=sdk)
+        return ps.Ctx(target=ps.Target(repo="o/r"), root=root, timeout=10)
+
+    def test_a_bounded_constraint_passes(self) -> None:
+        # `<`/`<=` are the obvious ones; an exact pin and `~=` bound the major
+        # just as effectively.
+        for spec in ("mcp>=2.0,<3", "fastmcp>=3.0,<4", "mcp==2.3.1", "mcp~=2.0"):
+            with self.subTest(spec=spec):
+                cell = ps.pred_sdk_upper_bound(
+                    self._ctx(
+                        spec.replace(">", "_")
+                        .replace("<", "_")
+                        .replace("=", "_")
+                        .replace(",", "_")
+                        .replace("!", "_"),
+                        spec,
+                    )
+                )
+                self.assertEqual(cell.status, ps.OK)
+                self.assertEqual(cell.value, "bounded")
+
+    def test_a_lower_bound_alone_is_flagged(self) -> None:
+        # The resolved major becomes whatever the next install picks — which is
+        # not hypothetical: fastmcp 4.0 is out and breaking.
+        cell = ps.pred_sdk_upper_bound(self._ctx("open", "mcp>=2.0"))
+        self.assertEqual(cell.status, ps.FLAG)
+        self.assertEqual(cell.value, "unbounded")
+        self.assertIn("no upper bound", cell.detail)
+
+    def test_an_excluded_version_is_not_an_upper_bound(self) -> None:
+        # `!=` removes one version and leaves the major wide open. An earlier
+        # version of this check read `mcp>=2,!=2.1` as bounded, which is exactly
+        # the false green the predicate exists to prevent.
+        cell = ps.pred_sdk_upper_bound(self._ctx("excluded", "mcp>=2,!=2.1"))
+        self.assertEqual(cell.status, ps.FLAG)
+
+    def test_no_sdk_dependency_is_not_applicable(self) -> None:
+        cell = ps.pred_sdk_upper_bound(self._ctx("plain", "httpx>=0.27"))
+        self.assertEqual(cell.status, ps.NA)
+
+    def test_the_official_sdk_is_reported_as_mcp(self) -> None:
+        cell = ps.pred_sdk_flavour(self._ctx("official", "mcp>=2.0,<3"))
+        self.assertEqual(cell.status, ps.OK)
+        self.assertEqual(cell.value, "mcp")
+
+    def test_a_bounded_standalone_fastmcp_is_a_note(self) -> None:
+        # Not a defect: standalone fastmcp is a supported choice. It is a fact the
+        # matrix must SHOW, because it decides the whole migration path.
+        cell = ps.pred_sdk_flavour(self._ctx("pinned", "fastmcp>=3.0,<4"))
+        self.assertEqual(cell.status, ps.NOTE)
+        self.assertEqual(cell.value, "fastmcp")
+
+    def test_an_unbounded_standalone_fastmcp_names_the_concrete_risk(self) -> None:
+        cell = ps.pred_sdk_flavour(self._ctx("risky", "fastmcp>=3.0"))
+        self.assertEqual(cell.status, ps.FLAG)
+        self.assertEqual(cell.value, "fastmcp")
+        self.assertIn("fastmcp 4.0", cell.detail)
+        self.assertIn("mcp<2.0", cell.detail)
+
+    def test_the_flavour_column_distinguishes_what_sdk_major_cannot(self) -> None:
+        # The point of the predicate in one assertion: same major, different SDK.
+        official = self._ctx("a", "mcp>=2.0,<3")
+        standalone = self._ctx("b", "fastmcp>=2.0,<3")
+        self.assertEqual(
+            ps.pred_sdk_major(official).value, ps.pred_sdk_major(standalone).value
+        )
+        self.assertNotEqual(
+            ps.pred_sdk_flavour(official).value, ps.pred_sdk_flavour(standalone).value
+        )
+
+    def test_neither_is_in_the_default_set(self) -> None:
+        # Adding a predicate to the default changes the verdict of every existing
+        # targets file without anybody editing it, and a portfolio that goes red
+        # overnight for an unasked reason loses its audience.
+        self.assertNotIn("sdk_upper_bound", ps.DEFAULT_PREDICATES)
+        self.assertNotIn("sdk_flavour", ps.DEFAULT_PREDICATES)
+        self.assertIn("sdk_upper_bound", ps.PREDICATES)
+        self.assertIn("sdk_flavour", ps.PREDICATES)
+
+    def test_the_example_demonstrates_opting_in(self) -> None:
+        targets, _ = ps.load_targets(EXAMPLE)
+        opted = [t for t in targets if "sdk_flavour" in t.predicates]
+        self.assertTrue(opted, "targets.example.yaml should show how to opt in")
+
+    def test_the_outlier_pass_finds_the_odd_flavour_without_being_told(self) -> None:
+        # The predicate reports EVERY target and does not go hunting for "the one
+        # fastmcp server" — a predicate built around an expected answer confirms
+        # it. The matrix is what turns the column into the row out of line.
+        rows = [
+            ps.Row(
+                target=ps.Target(repo=f"o/{n}"),
+                cells={"sdk_flavour": ps.Cell(ps.OK, v)},
+            )
+            for n, v in (("a", "mcp"), ("b", "mcp"), ("c", "mcp"), ("d", "fastmcp"))
+        ]
+        outs = ps.outliers(rows, ["sdk_flavour"])
+        self.assertEqual(len(outs), 1)
+        self.assertEqual(outs[0]["majority"], "mcp")
+        self.assertEqual([d["target"] for d in outs[0]["deviants"]], ["o/d"])
+
+
 class NestedManifestTest(unittest.TestCase):
     """The occasion, pinned. A server that is not the root package of its
     repository is invisible to every list written by hand."""

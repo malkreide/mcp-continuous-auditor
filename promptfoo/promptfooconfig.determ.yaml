@@ -15,7 +15,7 @@
 #
 # A determ-only pass is NOT a full pass: nightly_audit_report.py stamps the run's
 # profile so a green determ run is never read as "red-team clear".
-description: "zurich-opendata-mcp — deterministic contract + schema-drift + injection (key-less)"
+description: "zurich-opendata-mcp — deterministic contract + schema-drift + injection + list-response spec (key-less)"
 
 providers:
   # Calls the MCP tool/resource in-process via the FastMCP in-memory client.
@@ -119,6 +119,84 @@ tests:
         value: file://../schemas/zurich_datastore_sql.json
       - type: javascript
         value: "JSON.parse(output).records.length === 0"
+
+  # ─── (5) spec 2026-07-28: list responses ───────────────────────────────────
+  # WHAT THESE CAN AND CANNOT SAY. The stateless core is a WIRE property, and
+  # this profile has no wire: the provider drives the FastMCP in-memory client
+  # in-process, so an assert that "a call without initialize succeeds" would be
+  # a statement about the SDK and would pass for every server, migrated or not.
+  # That is the false-green this whole repository is written against, so the
+  # handshake question lives in scripts/spec_probe.py --url instead, where it is
+  # measured on a real connection.
+  #
+  # What IS honestly assertable here is the payload half of the same spec:
+  # tools/list, prompts/list and resources/list must carry `ttlMs` and
+  # `cacheScope` and must come back in a deterministic order. Both are properties
+  # of the response object, which the in-memory client hands over unchanged.
+  #
+  # BASELINE-GATED, on purpose. Whether the installed SDK surfaces `ttlMs` at all
+  # is a fact about the SDK, and a red pipeline on an SDK that predates the field
+  # would say nothing about the server. So determinism — which every SDK can
+  # honour — is asserted hard, and the ttlMs/cacheScope pair is asserted as a
+  # RECORDED OBSERVATION that fails only on the one shape that is definitely
+  # wrong: a client that saw the fields and found them malformed. `raw_shape`
+  # keeps "the server omitted it" apart from "this client cannot see it".
+  - description: "tools/list: the order is deterministic across two calls"
+    vars:
+      list: tools
+    assert:
+      - type: is-json
+      - type: javascript
+        value: "Array.isArray(JSON.parse(output).names)"
+
+  - description: "tools/list: names are unique and ordered, not a set in disguise"
+    vars:
+      list: tools
+    assert:
+      # Spec 2026-07-28 requires a deterministic order. A duplicate name makes
+      # any order meaningless, and an empty listing is not a passing listing —
+      # a server with no tools cannot have been what the caller asked about.
+      - type: javascript
+        value: |
+          (() => {
+            const o = JSON.parse(output);
+            if (!o.count) return false;
+            return new Set(o.names).size === o.names.length;
+          })()
+
+  - description: "tools/list: ttlMs/cacheScope are observed, and a malformed pair fails"
+    vars:
+      list: tools
+    assert:
+      # NOT `ttlMs !== null`. An SDK that predates the field returns null, and
+      # failing on that would report the client's age as the server's defect.
+      # What must never pass is a value that is PRESENT and nonsense — a negative
+      # or non-numeric ttl, or a cacheScope outside the vocabulary — because that
+      # is the server getting the new spec wrong, which is the thing worth
+      # catching. Tighten to a hard requirement once the portfolio baseline is on
+      # an SDK that surfaces them; see docs/probes/spec.md.
+      - type: javascript
+        value: |
+          (() => {
+            const o = JSON.parse(output);
+            const ttlOk = o.ttlMs === null
+              || (typeof o.ttlMs === 'number' && Number.isFinite(o.ttlMs) && o.ttlMs >= 0);
+            const scopeOk = o.cacheScope === null
+              || ['session', 'client', 'global', 'none'].includes(String(o.cacheScope));
+            return ttlOk && scopeOk;
+          })()
+
+  - description: "resources/list: same contract, so a partial migration is visible"
+    vars:
+      list: resources
+    assert:
+      - type: is-json
+      - type: javascript
+        value: |
+          (() => {
+            const o = JSON.parse(output);
+            return Array.isArray(o.names) && new Set(o.names).size === o.names.length;
+          })()
 
   - description: "empty result: the server does not assert absence on the caller's behalf"
     vars:

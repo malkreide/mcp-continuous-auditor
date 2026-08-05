@@ -39,6 +39,9 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 - **Bilingual parity probe** — the portfolio is bilingual and only the English side moves first. Both files render, so a section missing on one side is invisible.
   `scripts/parity_probe.py` compares heading skeletons, per-section bullet counts, tagged code blocks and link targets — never the prose, which is *supposed* to differ.
   `TRANSLATION_LAG` counts commits that touched the base after the translation was last updated: the case every structural check passes — [docs/probes/parity.md](docs/probes/parity.md).
+- **Spec probe** — which MCP protocol version does the server actually *speak*? The boot gate carried one hand-maintained literal (`"2025-06-18"`), sent it in every request, and threw the server's answer away — so no report here could name a target's spec.
+  `scripts/spec_probe.py` compares the source, the *installed* SDK, `portfolio.json`'s `mcp_spec_version` and the live wire, and reports `SPEC_DRIFT`, `LEGACY_TRANSPORT` with a deadline countdown, or `UNVERIFIED` — never «could not measure» as «in sync».
+  `SPEC_UNDECLARED` is a note and not a finding, because under the current SDKs the version belongs to the SDK — [docs/probes/spec.md](docs/probes/spec.md).
 - **Every report names its commit** — an identity finding was correct when measured and false ten minutes later, because `main` moved and the report named no SHA.
   `scripts/probe_provenance.py` captures `HEAD` plus a digest of the uncommitted state at the start of every probe and re-reads both at the end.
   If the tree moved, the status is `MOVED_DURING_RUN` and exit `4` — no verdict, because the run did not read one tree — [docs/probes/provenance.md](docs/probes/provenance.md).
