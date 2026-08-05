@@ -97,28 +97,86 @@ switched-off check catches nothing. What the status buys is that the report says
 *why* it has no code-level value, instead of leaving a blank that reads like
 agreement.
 
-`LEGACY_TRANSPORT` carries a **countdown, not a boolean**. «Deprecated» is not
-actionable and «357 days left, until 2027-07-28» is. It is a recommendation with a
-date and never a gate: the deprecated form is valid until then, and a probe that
-failed the build today would be asserting a rule that does not yet apply.
+`LEGACY_TRANSPORT` carries **each signal's own footing**, which is the correction
+described below: `/sse`, an issued `Mcp-Session-Id` and a refused stateless call
+are three different statements on three different clocks — and one of them is on
+no clock at all. Where the spec gives a date the finding gives it; where it does
+not, the finding says so rather than borrowing one. It is a recommendation and
+never a gate: every form named is still valid, and a probe that failed the build
+today would be asserting a rule that does not yet apply.
 
-## What this probe does not know
+## What the first version got wrong
 
-It was written against a written summary of spec `2026-07-28`, not against the
-spec document. Three rules are therefore **assumptions**, and the probe says so in
-its own output rather than asserting them:
+This probe was first written against a written **summary** of the spec rather
+than the document, and it stated three assumptions in its own output. All three
+were wrong. Two of them would have produced exactly the false finding the probe
+exists to prevent — a `LEGACY_TRANSPORT` against a fully migrated server.
 
-* `Mcp-Method` and `Mcp-Name` are mandatory headers on Streamable HTTP
-* `initialize` and `Mcp-Session-Id` are removed rather than optional
-* the deprecation window is twelve months from `2026-07-28`
+The rules below were read from
+[the specification](https://modelcontextprotocol.io/specification/2026-07-28) on
+**2026-08-05**. Each names its page so the next reader can re-check it instead of
+trusting this file, which is precisely what did not happen the first time.
 
-The wire mode **measures** all three instead of assuming them. It sends the
-stateless call twice — once with the new headers and once without — and prints
-both status codes, so «the headers are mandatory» becomes an observation with two
-numbers behind it rather than a premise. `--spec-verified` changes the report's
-wording once the rules have been checked against the document; it never changes a
-verdict, because a verdict that moved when somebody set a flag would not be a
-measurement.
+### 1. `_meta` was in the wrong place, with the wrong keys
+
+It belongs in **`params`**, not at the JSON-RPC message root, and its keys are
+namespaced:
+
+```json
+"params": {
+  "_meta": {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": {"name": "…", "version": "…"},
+    "io.modelcontextprotocol/clientCapabilities": {}
+  }
+}
+```
+
+This is not cosmetic. The `MCP-Protocol-Version` header **MUST** match the
+`io.modelcontextprotocol/protocolVersion` value in the body, and a mismatch is a
+mandatory `400 Bad Request` with `-32020 HeaderMismatch`. A **compliant** server
+would therefore have rejected this probe's stateless call — and the probe would
+have read that as «the server still requires `initialize`».
+
+### 2. `Mcp-Name` was sent on every call, empty
+
+It mirrors `params.name` or `params.uri` and is required only for `tools/call`,
+`resources/read` and `prompts/get`. An empty header with no body field to match
+is a `HeaderMismatch` by the same rule that requires it. Same false finding, by a
+second route. An empty header is not a neutral one.
+
+### 3. The deprecation clock is not one clock
+
+| What | Deprecated in | Earliest removal |
+|---|---|---|
+| Roots, Sampling, Logging, DCR | `2026-07-28` | first revision on or after `2027-07-28` |
+| HTTP+SSE transport (`/sse`) | `2025-03-26` | **three months after SEP-2596 reaches Final** — the registry gives no date |
+| `Mcp-Session-Id` | — | **not deprecated: removed outright** in `2026-07-28` |
+
+The twelve-month window is real, but it governs the four features in the first
+row — none of which this probe measures. The `/sse` transport is on a different
+footing entirely and its removal date is **not computable** from the published
+spec. The first version printed `2027-07-28` for an answering `/sse` endpoint.
+That number appears nowhere in the specification; it came from applying the wrong
+clock, and a fabricated date in a report is worse than no date, because it gets
+planned against.
+
+And «earliest removal» is **eligibility, never a deadline**. The policy is
+explicit: *«Features may remain Deprecated, without removal, for much longer than
+the minimum deprecation window.»*
+
+### What was right
+
+`initialize`/`notifications/initialized` are removed; `Mcp-Session-Id` is
+removed; `Mcp-Method`/`Mcp-Name` are required for compliance; `ttlMs`/`cacheScope`
+are required on list results. `server/discover` exists — and is stronger than
+assumed: **servers MUST implement it**; it is the *client* that MAY call it.
+
+The probe still sends the stateless call both with and without the required
+headers. Now that the rule is confirmed the point is different: the difference
+between the two answers is what tells a server that **enforces** the requirement
+from one that merely tolerates it, and no single request can make that
+distinction.
 
 ## The countdown must be reproducible
 
@@ -182,8 +240,16 @@ breaks the pattern, which is the reason this is a matrix and not *N* reports.
 ## The promptfoo half, and its limit
 
 The determ profile gained asserts for the list-response contract — `tools/list`,
-`resources/list` and `prompts/list` must carry `ttlMs`/`cacheScope` and come back
-in a deterministic order.
+`resources/list` and `prompts/list` **MUST** carry `ttlMs`/`cacheScope` (a
+`CacheableResult`) and **SHOULD** come back in a deterministic order. The
+difference in strength is why the order assert checks uniqueness rather than a
+fixed sequence.
+
+`cacheScope`'s vocabulary is `public` | `private`. The first version of the
+assert listed `session|client|global|none`, which was invented — it would have
+**failed every compliant server and passed none**, the precise inversion of what
+an assert is for. It is fixed, and it is the fourth thing this probe got wrong by
+reading a summary instead of the document.
 
 It did **not** gain a stateless assert, and that is the honest outcome rather than
 an omission. The provider drives the FastMCP in-memory client in-process; there is

@@ -5,8 +5,8 @@ THE OCCASION
 ------------
 MCP spec ``2026-07-28`` removes the handshake. ``initialize``/``initialized``
 and ``Mcp-Session-Id`` are gone; every request carries its protocol version,
-``clientInfo`` and capabilities in ``_meta``. The legacy HTTP+SSE transport is
-deprecated with a twelve-month window.
+client info and capabilities in ``params._meta`` under
+``io.modelcontextprotocol/*`` keys, and servers MUST implement ``server/discover``.
 
 That turns a question nobody in this repository could ask into the one that
 decides a migration: *which spec is this server on?* Before this probe the
@@ -40,10 +40,10 @@ has drifted from the deployment is worse than no plan, because it is consulted.
 THE STATUS VOCABULARY, AND WHY IT HAS FOUR ENTRIES AND NOT THREE
 ----------------------------------------------------------------
 ``SPEC_DRIFT``       two sources name different versions
-``LEGACY_TRANSPORT`` the wire is demonstrably on a deprecated form — a reachable
-                     ``/sse`` endpoint, an issued ``Mcp-Session-Id``, or a
-                     stateless call the server refuses. Carries the remaining
-                     days of the deprecation window
+``LEGACY_TRANSPORT`` the wire is demonstrably on a pre-2026-07-28 form — a
+                     reachable ``/sse`` endpoint, an issued ``Mcp-Session-Id``,
+                     or a correctly formed stateless call the server refuses.
+                     Each signal carries ITS OWN footing (see ``DEPRECATIONS``)
 ``UNVERIFIED``       a source could not be read. NEVER rendered as "in sync"
 ``SPEC_UNDECLARED``  the source declares no protocol version at all
 
@@ -55,22 +55,43 @@ switched-off check catches nothing. What ``SPEC_UNDECLARED`` buys is that the
 report says *why* it has no code-level value, instead of leaving a blank that
 reads like agreement.
 
-WHAT THIS PROBE DOES NOT KNOW
------------------------------
-It was written against a written summary of spec ``2026-07-28``, not against the
-spec document. Three rules are therefore ASSUMPTIONS and are marked as such in
-the report rather than asserted:
+WHAT THE FIRST VERSION GOT WRONG
+--------------------------------
+This probe was first written against a written SUMMARY of the spec rather than
+the document. All three of its stated assumptions turned out to be wrong, and
+two of them would have produced exactly the false finding the probe exists to
+prevent. Reading the spec (``SPEC_SOURCE``, on ``SPEC_VERIFIED_ON``) corrected:
 
-  * ``Mcp-Method`` and ``Mcp-Name`` are mandatory headers on Streamable HTTP
-  * ``initialize`` and ``Mcp-Session-Id`` are removed rather than optional
-  * the deprecation window is twelve months from ``2026-07-28``
+1. **``_meta`` was in the wrong place, with the wrong keys.** It belongs in
+   ``params``, not at the JSON-RPC message root, and its keys are namespaced:
+   ``io.modelcontextprotocol/protocolVersion`` / ``clientInfo`` /
+   ``clientCapabilities``. Since the ``MCP-Protocol-Version`` header MUST match
+   the ``_meta`` value and a mismatch is a mandatory ``400`` with
+   ``-32020 HeaderMismatch``, a COMPLIANT server would have rejected this
+   probe's stateless call — and the probe would have called that
+   ``LEGACY_TRANSPORT``.
 
-The wire mode MEASURES all three rather than assuming them — it sends a request
-with the headers and one without, and reports both answers. Where a measurement
-cannot separate two explanations, it says ``UNVERIFIED`` and names both. Pass
-``--spec-verified`` once the rules have been checked against the document; that
-flag only changes the wording of the report, never a verdict, because a verdict
-that moved when somebody set a flag would not be a measurement.
+2. **``Mcp-Name`` was sent on every call, empty.** It mirrors ``params.name`` or
+   ``params.uri`` and is required only for ``tools/call``, ``resources/read``
+   and ``prompts/get``. An empty header with no body field to match is a
+   ``HeaderMismatch`` by the same rule. Same false finding, second route.
+
+3. **The deprecation clock is not one clock.** The twelve-month window governs
+   Roots, Sampling, Logging and DCR (deprecated in ``2026-07-28``, eligible
+   ``2027-07-28``). The HTTP+SSE transport was deprecated in ``2025-03-26`` and
+   its earliest removal is "three months after SEP-2596 reaches Final", a date
+   the registry does not give — so it is NOT COMPUTABLE, and the ``2027-07-28``
+   this probe used to print for a ``/sse`` endpoint was an invented number.
+   ``Mcp-Session-Id`` is not deprecated at all: it was REMOVED outright, with no
+   window. And "earliest removal" is ELIGIBILITY, never a deadline.
+
+The lesson is the module's own: a probe that reads a summary and reports a
+measurement has laundered an assumption into evidence. Every rule applied here
+now names the page it came from.
+
+Both header variants are still sent, now that the rule is confirmed rather than
+assumed — the difference between a strict server and a lax one is itself worth
+measuring, and no single request can make it.
 
 READ-ONLY
 ---------
@@ -119,13 +140,71 @@ LEGACY_TRANSPORT = "LEGACY_TRANSPORT"
 UNVERIFIED = "UNVERIFIED"
 SPEC_UNDECLARED = "SPEC_UNDECLARED"
 
-# The spec this portfolio is migrating to, and the deprecation clock that came
-# with it. Both are DATA, not policy: `--spec`/`--deprecated-on` move them, so a
-# later spec does not require editing this file. Taken from the migration brief —
-# see "WHAT THIS PROBE DOES NOT KNOW".
 TARGET_SPEC = "2026-07-28"
-DEPRECATION_ANNOUNCED = "2026-07-28"
+
+# Read from the specification document on 2026-08-05, not from a summary. The
+# first version of this probe was written against a migration brief and got
+# three of its three assumptions wrong; every rule below now names the page it
+# came from so the next reader can re-check it instead of trusting this file.
+SPEC_SOURCE = "https://modelcontextprotocol.io/specification/2026-07-28"
+SPEC_VERIFIED_ON = "2026-08-05"
+
+# THE DEPRECATION CLOCK IS NOT ONE CLOCK, which is the correction that matters
+# most here. The policy (/community/feature-lifecycle) sets a TWELVE-MONTH
+# MINIMUM measured from the release of the revision that first marks a feature
+# Deprecated — but the registry (/specification/2026-07-28/deprecated) shows the
+# features this probe cares about are on three different footings:
+#
+#   * Roots, Sampling, Logging, DCR — Deprecated in 2026-07-28, earliest removal
+#     "first revision released on or after 2027-07-28". The 12-month clock.
+#   * HTTP+SSE (the /sse transport) — Deprecated since 2025-03-26, earliest
+#     removal "three months after SEP-2596 reaches Final". A DIFFERENT clock, and
+#     the registry does not state when SEP-2596 went Final, so the date is NOT
+#     COMPUTABLE from the published spec. An earlier version of this probe
+#     printed 2027-07-28 for a /sse endpoint. That number was invented.
+#   * Mcp-Session-Id — not deprecated at all. REMOVED outright in 2026-07-28
+#     (changelog, Major change 1). There is no window and no countdown; a server
+#     issuing one is speaking an older revision.
+#
+# And "earliest removal" is ELIGIBILITY, not a deadline: "Features may remain
+# Deprecated, without removal, for much longer than the minimum deprecation
+# window." So this probe reports a date where the spec gives one, says so where
+# it does not, and never calls either a deadline.
 DEPRECATION_WINDOW_MONTHS = 12
+TWELVE_MONTH_FEATURES_DEPRECATED_IN = "2026-07-28"
+
+
+@dataclass(frozen=True)
+class Deprecation:
+    """One deprecated thing, with the footing the registry actually gives it."""
+
+    what: str
+    deprecated_in: str
+    # None when the spec states no computable date. NOT a stand-in for "none".
+    earliest_removal: date | None
+    basis: str
+
+    def phrase(self, today: date) -> str:
+        if self.earliest_removal is None:
+            return (
+                f"{self.what} — Deprecated since {self.deprecated_in}; "
+                f"earliest removal is {self.basis}, which the registry does not "
+                "date, so no countdown can be given. Not a deadline either way"
+            )
+        left = (self.earliest_removal - today).days
+        when = self.earliest_removal.isoformat()
+        if left < 0:
+            return (
+                f"{self.what} — eligible for removal since {when} "
+                f"({abs(left)} day(s) ago). Eligibility, not a deadline: a "
+                "Deprecated feature may remain for much longer"
+            )
+        return (
+            f"{self.what} — Deprecated in {self.deprecated_in}; eligible for "
+            f"removal in the first revision released on or after {when} "
+            f"({left} day(s) away). Eligibility, not a deadline"
+        )
+
 
 # The versions a server can plausibly be on. Used only to recognise a date-shaped
 # literal as a protocol version rather than as a release date; an unknown value
@@ -168,8 +247,17 @@ _SKIP_DIRS = {
 # --------------------------------------------------------------------------
 
 
-def deadline(announced: str = DEPRECATION_ANNOUNCED, months: int = 12) -> date:
-    """The day the deprecated form stops being allowed.
+def deadline(
+    announced: str = TWELVE_MONTH_FEATURES_DEPRECATED_IN, months: int = 12
+) -> date:
+    """The day a 12-month-window feature becomes ELIGIBLE for removal.
+
+    Not "the day it stops being allowed" — that is what an earlier version of
+    this docstring said, and it is wrong twice over. The policy defines a
+    minimum window after which the feature "becomes eligible for removal in the
+    first specification revision released as Current on or after the window
+    elapses", and adds that "Features may remain Deprecated, without removal,
+    for much longer than the minimum deprecation window."
 
     Month arithmetic without dateutil: add whole months and clamp the day, which
     is exact for the only case that matters here (a 12-month window lands on the
@@ -191,20 +279,45 @@ def days_left(today: date, until: date) -> int:
     return (until - today).days
 
 
-def countdown(today: date, until: date) -> str:
-    """The sentence a LEGACY_TRANSPORT finding carries.
+# The registry, transcribed. Each entry keeps the footing the spec gives it,
+# because they are not the same and reporting them as one produced a number that
+# appears nowhere in the specification.
+DEPRECATIONS: dict[str, Deprecation] = {
+    "http_sse": Deprecation(
+        what="the HTTP+SSE transport (2024-11-05)",
+        deprecated_in="2025-03-26",
+        # NOT the 12-month clock, and NOT computable: the registry gives
+        # "Three months after SEP-2596 reaches Final" and states no Final date.
+        earliest_removal=None,
+        basis="three months after SEP-2596 reaches Final",
+    ),
+    "roots_sampling_logging_dcr": Deprecation(
+        what="Roots, Sampling, Logging and Dynamic Client Registration",
+        deprecated_in="2026-07-28",
+        earliest_removal=deadline(TWELVE_MONTH_FEATURES_DEPRECATED_IN, 12),
+        basis="the twelve-month minimum window",
+    ),
+}
 
-    A countdown and not a boolean, because "deprecated" is not actionable and
-    "271 days" is. Past the deadline it says so plainly rather than printing a
+
+def countdown(today: date, until: date) -> str:
+    """The sentence a 12-month-window finding carries.
+
+    Days and not a boolean, because "deprecated" is not actionable and "357
+    days" is — but "eligible" and not "allowed until", because that is what the
+    policy says. Past the date it says so plainly rather than printing a
     negative number, which reads as a bug and gets ignored.
     """
     left = days_left(today, until)
     if left < 0:
         return (
-            f"the deprecation window closed {abs(left)} day(s) ago "
-            f"({until.isoformat()}) — this is no longer a countdown"
+            f"eligible for removal since {until.isoformat()} "
+            f"({abs(left)} day(s) ago) — eligibility, not a deadline"
         )
-    return f"{left} day(s) left in the deprecation window (until {until.isoformat()})"
+    return (
+        f"{left} day(s) until it is eligible for removal ({until.isoformat()}) — "
+        "eligibility, not a deadline"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -501,18 +614,72 @@ def _rpc(
     return {"jsonrpc": "2.0", "id": ident, "method": method, "params": params or {}}
 
 
-def _stateless_meta(spec: str) -> dict[str, Any]:
-    """The ``_meta`` block a stateless request carries instead of a handshake.
+# Verbatim from the transport page's worked examples. The keys are NAMESPACED
+# and `_meta` sits inside `params`, not at the JSON-RPC message root. The first
+# version of this probe got both wrong, and the consequence was not cosmetic: the
+# `MCP-Protocol-Version` header MUST match `_meta`'s
+# `io.modelcontextprotocol/protocolVersion`, and a mismatch is a mandatory
+# `400 Bad Request` with `-32020 HeaderMismatch`. A compliant, fully migrated
+# server would therefore have rejected this probe's stateless call — which the
+# probe read as "the server still requires initialize" and reported as
+# LEGACY_TRANSPORT. A false finding against exactly the servers that had done
+# the work, which is the failure this whole probe family exists to prevent.
+_META_VERSION = "io.modelcontextprotocol/protocolVersion"
+_META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
+_META_CLIENT_CAPS = "io.modelcontextprotocol/clientCapabilities"
 
-    Per the migration brief: protocol version, clientInfo and capabilities travel
-    with every request. A server on the old spec ignores an unknown ``_meta`` key,
-    so sending it costs nothing and is the only way to ask the question.
-    """
+_CLIENT_INFO = {"name": "mcp-continuous-auditor spec-probe", "version": "1"}
+
+# `Mcp-Name` mirrors `params.name` or `params.uri` and is REQUIRED only for these
+# three methods (transport page, "Standard Request Headers"). Sending it on
+# `tools/list` — as the first version did, with an empty value — gives a
+# validating server a header with no body field to match, which is a
+# `HeaderMismatch` rejection by the same rule. An empty header is not a neutral
+# one.
+_NAMED_METHODS = ("tools/call", "resources/read", "prompts/get")
+
+
+def _stateless_params(
+    spec: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """`params` carrying the per-request metadata that replaced the handshake."""
     return {
-        "protocolVersion": spec,
-        "clientInfo": {"name": "mcp-continuous-auditor spec-probe", "version": "1"},
-        "capabilities": {},
+        **(params or {}),
+        "_meta": {
+            _META_VERSION: spec,
+            _META_CLIENT_INFO: _CLIENT_INFO,
+            _META_CLIENT_CAPS: {},
+        },
     }
+
+
+def _headers(method: str, spec: str, name: str = "") -> dict[str, str]:
+    """The headers the transport requires for one request, and no others."""
+    out = {"MCP-Protocol-Version": spec, "Mcp-Method": method}
+    if method in _NAMED_METHODS and name:
+        out["Mcp-Name"] = name
+    return out
+
+
+def _stateless_call(
+    method: str, ident: int, spec: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return _rpc(method, ident, _stateless_params(spec, params))
+
+
+def _result_type(payload: Any) -> str:
+    """``result.resultType`` — required on every result from 2026-07-28 on.
+
+    Changelog, Major change 8: results carry ``"complete"`` or
+    ``"input_required"``, and "Clients MUST treat results from earlier-protocol
+    servers that omit the field as `complete`". That makes its PRESENCE a clean
+    positive signal — an older server cannot accidentally produce it — while its
+    absence proves nothing on its own.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    result = payload.get("result")
+    return str(result.get("resultType") or "") if isinstance(result, dict) else ""
 
 
 @dataclass
@@ -520,6 +687,7 @@ class WireResult:
     url: str
     reachable: bool = False
     negotiated: str = ""
+    advertised: list[str] = field(default_factory=list)
     stateless_ok: bool | None = None
     stateless_with_headers: int = 0
     stateless_without_headers: int = 0
@@ -527,6 +695,7 @@ class WireResult:
     session_id: str = ""
     sse_endpoint: str = ""
     discover_ok: bool | None = None
+    result_type: str = ""
     notes: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -534,6 +703,7 @@ class WireResult:
             "url": self.url,
             "reachable": self.reachable,
             "negotiated": self.negotiated,
+            "advertised_versions": list(self.advertised),
             "stateless_ok": self.stateless_ok,
             "stateless_status_with_required_headers": self.stateless_with_headers,
             "stateless_status_without_required_headers": self.stateless_without_headers,
@@ -541,6 +711,7 @@ class WireResult:
             "session_id_issued": bool(self.session_id),
             "sse_endpoint": self.sse_endpoint,
             "discover_ok": self.discover_ok,
+            "result_type": self.result_type,
             "notes": list(self.notes),
         }
 
@@ -557,22 +728,24 @@ def probe_wire(
     the stateless call goes FIRST and the handshake is asked afterwards, as a
     second data point rather than as a gate.
 
-    Both header variants are sent because the brief's claim that ``Mcp-Method``
-    and ``Mcp-Name`` are mandatory is unverified here. Sending one request each
-    way turns an assumption into two measured status codes, and the report prints
-    both rather than picking the one that suits a conclusion.
+    Both header variants are still sent, now that the rule is confirmed rather
+    than assumed: `Mcp-Method` and `Mcp-Name` are REQUIRED for compliance
+    (transport page, "Standard Request Headers"), and a server that validates
+    them answers `400` with `-32020 HeaderMismatch`. Sending the call each way
+    keeps the difference measured, which is what tells a strict server apart
+    from a lax one — a distinction no single request can make.
     """
     out = WireResult(url=url)
 
-    # 1) a real call with NO handshake in front of it, carrying the new headers.
+    # 1) a real call with NO handshake in front of it, correctly formed.
+    #    `Mcp-Name` is deliberately ABSENT: it mirrors `params.name`/`params.uri`
+    #    and is required only for tools/call, resources/read and prompts/get. An
+    #    empty one here is a header with no body field to match, which a
+    #    validating server must reject.
     listed = request(
         url,
-        payload={**_rpc("tools/list", 1), "_meta": _stateless_meta(spec)},
-        headers={
-            "Mcp-Method": "tools/list",
-            "Mcp-Name": "",
-            "MCP-Protocol-Version": spec,
-        },
+        payload=_stateless_call("tools/list", 1, spec),
+        headers=_headers("tools/list", spec),
         timeout=timeout,
     )
     out.reachable = listed.reached
@@ -581,32 +754,39 @@ def probe_wire(
         out.notes.append(f"the endpoint could not be reached: {listed.error}")
         return out
     out.stateless_ok = listed.rpc_ok
+    out.result_type = _result_type(listed.payload)
 
-    # 2) the same call WITHOUT the headers the new spec is said to require.
-    #    Two status codes, one difference, no assumption.
+    # 2) the same call WITHOUT the required headers.
     bare = request(
         url,
-        payload={**_rpc("tools/list", 2), "_meta": _stateless_meta(spec)},
+        payload=_stateless_call("tools/list", 2, spec),
         headers={"MCP-Protocol-Version": spec},
         timeout=timeout,
     )
     out.stateless_without_headers = bare.status
     if listed.rpc_ok and not bare.rpc_ok:
         out.notes.append(
-            "the stateless call succeeds WITH `Mcp-Method`/`Mcp-Name` and fails "
-            f"without them (HTTP {bare.status}) — consistent with the headers "
-            "being mandatory, which this probe takes from the migration brief "
-            "and has not verified against the spec document"
+            "the stateless call succeeds WITH `Mcp-Method` and fails without it "
+            f"(HTTP {bare.status}) — the server enforces the required request "
+            "headers, as the transport requires"
+        )
+    elif listed.rpc_ok and bare.rpc_ok:
+        out.notes.append(
+            "the stateless call succeeds WITHOUT `Mcp-Method` too — the headers "
+            "are REQUIRED for compliance, so this server does not enforce them. "
+            "Not a protocol-version finding; worth knowing before an "
+            "intermediary starts routing on them"
         )
     elif not listed.rpc_ok and bare.rpc_ok:
         out.notes.append(
-            "the stateless call succeeds WITHOUT the new headers and fails with "
-            f"them (HTTP {listed.status}) — the server rejects headers it does "
-            "not know, which is a finding in its own right"
+            "the stateless call succeeds WITHOUT the required headers and fails "
+            f"with them (HTTP {listed.status}) — the server rejects headers it "
+            "does not know, which places it before 2026-07-28"
         )
         out.stateless_ok = True
 
-    # 3) the handshake. Present or absent, both are information.
+    # 3) the handshake. Removed in 2026-07-28; present or absent, both are data.
+    #    A modern server answers an unimplemented method with 404 + -32601.
     hand = request(
         url,
         payload=_rpc(
@@ -615,17 +795,10 @@ def probe_wire(
             {
                 "protocolVersion": spec,
                 "capabilities": {},
-                "clientInfo": {
-                    "name": "mcp-continuous-auditor spec-probe",
-                    "version": "1",
-                },
+                "clientInfo": dict(_CLIENT_INFO),
             },
         ),
-        headers={
-            "Mcp-Method": "initialize",
-            "Mcp-Name": "",
-            "MCP-Protocol-Version": spec,
-        },
+        headers=_headers("initialize", spec),
         timeout=timeout,
     )
     out.handshake_ok = hand.rpc_ok
@@ -633,6 +806,8 @@ def probe_wire(
         result = hand.payload.get("result")
         if isinstance(result, dict):
             out.negotiated = str(result.get("protocolVersion") or "")
+    # Removed outright in 2026-07-28, not deprecated: a server that mints one is
+    # speaking an older revision. There is no window and no countdown for it.
     out.session_id = hand.headers.get("mcp-session-id", "")
 
     # 4) the legacy SSE endpoint, asked for by name.
@@ -654,20 +829,34 @@ def probe_wire(
     ):
         out.sse_endpoint = sse_url
 
-    # 5) the optional stateless discovery RPC. Its absence is not a finding — it
-    #    is optional in the spec — but its PRESENCE is positive evidence of a
-    #    migrated server, which nothing else here provides.
+    # 5) server/discover. NOT optional for the server: "servers MUST implement
+    #    this RPC to advertise their supported protocol versions, capabilities,
+    #    and identity" (changelog, Major change 3). It is the CLIENT that MAY
+    #    call it. An earlier comment here called it optional in the spec, which
+    #    inverted the obligation.
+    #
+    #    Its answer is also the cleanest positive evidence available: nothing
+    #    else distinguishes a migrated server from one that merely tolerates a
+    #    handshake-free call.
     disc = request(
         url,
-        payload={**_rpc("server/discover", 4), "_meta": _stateless_meta(spec)},
-        headers={
-            "Mcp-Method": "server/discover",
-            "Mcp-Name": "",
-            "MCP-Protocol-Version": spec,
-        },
+        payload=_stateless_call("server/discover", 4, spec),
+        headers=_headers("server/discover", spec),
         timeout=timeout,
     )
     out.discover_ok = disc.rpc_ok if disc.reached else None
+    if disc.rpc_ok and isinstance(disc.payload, dict):
+        result = disc.payload.get("result")
+        if isinstance(result, dict):
+            versions = result.get("supportedProtocolVersions") or result.get(
+                "protocolVersions"
+            )
+            if isinstance(versions, list) and versions:
+                out.advertised = [str(v) for v in versions]
+                # What the server SAYS it speaks, which is a stronger statement
+                # than what it tolerated above.
+                if not out.negotiated:
+                    out.negotiated = str(versions[0])
     return out
 
 
@@ -699,7 +888,6 @@ class Report:
     notes: list[str] = field(default_factory=list)
     unmeasured: list[str] = field(default_factory=list)
     harness_error: str = ""
-    spec_verified: bool = False
     today: date = field(default_factory=lambda: datetime.now(UTC).date())
     until: date = field(default_factory=deadline)
     provenance: probe_provenance.Provenance | None = None
@@ -736,9 +924,15 @@ class Report:
             "target": self.target,
             "dist": self.dist,
             "target_spec": self.spec,
-            "spec_rules_verified": self.spec_verified,
-            "deprecation_deadline": self.until.isoformat(),
-            "days_left": days_left(self.today, self.until),
+            "spec_source": SPEC_SOURCE,
+            "spec_rules_verified_on": SPEC_VERIFIED_ON,
+            # The 12-month clock, and ONLY the features it actually governs
+            # (Roots, Sampling, Logging, DCR). The /sse transport is on a
+            # different footing and carries no computable date — see
+            # `DEPRECATIONS`. A single `deprecation_deadline` field applied to
+            # everything was how the invented number got into the report.
+            "twelve_month_eligibility": self.until.isoformat(),
+            "days_to_eligibility": days_left(self.today, self.until),
             "provenance": self.provenance.as_dict() if self.provenance else None,
             "sources": {
                 "code": {"version": self.code.value, "sites": list(self.code.sites)},
@@ -774,22 +968,31 @@ def classify(report: Report) -> None:
             )
         )
 
-    # --- LEGACY_TRANSPORT: the wire is demonstrably on a deprecated form -----
+    # --- LEGACY_TRANSPORT: the wire is demonstrably on a pre-2026-07-28 form --
+    #
+    # Each signal carries ITS OWN footing. Lumping them under one countdown was
+    # the bug: `/sse` and `Mcp-Session-Id` are not on the same clock, and one of
+    # them is on no clock at all.
     wire = report.wire
     if wire is not None and wire.reachable:
         legacy: list[str] = []
         if wire.sse_endpoint:
-            legacy.append(f"a legacy HTTP+SSE endpoint answers at {wire.sse_endpoint}")
+            legacy.append(
+                f"a legacy HTTP+SSE endpoint answers at {wire.sse_endpoint} — "
+                + DEPRECATIONS["http_sse"].phrase(report.today)
+            )
         if wire.session_id:
             legacy.append(
-                f"the server issues an `Mcp-Session-Id` ({wire.session_id[:12]}…), "
-                "which the stateless core removed"
+                f"the server issues an `Mcp-Session-Id` ({wire.session_id[:12]}…). "
+                "That header was REMOVED in 2026-07-28, not deprecated — there is "
+                "no window and no countdown; the server is speaking an earlier "
+                "revision"
             )
         if wire.stateless_ok is False:
             legacy.append(
-                "a call without a preceding handshake was refused "
-                f"(HTTP {wire.stateless_with_headers}) — the server still requires "
-                "`initialize`"
+                "a correctly formed call without a preceding handshake was "
+                f"refused (HTTP {wire.stateless_with_headers}) — the server still "
+                "requires `initialize`, which 2026-07-28 removed"
             )
         if legacy:
             report.findings.append(
@@ -797,12 +1000,10 @@ def classify(report: Report) -> None:
                     LEGACY_TRANSPORT,
                     "medium",
                     "; ".join(legacy)
-                    + ". "
-                    + countdown(report.today, report.until)
-                    + ". This is a RECOMMENDATION with a date, not a gate: the "
-                    "deprecated form is valid until then, and a probe that failed "
-                    "the build today would be asserting a rule that does not yet "
-                    "apply",
+                    + ". A RECOMMENDATION, not a gate: every form named here is "
+                    "still valid, and where a removal date exists it marks "
+                    "ELIGIBILITY rather than a deadline — the policy is explicit "
+                    "that a Deprecated feature may remain for much longer",
                 )
             )
 
@@ -844,12 +1045,10 @@ def run(
     today: date | None = None,
     until: date | None = None,
     timeout: float = DEFAULT_TIMEOUT,
-    spec_verified: bool = False,
 ) -> Report:
     report = Report(
         target=str(target),
         spec=spec,
-        spec_verified=spec_verified,
         today=today or datetime.now(UTC).date(),
         until=until or deadline(),
     )
@@ -908,15 +1107,12 @@ def render(report: Report) -> str:
         lines.append(f"  HARNESS: {report.harness_error}")
         return "\n".join(lines)
 
+    lines.append(f"  target spec {report.spec} · rules read from {SPEC_SOURCE}")
+    lines.append(f"  spec rules verified on {SPEC_VERIFIED_ON}")
     lines.append(
-        f"  target spec {report.spec} · {countdown(report.today, report.until)}"
+        "  deprecation clocks (they are NOT one clock):\n"
+        + "\n".join(f"    {d.phrase(report.today)}" for d in DEPRECATIONS.values())
     )
-    if not report.spec_verified:
-        lines.append(
-            "  note: the spec rules this probe applies come from a migration "
-            "brief, not from the spec document. The wire mode MEASURES them "
-            "rather than assuming them; pass --spec-verified once checked"
-        )
 
     lines.append("  sources:")
     for name, value in sorted(report.measured.items()):
@@ -932,8 +1128,11 @@ def render(report: Report) -> str:
             f"handshake={_tri(wire.handshake_ok)} "
             f"session_id={'yes' if wire.session_id else 'no'} "
             f"sse={'yes' if wire.sse_endpoint else 'no'} "
-            f"discover={_tri(wire.discover_ok)}"
+            f"discover={_tri(wire.discover_ok)} "
+            f"resultType={wire.result_type or '(absent)'}"
         )
+        if wire.advertised:
+            lines.append(f"    advertised versions: {', '.join(wire.advertised)}")
         for note in wire.notes:
             lines.append(f"      note: {note}")
 
@@ -981,27 +1180,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--spec", default=TARGET_SPEC, help="the spec being migrated to")
     p.add_argument(
         "--deprecated-on",
-        default=DEPRECATION_ANNOUNCED,
-        help="when the deprecation window opened (default %(default)s)",
+        default=TWELVE_MONTH_FEATURES_DEPRECATED_IN,
+        help="the revision that opened the twelve-month window for Roots, "
+        "Sampling, Logging and DCR (default %(default)s). It does NOT govern "
+        "the HTTP+SSE transport, which is on its own footing",
     )
     p.add_argument(
         "--window-months",
         type=int,
         default=DEPRECATION_WINDOW_MONTHS,
-        help="length of the deprecation window (default %(default)s)",
+        help="the policy's minimum deprecation window (default %(default)s)",
     )
     p.add_argument(
         "--now",
         default="",
         metavar="YYYY-MM-DD",
-        help="pin today's date. The countdown is time-dependent, and a report "
+        help="pin today's date. Any day count is time-dependent, and a report "
         "that cannot be reproduced does not satisfy the provenance rule",
-    )
-    p.add_argument(
-        "--spec-verified",
-        action="store_true",
-        help="the spec rules have been checked against the document. Changes the "
-        "report's wording only — never a verdict",
     )
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     p.add_argument("--format", choices=("text", "json"), default="text")
@@ -1031,7 +1226,6 @@ def main(argv: list[str] | None = None) -> int:
         today=today,
         until=until,
         timeout=args.timeout,
-        spec_verified=args.spec_verified,
     )
     report.provenance = prov.recheck()
 
