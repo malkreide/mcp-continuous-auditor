@@ -71,6 +71,49 @@ failure cannot masquerade as a repository nobody has cloned.
 tests — more of them for correct-but-renamed adoptions than for drift, since a
 probe that cannot tell those apart produces a red run everybody learns to ignore.
 
+### Fixed — the nightly routing closes its issues, and knows when it may not
+
+The other half of the delivery path #66 repaired. `sync_findings_issues.py` ran
+on `exit == 2` only and never closed anything, so a schema drift fixed in March
+kept its ticket open into June. An issue nothing closes becomes noise, and the
+answer to noise is to switch the routing off.
+
+**Closing on `outcome == "green"` would have been the wrong fix, and the summary
+says so itself.** `nightly_audit_report.py` computes `green` deliberately
+*without* the not-measured flags — its own comment reads "transport_boot_unmeasured
+and lockfile_unmeasured deliberately absent" — so a green night can carry a gate
+that produced no verdict at all. Two are load-bearing:
+
+* `graded_layer_ran` false — the determ-only promptfoo profile ran, so the
+  model-graded red-team layer was never exercised. The report already refuses to
+  read that as "red-team clear"; closing the `redteam` issue on it is the same
+  claim in a louder form, because a closed issue reads as *fixed*.
+* `host_allowlist_unconfigured` — fail-open is a documented deployment state, and
+  not a measurement of the control.
+
+So each label now gets the three answers this repository already applies to every
+probe report: **finding** opens or updates, **clear** closes, **unknown** touches
+nothing. A hard-fail leaves every label unknown. Unknown short-circuits before
+any call at all, read-only ones included — `_ensure_label` creates a label when
+it is missing, and an unmeasured class must not leave even that trace.
+
+The close only becomes reachable if the flow calls the script on a green night,
+so `openclaw/cron/nightly-audit.json` and `docs/cron/nightly-audit.md` now do.
+Without that the whole state machine would have been unreachable code.
+
+**Also fixed, found while mapping the classes:** `shipped_artifact_fail` and
+`lockfile_fail` both move `outcome` to `findings` and had no entry in `_CLASSES`,
+so a night whose only red gate was one of them classified as a finding and then
+opened nothing at all. That is the third instance of one defect — the comment in
+`_CLASSES` records the first two being fixed by hand in an earlier iteration.
+`test_every_finding_key_in_the_summary_is_routed` now reads the `green = not (…)`
+block out of `nightly_audit_report.py` and fails on the next one, in both
+directions: a routed key that nobody writes any more is dead routing that reads
+as coverage.
+
+16 mutations, all 16 caught. Two survived the first pass — both in `sync()`,
+which had no tests at all, only its callers did.
+
 ### Fixed — the shipped templates now hold to two rules the auditor already had
 
 Two gaps in `.github/workflows/*.yml.template`. A defect in a template multiplies

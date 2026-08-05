@@ -29,9 +29,12 @@ never an opinion (`openclaw/workspace/SOUL.md`).
        └─ exit 0 green | 2 findings | 1 hard-fail
   └─ agent reads the summary and routes:
        exit 1 → announce the hard-failure report, STOP (no issue, no PR)
-       exit 0 → announce "all green"
+       exit 0 → run scripts/sync_findings_issues.py (opens nothing; CLOSES the
+                issues whose gate this run measured and found clean)
+                announce "all green"
        exit 2 → run scripts/sync_findings_issues.py (deterministic: opens/updates
-                one tracking issue per finding class, deduped by a marker)
+                one tracking issue per finding class, closes the classes this run
+                cleared, deduped by a marker)
                 announce the report, which asks: "reply OK to authorise a draft PR"
   └─ --announce delivers .audit/nightly-report.md to Telegram
 ```
@@ -62,7 +65,27 @@ right label.
    finding class (labels `schema-drift` / `redteam` / `audit-finding`),
    **deterministically** deduped by a hidden marker — the agent only runs it, it
    does not eyeball open-vs-reuse (Analysis U-C, mirroring the weekly `live-probe`
-   job's `github-script`). It does **not** open a PR. The announced report ends with
+   job's routing). It does **not** open a PR.
+
+   It also **closes**, which is why it now runs on a green night too. An issue
+   nothing ever closes reads as noise within weeks, and the answer to noise is to
+   switch the routing off — the close is what keeps it credible, not what makes
+   it tidy. The close is per label and needs more than `outcome == "green"`: the
+   summary's `green` is deliberately computed *without* the not-measured flags,
+   so a green night can carry a gate that produced no verdict. Each label
+   therefore gets the same three answers every probe report here gets
+   (`docs/probes/README.md`):
+
+   | label | closed on a green night **unless** |
+   |---|---|
+   | `redteam` | `graded_layer_ran` is false — a determ-only profile never ran the model-graded layer |
+   | `dns-rebinding` | `host_allowlist_unconfigured` — fail-open is a deployment state, not a measurement |
+   | `audit-finding` | `transport_boot_unmeasured` or `lockfile_unmeasured` |
+   | `schema-drift` | (nothing — the gate either ran or the night hard-failed) |
+
+   A hard-fail leaves every label untouched: the audit did not complete, so
+   nothing it failed to say is an all-clear. Closing an issue on that would put a
+   "fixed" stamp on a comparison that never happened. The announced report ends with
    *"reply `OK` to authorise a draft PR"*. The draft PR is created only in a
    **later** turn, after your explicit Telegram OK, on a branch `fix/<slug>`,
    never on `main` (`openclaw/workspace/AGENTS.md`). A cron turn is a single
