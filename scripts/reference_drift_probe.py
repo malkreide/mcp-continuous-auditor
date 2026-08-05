@@ -87,11 +87,18 @@ network error is indistinguishable from a missing repository. A repository that
 is not on disk is ``UNVERIFIED`` — and the report states its COVERAGE, n of m
 sites read, so a narrow run cannot read as a clean one.
 
+A declared property is checked against the template whether or not any adoption
+site could be read: "does this file do what the manifest says it does" is a claim
+about one file, and gating it on the checkouts would leave a fresh manifest
+unchecked on the machine it is written on. Only how far the SERVERS have moved
+needs them.
+
 EXIT CODES
   0    the template and every declared adoption site agree
   2    FINDING — REFERENCE_STALE, REFERENCE_UNADOPTED, MANIFEST_MISSING,
        MANIFEST_INVALID or TEMPLATE_UNMAPPED
-  3    NOT MEASURED — no reference/ directory, or no adoption site was readable
+  3    NOT MEASURED — no reference/ directory, or nothing was found to report and
+       no adoption site was readable
   4    MOVED_DURING_RUN — the checkout changed under the probe (probe_provenance)
   127  the HARNESS could not run
 
@@ -862,14 +869,38 @@ def _resolve_template(
 
 
 def _compare_declared(report: Report, template: Template) -> None:
+    """The declared properties, against the template and against each site.
+
+    The two halves have different prerequisites, and conflating them cost the
+    probe its most important finding on a first run. Whether a SITE lags needs
+    that site to have been read. Whether the TEMPLATE satisfies a property it
+    itself declares needs nothing but the template — it is a claim the manifest
+    makes about one file. Gating it on the checkouts meant that a run without
+    them reported no declared finding at all, which is exactly the machine a new
+    manifest is written on.
+    """
     read = [s for s in template.sites if s.unit is not None]
-    if not read:
-        return
     for prop in template.properties:
         # strict: `template.unit` is not None — `run` skips the template otherwise.
         reference_holds = holds(prop, template.unit)
         satisfying = [s for s in read if holds(prop, s.unit)]
         if not reference_holds:
+            if not read:
+                standing = (
+                    "; no adoption site could be read, so how far the servers are "
+                    "ahead of it was not measured"
+                )
+            elif satisfying:
+                standing = (
+                    f"; {len(satisfying)} of {len(read)} adoption site(s) read do: "
+                    + ", ".join(s.repo for s in satisfying[:5])
+                    + (" …" if len(satisfying) > 5 else "")
+                )
+            else:
+                standing = (
+                    f"; none of the {len(read)} adoption site(s) read does either — "
+                    "the property is declared and implemented nowhere"
+                )
             report.findings.append(
                 Finding(
                     code="REFERENCE_STALE",
@@ -877,16 +908,10 @@ def _compare_declared(report: Report, template: Template) -> None:
                     template=template.name,
                     detail=(
                         f"the template does not satisfy its own declared property "
-                        f"`{prop.id}` ({prop.says}); {len(satisfying)} of {len(read)} "
-                        f"adoption site(s) read do"
-                        + (
-                            ": " + ", ".join(s.repo for s in satisfying[:5])
-                            if satisfying
-                            else " — the property is declared and implemented nowhere"
-                        )
-                        + (" …" if len(satisfying) > 5 else "")
-                        + ". Every repository that copies this template next inherits "
-                        "the gap"
+                        f"`{prop.id}` ({prop.says})"
+                        + standing
+                        + ". Every repository that copies this template next "
+                        "inherits the gap"
                     ),
                 )
             )

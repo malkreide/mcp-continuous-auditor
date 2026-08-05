@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a declared property was only checked when the checkouts were there
+
+`reference_drift_probe.py` skipped the whole declared-property comparison when no
+adoption site could be read. That conflated two questions with different
+prerequisites. Whether a *server* lags needs that server to have been read.
+Whether the *template* satisfies a property the manifest itself declares needs
+nothing but the template — it is a claim about one file.
+
+The cost was concrete and it showed up on the first real use. A manifest is
+written on a machine that has the skill repository and usually not the eleven
+server checkouts; on exactly that run the probe reported no declared finding at
+all. Against the real `reference/` of `mcp-data-source-probe` the ungated check
+now reports five: no `Retry-After`, no jitter, no cap applied after the jitter,
+no wall-clock budget, and the `raise RuntimeError` of the 2026-08-03 case still
+in place. Under the old behaviour every one of them was silent.
+
+The finding now states which half was measured — "no adoption site could be read,
+so how far the servers are ahead of it was not measured" — rather than implying
+a comparison that did not happen. `REFERENCE_UNADOPTED` still requires a readable
+site and stays quiet without one.
+
+`coverage.md` records the same split honestly: the template side has now been run
+against a real template, the server side never has. The unanimity layer — the one
+that finds a fix nobody wrote a property for — needs three readable sites and has
+therefore never run outside the tests.
+
+
 ### Added — `reference_drift_probe.py`: the template nobody is looking at
 
 On 2026-08-03 `reference/retry_backoff.py` in `mcp-data-source-probe-skill` was

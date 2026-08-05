@@ -47,7 +47,7 @@ page exists for, and it is empty on purpose.
 | lockfile | ✅ | ✅ | — | n/a |
 | doc-claim | ✅ | ✅ this repo | — | n/a |
 | parity | ✅ | ✅ this repo | — | n/a |
-| reference-drift | ✅ | ❌ — no `reference/adoption.toml` is written yet | — | n/a |
+| reference-drift | ✅ | ⚠️ template side only — see below | — | n/a |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
 | spec | ✅ | ✅ this repo | — | ❌ **never** |
 | transport boot | ✅ | ✅ locally launched checkouts | — | ❌ — it starts the server itself |
@@ -56,6 +56,29 @@ page exists for, and it is empty on purpose.
 
 `n/a` means the probe reads source or a catalogue and has no wire to speak to.
 `❌` means there is a wire and nobody has ever put a request on it.
+
+## The half-run: `reference_drift_probe`
+
+The ⚠️ above is one of its two halves, and the row would be misleading either
+way without saying which.
+
+**Run:** the template side, against the real `reference/` of
+`mcp-data-source-probe` — `retry_backoff.py` and `response_envelope.py`, not a
+fixture. Eight properties declared, five reported `REFERENCE_STALE`: no
+`Retry-After`, no jitter, no cap after jitter, no wall-clock budget, and the
+`raise RuntimeError` of the 2026-08-03 case still in place. Those five are a
+measurement of a real template, and they stand.
+
+**Not run:** the server side. No `reference/adoption.toml` is committed anywhere
+yet, so no `[[template.adoption]]` has ever been resolved to a checkout. Nothing
+here has ever compared a template to a server that copied it — which means
+`REFERENCE_UNADOPTED` has fired only in tests, and the unanimity layer, which
+needs three readable sites, has never run outside them. The layer that found the
+`RuntimeError` line without a declaration is exactly the layer with no
+production evidence.
+
+To close it: commit an adoption manifest naming the servers that carry each
+copy, and run with `--repos-root` pointed at their checkouts.
 
 ## The named gap: `spec_probe --url`
 
