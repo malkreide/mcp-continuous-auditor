@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `reference_drift_probe.py`: the template nobody is looking at
+
+On 2026-08-03 `reference/retry_backoff.py` in `mcp-data-source-probe-skill` was
+found carrying five defects that eleven servers had already fixed, one at a time,
+over about three months. The originating commit of `swiss-efv-mcp` contained the
+same line word for word — `raise RuntimeError(f"Upstream unreachable after
+retries: {last_error}")` — and the CI failure it produced was what started the
+round.
+
+None of the eleven reviews saw it, and none of them could have. In each
+repository only the copied fragment was visible; the template was somewhere else,
+and nobody had both open at once. The artefact with the largest blast radius is
+the one no diff contains.
+
+The probe asks it in **both** directions, and reports the worse one first.
+`REFERENCE_STALE` — the template behind the servers — is a defect being
+*distributed*: it is handed to every server built next, at the moment somebody is
+least likely to read the code they are copying. `REFERENCE_UNADOPTED` — a server
+behind the template — is one repository carrying one defect, and it is bounded.
+`UNVERIFIED` is the third answer this repository always keeps: a repository not
+on disk, a symbol that moved, a template that does not parse. Coverage is stated
+on every run, n of m declared sites read, so a narrow run cannot pass for a clean
+one.
+
+**The mapping is declared and never guessed.** It comes from
+`reference/adoption.toml` in the skill repository — which template, which
+repositories, which file and symbol, since when — with no name-similarity
+fallback. A guessed mapping is worse here than no mapping: "this function
+resembles the template and differs from it" is unretraceable, and unretraceable
+findings are how a gate gets switched off. A missing manifest beside a shipped
+template is therefore itself the first finding (`MANIFEST_MISSING`), not a
+"not measured", and the probe stops there. Format reference:
+`adoption.example.toml`.
+
+**What gets compared was the decision worth making.** A full-text diff is
+unusable — the adopters rename the constants, rewrap the lines, reword the
+messages and rename the function, and every one of those is a *correct* adoption.
+A function-name comparison is the opposite failure: it was satisfied by all
+eleven servers throughout. So the probe compares the properties the template
+guarantees, as small AST predicates: does it read `Retry-After`, does it jitter,
+does it cap *after* jittering (`min` wrapping the jitter, not beside it), does it
+bound wall-clock time, does it fail with a typed error. Import aliasing is
+resolved first, because `import random as rnd` is a naming convention and not
+drift.
+
+That leaves one blind spot, and it is exactly the incident: whoever forgets the
+fix in the template forgets to write the property down too. So a second layer
+compares three facts that need no declaration — called function names, raised
+types, caught types, last dotted segment only, because those are what copying
+does not rename — and reports one only on **unanimity**: every readable adoption
+site agrees, at least three of them, and the template differs. Eleven
+independently maintained repositories agreeing is evidence; two are a
+coincidence. On a reconstruction of that tree it names the `RuntimeError` line
+with nothing declared about it. The layer produces `REFERENCE_STALE` and nothing
+else — an `UNADOPTED` verdict needs a declared property, because one server
+differing from ten is ordinary variation, not drift.
+
+Nothing is fetched. `--repos-root` reads checkouts already on disk, so a network
+failure cannot masquerade as a repository nobody has cloned.
+
+`skills/reference-drift-probe/SKILL.md`, `docs/probes/reference-drift.md`, 50
+tests — more of them for correct-but-renamed adoptions than for drift, since a
+probe that cannot tell those apart produces a red run everybody learns to ignore.
+
 ### Fixed — the nightly routing closes its issues, and knows when it may not
 
 The other half of the delivery path #66 repaired. `sync_findings_issues.py` ran

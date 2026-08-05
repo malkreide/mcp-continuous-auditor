@@ -1,0 +1,122 @@
+# Reference-adoption manifest — example. The real one lives in the SKILL repo,
+# at `reference/adoption.toml`, beside the templates it describes.
+#
+# Run it:   scripts/reference_drift_probe.py --target <skill-repo> --repos-root ~/src
+#
+# WHAT THIS FILE IS FOR. `reference/` in a skill repository ships code that gets
+# copied into servers. Once copied, the two halves drift apart in both
+# directions and nothing looks wrong from either side: in the server only the
+# copied fragment is visible, and in the skill repo there is no server. This
+# file is the only place the two are named together.
+#
+# THE MAPPING IS DECLARED, NEVER GUESSED. There is no name-similarity fallback
+# in the probe and there will not be one. A guessed mapping produces a finding
+# nobody can retrace, and a finding nobody can retrace is how a gate gets
+# switched off. A missing manifest is itself the first finding
+# (`MANIFEST_MISSING`) and the probe stops there.
+#
+# This example is committed so the format has a reference and the tests have
+# something to parse. It reproduces the 2026-08-03 case in
+# `docs/probes/reference-drift.md` — see there for what each property is
+# actually protecting.
+
+schema = 1
+
+# Templates under reference/ that are deliberately NOT mapped. Anything else
+# without a [[template]] entry is a `TEMPLATE_UNMAPPED` finding: code shipped
+# for copying whose blast radius nobody wrote down. Give a reason.
+unmapped_ok = [
+    # "reference/_example_only.py",  # illustration in the SKILL, copied by nobody
+]
+
+[unanimity]
+# Facts the unanimity layer must not report. It compares only what copying does
+# not rename — called function names, raised and caught exception types, last
+# dotted segment only — and speaks only when EVERY readable adoption site agrees
+# and the template differs. Entries here are exemptions, and an exemption that
+# is invisible is a blind spot, so the probe prints this list in every report.
+ignore = [
+    # "call:debug",  # every server logs; the template is a fragment and does not
+]
+
+# ---------------------------------------------------------------------------
+
+[[template]]
+file = "reference/retry_backoff.py"
+symbol = "request_with_retry"
+
+# The properties the template GUARANTEES. Not its text: the adopting
+# repositories rename the constants, rewrap the lines and rename the function,
+# and every one of those is a correct adoption. What must survive a copy is the
+# behaviour, and these five are the behaviour.
+
+[[template.property]]
+id = "reads_retry_after"
+says = "honours the server's own Retry-After hint instead of guessing"
+kind = "literal"
+any_of = ["retry-after"]
+expect = "present"
+# A header name is on the wire. It is the one string in this file that no
+# repository can rename, which is what makes it worth matching on.
+
+[[template.property]]
+id = "jitters"
+says = "spreads the retry instead of synchronising every client on the same tick"
+kind = "calls"
+any_of = ["random.uniform", "random.random", "secrets.randbelow"]
+expect = "present"
+
+[[template.property]]
+id = "caps_after_jitter"
+says = "applies the ceiling AFTER jittering, so the jitter cannot exceed it"
+kind = "wraps"
+outer = "min"
+inner = ["random.uniform", "random.random"]
+expect = "present"
+# The ordering, not the presence. `min(cap, base) * jitter` and
+# `min(cap, base * jitter)` both contain a cap and a jitter; only the second one
+# is bounded. `wraps` asks whether the jitter is INSIDE the cap's arguments,
+# which is the difference between the two.
+
+[[template.property]]
+id = "wall_clock_budget"
+says = "bounds the total time spent, not just the number of attempts"
+kind = "calls"
+any_of = ["time.monotonic", "time.perf_counter"]
+expect = "present"
+# `time.time` is deliberately not accepted: it moves when the clock is adjusted,
+# and a budget measured against it can run backwards.
+
+[[template.property]]
+id = "no_bare_runtime_error"
+says = "fails with a typed upstream error a caller can branch on"
+kind = "raises"
+any_of = ["RuntimeError"]
+expect = "absent"
+# Half of these fixes are removals, which is why `expect` exists. This is the
+# 2026-08-03 line itself:
+#     raise RuntimeError(f"Upstream unreachable after retries: {last_error}")
+# It was removed in eleven servers, one at a time, and stayed in the template.
+
+[[template.adoption]]
+repo = "malkreide/swiss-efv-mcp"
+file = "src/swiss_efv_mcp/http.py"
+symbol = "_request_with_retry"
+since = "2026-05-14"
+
+[[template.adoption]]
+repo = "malkreide/zurich-opendata-mcp"
+file = "src/zurich_opendata_mcp/http.py"
+symbol = "request_with_retry"
+since = "2026-05-21"
+
+[[template.adoption]]
+repo = "malkreide/swiss-parliament-mcp"
+file = "src/swiss_parliament_mcp/upstream.py"
+symbol = "Upstream.fetch"
+since = "2026-06-02"
+# `since` is provenance for the MAPPING, and the probe only prints it. It is
+# deliberately not used to infer anything: "adopted before the fix landed,
+# therefore stale" is a judgement, and this probe answers with status codes.
+# Where it earns its place is in a `SITE_UNREADABLE` entry — a mapping declared
+# on a date, pointing at a symbol that has since moved.

@@ -17,6 +17,7 @@ green and wrong at the same time.
 | lockfile | Is the declared bound in force where the install happens? | [lockfile.md](lockfile.md) |
 | doc-claim | Do the identifiers the documentation cites exist? | [doc-claim.md](doc-claim.md) |
 | parity | Does the translated documentation still say the same thing? | [parity.md](parity.md) |
+| reference-drift | Is the copied template still the best version of itself — in both directions? | [reference-drift.md](reference-drift.md) |
 | spec | Which MCP protocol version does this server actually speak? | [spec.md](spec.md) |
 | provenance | Which commit is this report about? | [provenance.md](provenance.md) |
 | pr-health | Which open pull requests are not green — including the ones that are not red either? | [pr-health.md](pr-health.md) |
