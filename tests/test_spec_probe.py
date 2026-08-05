@@ -12,10 +12,16 @@ answer trustworthy rather than merely present:
   correctly declare nothing and a check that reddened all of them would be
   switched off within a day;
 * ``LEGACY_TRANSPORT`` fires on measured evidence — an answering ``/sse``, an
-  issued session id, a refused stateless call — and carries a date;
-* the countdown is reproducible: ``--now`` pins it, because a report that says
+  issued session id, a refused stateless call — and each signal carries the
+  footing the spec actually gives it, including "no date can be computed";
+* any day count is reproducible: ``--now`` pins it, because a report that says
   something different tomorrow about the same commit breaks the provenance
   promise from the other side.
+
+``RequestShapeTest`` is the class added after the fact. The first version of the
+probe was written against a summary of the spec and built a request no compliant
+server would have accepted — so it would have reported the migrated servers as
+legacy. Those tests pin the request against the spec's own worked examples.
 
 Everything is offline. The wire tests replace ``spec_probe.request`` rather than
 starting a server: what is under test is the CLASSIFICATION of a set of replies,
@@ -68,19 +74,50 @@ class DeadlineTest(unittest.TestCase):
     def test_the_countdown_is_days_not_a_boolean(self) -> None:
         # "deprecated" is not actionable; "357 days" is.
         text = sp.countdown(TODAY, date(2027, 7, 28))
-        self.assertIn("357 day(s) left", text)
+        self.assertIn("357 day(s)", text)
         self.assertIn("2027-07-28", text)
 
-    def test_a_closed_window_says_so_instead_of_printing_a_negative(self) -> None:
-        # A negative countdown reads as a bug and gets ignored, which is the one
-        # outcome a deadline must not have.
-        text = sp.countdown(date(2027, 8, 1), date(2027, 7, 28))
-        self.assertIn("closed 4 day(s) ago", text)
-        self.assertNotIn("-4", text)
+    def test_the_countdown_says_eligible_and_never_says_deadline(self) -> None:
+        # The policy is explicit: the date marks when a feature becomes ELIGIBLE
+        # for removal, and "Features may remain Deprecated, without removal, for
+        # much longer than the minimum deprecation window." An earlier version
+        # of this wording said the window "closed", which promises an enforcement
+        # the spec does not make.
+        for today in (TODAY, date(2027, 8, 1)):
+            with self.subTest(today=today):
+                text = sp.countdown(today, date(2027, 7, 28))
+                self.assertIn("eligib", text)
+                self.assertNotIn("deadline,", text.replace("not a deadline", ""))
+        past = sp.countdown(date(2027, 8, 1), date(2027, 7, 28))
+        self.assertIn("4 day(s) ago", past)
+        self.assertNotIn("-4", past)
+
+    def test_the_sse_transport_is_on_a_different_clock_with_no_date(self) -> None:
+        # THE CORRECTION THIS FILE EXISTS TO PIN. HTTP+SSE was deprecated in
+        # 2025-03-26 and its earliest removal is "three months after SEP-2596
+        # reaches Final" — a date the registry does not state. The first version
+        # of this probe printed 2027-07-28 for a /sse endpoint. That number
+        # appears nowhere in the specification; it was invented by applying the
+        # wrong clock.
+        sse = sp.DEPRECATIONS["http_sse"]
+        self.assertIsNone(sse.earliest_removal)
+        self.assertEqual(sse.deprecated_in, "2025-03-26")
+        phrase = sse.phrase(TODAY)
+        self.assertIn("SEP-2596", phrase)
+        self.assertIn("no countdown can be given", phrase)
+        self.assertNotIn("2027-07-28", phrase)
+
+    def test_the_twelve_month_clock_governs_the_features_it_actually_governs(
+        self,
+    ) -> None:
+        twelve = sp.DEPRECATIONS["roots_sampling_logging_dcr"]
+        self.assertEqual(twelve.deprecated_in, "2026-07-28")
+        self.assertEqual(twelve.earliest_removal, date(2027, 7, 28))
+        self.assertIn("357 day(s)", twelve.phrase(TODAY))
 
     def test_the_date_is_pinnable_so_the_report_reproduces(self) -> None:
         report = sp.run(REPO, today=TODAY, until=date(2027, 7, 28))
-        self.assertEqual(report.as_dict()["days_left"], 357)
+        self.assertEqual(report.as_dict()["days_to_eligibility"], 357)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +246,54 @@ class PortfolioTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class RequestShapeTest(unittest.TestCase):
+    """The request this probe PUTS ON THE WIRE, against the spec's own examples.
+
+    This class exists because the first version of the probe was wrong here in
+    two ways at once, and both would have produced a false LEGACY_TRANSPORT
+    against a fully migrated server — the exact failure the whole probe family
+    is written to prevent, committed by the probe itself.
+    """
+
+    def test_meta_lives_in_params_with_namespaced_keys(self) -> None:
+        # Transport page, worked examples: `params._meta` carrying
+        # `io.modelcontextprotocol/{protocolVersion,clientInfo,clientCapabilities}`.
+        # It was at the message root with flat keys. Since the
+        # MCP-Protocol-Version header MUST match the `_meta` value and a
+        # mismatch is a mandatory 400 + -32020 HeaderMismatch, a COMPLIANT
+        # server would have rejected the probe's own stateless call.
+        call = sp._stateless_call("tools/list", 1, "2026-07-28")
+        self.assertNotIn("_meta", call, "_meta belongs in params, not at the root")
+        meta = call["params"]["_meta"]
+        self.assertEqual(meta["io.modelcontextprotocol/protocolVersion"], "2026-07-28")
+        self.assertIn("io.modelcontextprotocol/clientInfo", meta)
+        self.assertIn("io.modelcontextprotocol/clientCapabilities", meta)
+
+    def test_the_header_matches_the_meta_value(self) -> None:
+        # The one invariant a validating server checks.
+        call = sp._stateless_call("tools/list", 1, "2026-07-28")
+        headers = sp._headers("tools/list", "2026-07-28")
+        self.assertEqual(
+            headers["MCP-Protocol-Version"],
+            call["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"],
+        )
+
+    def test_mcp_name_is_omitted_where_the_spec_does_not_require_it(self) -> None:
+        # `Mcp-Name` mirrors params.name/params.uri and is REQUIRED only for
+        # tools/call, resources/read and prompts/get. The first version sent it
+        # EMPTY on every call — a header with no body field to match, which is a
+        # HeaderMismatch rejection by the same rule that requires it.
+        for method in ("tools/list", "initialize", "server/discover"):
+            with self.subTest(method=method):
+                headers = sp._headers(method, "2026-07-28")
+                self.assertNotIn("Mcp-Name", headers)
+                self.assertEqual(headers["Mcp-Method"], method)
+
+    def test_mcp_name_is_sent_where_the_spec_requires_it(self) -> None:
+        headers = sp._headers("tools/call", "2026-07-28", name="get_weather")
+        self.assertEqual(headers["Mcp-Name"], "get_weather")
+
+
 class WireTest(unittest.TestCase):
     """Replies are injected. What is under test is the reading of them."""
 
@@ -265,10 +350,12 @@ class WireTest(unittest.TestCase):
         self.assertIsNone(result.stateless_ok)
         self.assertIn("could not be reached", result.notes[0])
 
-    def test_the_header_requirement_is_measured_not_assumed(self) -> None:
-        # The brief says Mcp-Method/Mcp-Name are mandatory. This probe was not
-        # written against the spec document, so it sends the call BOTH ways and
-        # reports two status codes instead of asserting the rule.
+    def test_a_strict_server_is_told_apart_from_a_lax_one(self) -> None:
+        # `Mcp-Method`/`Mcp-Name` are REQUIRED for compliance, confirmed against
+        # the transport page. Sending the call both ways is still worth it: the
+        # difference is what tells a server that ENFORCES the requirement from
+        # one that merely tolerates it, and no single request can make that
+        # distinction.
         result = self._wire(
             [
                 _rpc_ok({"tools": []}),  # with the headers: fine
@@ -280,7 +367,54 @@ class WireTest(unittest.TestCase):
         )
         self.assertEqual(result.stateless_with_headers, 200)
         self.assertEqual(result.stateless_without_headers, 400)
-        self.assertTrue(any("has not verified" in n for n in result.notes))
+        self.assertTrue(any("enforces the required" in n for n in result.notes))
+
+    def test_a_lax_server_is_noted_without_being_called_a_version_finding(
+        self,
+    ) -> None:
+        result = self._wire(
+            [
+                _rpc_ok({"tools": []}),  # with the headers
+                _rpc_ok({"tools": []}),  # without them: also fine
+                _rpc_err(-32601),
+                _reply(404),
+                _reply(404),
+            ]
+        )
+        self.assertTrue(result.stateless_ok)
+        self.assertTrue(any("does not enforce them" in n for n in result.notes))
+
+    def test_the_advertised_versions_come_from_server_discover(self) -> None:
+        # servers MUST implement server/discover "to advertise their supported
+        # protocol versions, capabilities, and identity" (changelog, major 3).
+        # What it says is a stronger statement than what the server tolerated.
+        result = self._wire(
+            [
+                _rpc_ok({"tools": []}),
+                _rpc_ok({"tools": []}),
+                _rpc_err(-32601),
+                _reply(404),
+                _rpc_ok({"supportedProtocolVersions": ["2026-07-28", "2025-06-18"]}),
+            ]
+        )
+        self.assertEqual(result.advertised, ["2026-07-28", "2025-06-18"])
+        self.assertEqual(result.negotiated, "2026-07-28")
+
+    def test_result_type_is_recorded_as_positive_evidence(self) -> None:
+        # Required on every result from 2026-07-28 on; an older server cannot
+        # produce it by accident, so its presence is a clean positive signal —
+        # and its absence proves nothing, which is why it is evidence and not a
+        # finding.
+        result = self._wire(
+            [
+                _rpc_ok({"tools": [], "resultType": "complete"}),
+                _rpc_ok({"tools": []}),
+                _rpc_err(-32601),
+                _reply(404),
+                _reply(404),
+            ]
+        )
+        self.assertEqual(result.result_type, "complete")
 
     def test_a_server_that_rejects_the_new_headers_is_reported_too(self) -> None:
         result = self._wire(
@@ -331,7 +465,12 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(report.findings, [])
         self.assertTrue(any(sp.SPEC_UNDECLARED in n for n in report.notes))
 
-    def test_an_answering_sse_endpoint_is_legacy_transport_with_a_date(self) -> None:
+    def test_an_answering_sse_endpoint_never_carries_an_invented_date(self) -> None:
+        # This test used to assert "357 day(s) left". That number came from
+        # applying the twelve-month clock to a transport that is not on it, and
+        # it appears nowhere in the specification. What the finding must carry
+        # instead is the footing the registry actually gives: a basis, and an
+        # explicit statement that no countdown can be computed.
         report = self._report(
             wire=sp.WireResult(
                 url="https://x.invalid/mcp",
@@ -341,16 +480,23 @@ class ClassifyTest(unittest.TestCase):
             )
         )
         finding = next(f for f in report.findings if f.code == sp.LEGACY_TRANSPORT)
-        self.assertIn("357 day(s) left", finding.detail)
+        self.assertIn("SEP-2596", finding.detail)
+        self.assertIn("no countdown can be given", finding.detail)
+        self.assertNotIn("2027-07-28", finding.detail)
         self.assertIn("RECOMMENDATION", finding.detail)
 
-    def test_an_issued_session_id_is_legacy_transport(self) -> None:
+    def test_a_session_id_is_reported_as_removed_not_as_deprecated(self) -> None:
+        # Mcp-Session-Id is not in the deprecated registry at all: it was removed
+        # outright in 2026-07-28. A finding that gave it a countdown would be
+        # promising a grace period the spec does not grant.
         report = self._report(
             wire=sp.WireResult(
                 url="u", reachable=True, session_id="abc", stateless_ok=True
             )
         )
-        self.assertIn(sp.LEGACY_TRANSPORT, [f.code for f in report.findings])
+        finding = next(f for f in report.findings if f.code == sp.LEGACY_TRANSPORT)
+        self.assertIn("REMOVED", finding.detail)
+        self.assertIn("no window and no countdown", finding.detail)
 
     def test_a_refused_stateless_call_is_legacy_transport(self) -> None:
         report = self._report(
@@ -398,25 +544,32 @@ class RenderTest(unittest.TestCase):
         self.assertIn("UNVERIFIED", text)
         self.assertIn("These are gaps, not green cells", text)
 
-    def test_the_report_admits_its_rules_are_unverified(self) -> None:
-        report = sp.Report(target="/tmp/x", today=TODAY, until=date(2027, 7, 28))
-        self.assertIn("not from the spec document", sp.render(report))
-
-    def test_the_verified_flag_changes_wording_and_not_a_verdict(self) -> None:
-        # A verdict that moved when somebody set a flag would not be a measurement.
-        plain = sp.run(REPO, today=TODAY, until=date(2027, 7, 28))
-        flagged = sp.run(REPO, today=TODAY, until=date(2027, 7, 28), spec_verified=True)
-        self.assertEqual(
-            [f.code for f in plain.findings], [f.code for f in flagged.findings]
+    def test_the_report_names_the_source_of_its_rules(self) -> None:
+        # It used to say the rules came from a brief. Now it says where they
+        # actually came from and when, so a reader can re-check them instead of
+        # trusting the file — which is what did NOT happen the first time.
+        text = sp.render(
+            sp.Report(target="/tmp/x", today=TODAY, until=date(2027, 7, 28))
         )
-        self.assertEqual(plain.exit_code(), flagged.exit_code())
-        self.assertNotIn("not from the spec document", sp.render(flagged))
+        self.assertIn(sp.SPEC_SOURCE, text)
+        self.assertIn(sp.SPEC_VERIFIED_ON, text)
 
-    def test_the_json_report_carries_provenance_and_the_deadline(self) -> None:
+    def test_the_report_shows_the_two_clocks_separately(self) -> None:
+        text = sp.render(
+            sp.Report(target="/tmp/x", today=TODAY, until=date(2027, 7, 28))
+        )
+        self.assertIn("NOT one clock", text)
+        self.assertIn("SEP-2596", text)
+        self.assertIn("2027-07-28", text)
+
+    def test_the_json_report_carries_provenance_and_the_source(self) -> None:
         report = sp.run(REPO, today=TODAY, until=date(2027, 7, 28))
         data = report.as_dict()
         self.assertEqual(data["probe"], "spec")
-        self.assertEqual(data["deprecation_deadline"], "2027-07-28")
+        # Named for the clock it belongs to. A single `deprecation_deadline`
+        # field applied to every signal is how the invented date got in.
+        self.assertEqual(data["twelve_month_eligibility"], "2027-07-28")
+        self.assertEqual(data["spec_source"], sp.SPEC_SOURCE)
         self.assertIn("provenance", data)
         self.assertIn("sources", data)
 
