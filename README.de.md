@@ -223,7 +223,7 @@ Fünf Repos, ein Lebenszyklus. Jedes beantwortet eine andere Frage, in der Reihe
 |---|---|---|
 | vor dem Bau | [`mcp-data-source-probe-skill`](https://github.com/malkreide/mcp-data-source-probe-skill) | Taugt die Quelle, und was hat sie? Die Recall-Ground-Truth aus Schritt 1.4 ist das, wogegen die `min_count`-Floors hier messen |
 | im Bau | [`mcp-data-fidelity-skill`](https://github.com/malkreide/mcp-data-fidelity-skill) | Liefert er, was die Quelle hat? Seine Regel 5 — Recall in den Tests, nicht in der Beschreibung — ist der Grund, warum die Probes Floors tragen statt Schema-Assertions |
-| im Bau | [`mcp-transport-hardening-skill`](https://github.com/malkreide/mcp-transport-hardening-skill) | Kommt er hoch, weist er richtig ab? Der Transport-Pfad, den die Canary-Probe live durchläuft |
+| im Bau | [`mcp-transport-hardening-skill`](https://github.com/malkreide/mcp-transport-hardening-skill) | Kommt er hoch, weist er richtig ab, bleibt er zustandslos? Seine Regeln 1–4 sind das, wofür `transport_boot_probe.py` das Ziel hochfährt — beide Repos zitieren denselben Vorfall, `parlament-mcp#29` — und seine Stateless- und Legacy-SSE-Regeln sind das, was `spec_probe.py` als `SPEC_DRIFT` und `LEGACY_TRANSPORT` meldet |
 | nach dem Bau | [`mcp-audit-skill`](https://github.com/malkreide/mcp-audit-skill) | Hält er gegen den Katalog? Sein `OPS-005` (Pipeline-Ehrlichkeit) stammt aus diesem Repo — [#29](https://github.com/malkreide/mcp-continuous-auditor/pull/29), eine Testsuite, die kein Workflow je ausgeführt hat |
 | im Betrieb | **`mcp-continuous-auditor`** | **Dieses Projekt:** hält er morgen noch? |
 
