@@ -1,0 +1,202 @@
+# Spec probe
+
+> Which MCP protocol version does this server actually speak?
+
+`scripts/spec_probe.py` · related: `scripts/transport_boot_probe.py`,
+`scripts/portfolio_scan.py`
+
+## The case
+
+MCP spec `2026-07-28` removes the handshake. `initialize`/`initialized` and
+`Mcp-Session-Id` are gone; every request carries its protocol version,
+`clientInfo` and capabilities in `_meta`. The legacy HTTP+SSE transport is
+deprecated with a twelve-month window.
+
+That turns a question nobody in this repository could ask into the one that
+decides a migration: *which spec is this server on?* Before this probe the answer
+existed nowhere, and the reason is worth stating precisely, because it is not
+that the measurement was hard.
+
+`transport_boot_probe.py` carried a single hand-maintained literal:
+
+```python
+_PROTOCOL_VERSION = "2025-06-18"
+```
+
+It sent that value in `initialize` and in the `MCP-Protocol-Version` header of
+every POST, and it **never read the answer back**. The negotiated version arrived
+on `result.protocolVersion` on every single successful boot and was discarded —
+only `result.tools` was ever looked at. One literal fanned out by import through
+`shipped_probe.py` and `rebind_probe.py` into three gates, and none of the three
+could tell you what it had been talking to.
+
+That is the same defect class `identity_probe` exists to catch — a hand-maintained
+version that drifts while nothing breaks and no test fails — sitting in the
+auditor's own source. This probe is the other half of the fix: the boot gate now
+reads the negotiated version, and this compares it against every place the
+version is *claimed*.
+
+## The false finding this probe was built alongside
+
+A gate that opens with `initialize` cannot tell a migrated server from a broken
+one. The old code path was:
+
+```
+send initialize  ->  JSON-RPC error  ->  FAIL  ->  exit 2
+```
+
+and exit 2 travels through `nightly_audit_report.py` into
+`sync_findings_issues.py` and ends as a GitHub issue. The first server in the
+portfolio to finish the migration would have been issued a bug report **for
+finishing it** — a false finding with high confidence, the wrong addressee, and
+automatic escalation.
+
+So `transport_boot_probe.py` gained the status `STATELESS`. A rejected handshake
+now triggers a second question rather than a verdict: can the server serve a real
+call with no handshake at all? If it can, the result is a pass with a label. If it
+cannot, the original failure stands. Only JSON-RPC `-32601` (or a *method not
+found* message) takes that branch — an internal error or a crash keeps failing,
+because those are what the gate is for.
+
+This is the same shape as the existing `NOT_SELECTED` outcome, and for the same
+reason: ask the second question before concluding from the first.
+
+## Four sources, and they disagree independently
+
+| Source | What it is |
+|---|---|
+| `code` | what the target's own source declares, if it declares anything |
+| `artifact` | what the **installed** SDK will actually put on the wire |
+| `portfolio` | `mcp_spec_version` from the index repo's `portfolio.json` |
+| `wire` | what a running server negotiates — measured |
+
+Any two readable values that disagree are `SPEC_DRIFT`. The interesting pair is
+`portfolio` against `wire`: a migration tracker is a plan, and a plan that has
+drifted from the deployment is worse than no plan, because it is the one people
+consult.
+
+`artifact` is the level the source cannot reach. During this migration a target's
+source does not change at all — the SDK version does — so a source-only check
+sees a clean repository and a wrong wire. That is `identity_probe --installed`'s
+lesson applied to a second field.
+
+## The status vocabulary
+
+| Status | Meaning |
+|---|---|
+| `SPEC_DRIFT` | two sources name different versions |
+| `LEGACY_TRANSPORT` | the wire is demonstrably on a deprecated form, with the remaining days of the window |
+| `UNVERIFIED` | a source could not be read — never rendered as «in sync» |
+| `SPEC_UNDECLARED` | the source declares no protocol version at all |
+
+`SPEC_UNDECLARED` is a **note, not a finding**, and that is deliberate. Under the
+current SDKs the protocol version belongs to the SDK, not to the server: 39 of the
+42 servers in this portfolio declare nothing, and they are right not to. A
+predicate that turned red on all 39 would be switched off within a day, and a
+switched-off check catches nothing. What the status buys is that the report says
+*why* it has no code-level value, instead of leaving a blank that reads like
+agreement.
+
+`LEGACY_TRANSPORT` carries a **countdown, not a boolean**. «Deprecated» is not
+actionable and «357 days left, until 2027-07-28» is. It is a recommendation with a
+date and never a gate: the deprecated form is valid until then, and a probe that
+failed the build today would be asserting a rule that does not yet apply.
+
+## What this probe does not know
+
+It was written against a written summary of spec `2026-07-28`, not against the
+spec document. Three rules are therefore **assumptions**, and the probe says so in
+its own output rather than asserting them:
+
+* `Mcp-Method` and `Mcp-Name` are mandatory headers on Streamable HTTP
+* `initialize` and `Mcp-Session-Id` are removed rather than optional
+* the deprecation window is twelve months from `2026-07-28`
+
+The wire mode **measures** all three instead of assuming them. It sends the
+stateless call twice — once with the new headers and once without — and prints
+both status codes, so «the headers are mandatory» becomes an observation with two
+numbers behind it rather than a premise. `--spec-verified` changes the report's
+wording once the rules have been checked against the document; it never changes a
+verdict, because a verdict that moved when somebody set a flag would not be a
+measurement.
+
+## The countdown must be reproducible
+
+Every report in this repository names the commit it is about
+([provenance.md](provenance.md)). A countdown is time-dependent, which quietly
+breaks the same promise from the other side: the same commit produces a different
+report tomorrow. `--now YYYY-MM-DD` pins the date, and the tests use it. Without
+it the run stamps today's UTC date into the report so the number can at least be
+re-derived.
+
+## Running it
+
+```bash
+# source + artifact, inside the target's environment
+python scripts/spec_probe.py --target ../zurich-opendata-mcp --installed
+
+# add the migration tracker — its absence is NOT agreement
+python scripts/spec_probe.py --target . --portfolio ../swiss-public-data-mcp/portfolio.json
+
+# the only source that is evidence rather than a claim
+python scripts/spec_probe.py --url https://example.invalid/mcp --format json
+```
+
+| Exit | Meaning |
+|---|---|
+| 0 | every readable source agrees, and the wire is not on a deprecated form |
+| 2 | finding — `SPEC_DRIFT` or `LEGACY_TRANSPORT` |
+| 3 | not measured — no source could be read |
+| 4 | `MOVED_DURING_RUN` — see [provenance.md](provenance.md) |
+| 127 | the harness could not run |
+
+Provenance is captured as **decisive** for a checkout run and **non-decisive**
+with `--url`: there the verdict comes from a running server and not from the tree,
+so a checkout that moves is reported and does not withdraw the answer. The same
+distinction `recall_canary` already makes.
+
+## Read-only
+
+Every request is a GET or a JSON-RPC read (`tools/list`, `initialize`,
+`server/discover`). The probe recommends a migration and never performs one — and
+the deadline it prints is a date, not a gate.
+
+## The portfolio side
+
+Two predicates in `scripts/portfolio_scan.py` answer the fleet-wide half:
+
+* **`sdk_upper_bound`** — is the resolved SDK major fixed, or is it whatever the
+  next install picks? `fastmcp` 4.0 is released and breaking, and `fastmcp` 3.x
+  pins `mcp<2.0`, so an unbounded server can be moved onto an incompatible line by
+  an unrelated `uv sync` while nothing in its own repository changes.
+* **`sdk_flavour`** — the official `mcp` SDK or the standalone `fastmcp` package.
+  Two different projects that cannot share an environment, and `sdk_major` reports
+  `2` for both, which is not the same statement.
+
+Neither is in the default predicate set: adding one there changes the verdict of
+every existing targets file without anybody editing it. Both report **every**
+target rather than hunting for a known answer — a predicate built around an
+expected outlier confirms it. The outlier pass turns the column into the row that
+breaks the pattern, which is the reason this is a matrix and not *N* reports.
+
+## The promptfoo half, and its limit
+
+The determ profile gained asserts for the list-response contract — `tools/list`,
+`resources/list` and `prompts/list` must carry `ttlMs`/`cacheScope` and come back
+in a deterministic order.
+
+It did **not** gain a stateless assert, and that is the honest outcome rather than
+an omission. The provider drives the FastMCP in-memory client in-process; there is
+no wire. «A call without `initialize` succeeds» asserted through it would be a
+statement about the SDK and would pass for every server, migrated or not — the
+exact false green this repository exists to prevent. The handshake question is
+measured in `spec_probe.py --url`, on a real connection, or it is not measured.
+
+The `ttlMs`/`cacheScope` asserts are baseline-gated for the mirror-image reason:
+whether the installed SDK surfaces the fields at all is a fact about the SDK, and
+a red pipeline on an SDK that predates them would report the client's age as the
+server's defect. Determinism — which every SDK can honour — is asserted hard; the
+field pair fails only on the one shape that is definitely wrong, a value that is
+present and malformed. `raw_shape` in the payload keeps «the server omitted it»
+apart from «this client cannot see it». Tighten to a hard requirement once the
+portfolio baseline is on an SDK that surfaces them.

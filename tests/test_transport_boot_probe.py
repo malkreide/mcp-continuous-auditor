@@ -635,5 +635,115 @@ class FastMCPBootTest(unittest.TestCase):
         self.assertTrue(res.ok, msg=res.detail)
 
 
+# ---------------------------------------------------------------------------
+# spec 2026-07-28 — a refused handshake is not a broken server
+# ---------------------------------------------------------------------------
+
+
+class StatelessCoreTest(unittest.TestCase):
+    """The false finding this branch exists to prevent.
+
+    The gate opened every probe with ``initialize``. Spec 2026-07-28 removes the
+    method, so a MIGRATED server answered -32601, the gate reported "the server
+    never came up", and exit 2 travelled through nightly_audit_report.py into
+    sync_findings_issues.py as a GitHub issue. The first server to finish the
+    migration would have been issued a bug report for finishing it.
+
+    The three modes of the fixture are the three cases that must stay apart:
+    migrated (pass), genuinely broken (fail), and refused-handshake-but-also-
+    broken (fail). If the middle one ever passes, the branch has turned a real
+    gate into a blanket excuse.
+    """
+
+    def _probe(self, mode: str, timeout: float = 20.0) -> tbp.ProbeResult:
+        plan = _plan(
+            tbp.STREAMABLE_HTTP,
+            [sys.executable, str(FIXTURES / "stateless_http_server.py")],
+        )
+        return tbp.probe_streamable_http(
+            plan,
+            timeout=timeout,
+            cwd=FIXTURES,
+            bind_host="127.0.0.1",
+            probe_host="mcp-boot-probe.audit.invalid",
+            paths=["/mcp/"],
+            env=_fixture_env(BOOT_FIXTURE_MODE=mode),
+        )
+
+    def test_a_migrated_server_is_a_pass_not_a_finding(self) -> None:
+        res = self._probe("stateless")
+        self.assertTrue(res.ok, msg=res.detail)
+        self.assertEqual(res.status, tbp.STATELESS)
+        self.assertEqual(res.tools, 3)
+        self.assertTrue(res.evidence.get("stateless"))
+        self.assertIn("no handshake", res.detail)
+
+    def test_a_migrated_server_issues_no_session_id(self) -> None:
+        # The other half of the stateless core. A server that still handed one out
+        # would be a LEGACY_TRANSPORT signal, and spec_probe.py reads this field.
+        res = self._probe("stateless")
+        self.assertFalse(res.evidence.get("session_id_issued"))
+
+    def test_a_genuinely_broken_server_still_fails(self) -> None:
+        # -32603 is an internal error, not a removed method. If this passes, the
+        # stateless branch has stopped being a discriminator and started being an
+        # excuse — which is worse than the false finding it replaced.
+        res = self._probe("broken")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.status, tbp.FAIL)
+
+    def test_a_refused_handshake_alone_does_not_earn_a_pass(self) -> None:
+        # initialize is refused like a migrated server, but the handshake-free
+        # call fails too. Neither migrated nor healthy.
+        res = self._probe("halfway")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.status, tbp.FAIL)
+
+    def test_the_discriminator_is_the_error_code_not_the_failure(self) -> None:
+        self.assertTrue(tbp._handshake_refused({"error": {"code": -32601}}))
+        self.assertTrue(
+            tbp._handshake_refused(
+                {"error": {"message": "Method not found: initialize"}}
+            )
+        )
+        self.assertFalse(tbp._handshake_refused({"error": {"code": -32603}}))
+        self.assertFalse(tbp._handshake_refused({"result": {}}))
+
+    def test_the_negotiated_version_is_read_back(self) -> None:
+        # The measurement that was arriving on every successful boot and being
+        # discarded: only result.tools was ever looked at.
+        self.assertEqual(
+            tbp.negotiated_version({"result": {"protocolVersion": "2025-06-18"}}),
+            "2025-06-18",
+        )
+        self.assertEqual(tbp.negotiated_version({"result": {}}), "")
+        self.assertEqual(tbp.negotiated_version({"error": {}}), "")
+
+    def test_a_legacy_server_still_reports_its_negotiated_version(self) -> None:
+        plan = _plan(
+            tbp.STREAMABLE_HTTP, [sys.executable, str(FIXTURES / "boot_http_server.py")]
+        )
+        res = tbp.probe_streamable_http(
+            plan,
+            timeout=20.0,
+            cwd=FIXTURES,
+            bind_host="127.0.0.1",
+            probe_host="mcp-boot-probe.audit.invalid",
+            paths=["/mcp/"],
+            env=_fixture_env(BOOT_FIXTURE_MODE="ok"),
+        )
+        self.assertTrue(res.ok, msg=res.detail)
+        self.assertEqual(res.status, tbp.OK)
+        self.assertEqual(res.evidence.get("negotiated_protocol_version"), "2025-06-18")
+
+    def test_the_sent_version_is_overridable(self) -> None:
+        # It used to be a bare literal — the exact class identity_probe exists to
+        # catch, in the auditor's own source.
+        self.assertEqual(
+            tbp._initialize_params()["protocolVersion"], tbp._PROTOCOL_VERSION
+        )
+        self.assertTrue(tbp.DEFAULT_PROTOCOL_VERSION)
+
+
 if __name__ == "__main__":
     unittest.main()

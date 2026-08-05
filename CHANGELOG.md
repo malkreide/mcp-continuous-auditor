@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a migrated server is no longer reported as a broken one
+
+`scripts/transport_boot_probe.py` opened every probe with `initialize`. Spec
+`2026-07-28` removes that method, so a server that had completed the migration
+answered JSON-RPC `-32601`, the gate reported *«the server never came up»*, and
+exit `2` travelled through `nightly_audit_report.py` into
+`sync_findings_issues.py` and ended as a GitHub issue. The first server in the
+portfolio to finish the migration would have been issued a bug report for
+finishing it.
+
+A rejected handshake now triggers a second question instead of a verdict: can the
+server serve a real call with no handshake at all? If it can, the outcome is the
+new status `STATELESS` — a pass with a label. If it cannot, the original failure
+stands. Only `-32601` (or a *method not found* message) takes that branch; an
+internal error or a crash keeps failing, because those are what the gate is for.
+The same shape as the existing `NOT_SELECTED` outcome, for the same reason.
+
+`initialize` was also the endpoint **discovery** mechanism for streamable HTTP
+(`_resolve_path`), so a stateless server broke path resolution itself and the
+gate reported a broken transport about a path it had never reached. Discovery now
+falls back to a handshake-free call.
+
+### Added — the spec probe: which protocol version does this server actually speak?
+
+`scripts/spec_probe.py`. The question had no answer anywhere in this repository,
+and not because it was hard to measure. The boot gate carried one hand-maintained
+literal — `_PROTOCOL_VERSION = "2025-06-18"` — sent it in `initialize` and in the
+`MCP-Protocol-Version` header of every POST, and **never read the answer back**:
+`result.protocolVersion` arrived on every successful boot and was discarded, since
+only `result.tools` was ever looked at. One literal fanned out by import through
+`shipped_probe.py` and `rebind_probe.py` into three gates, none of which could say
+what they had been talking to. That is the defect class `identity_probe` was
+written to catch, in the auditor's own source.
+
+The probe compares four sources — the target's code, the **installed** SDK, the
+index repo's `mcp_spec_version`, and the live wire — and reports `SPEC_DRIFT`,
+`LEGACY_TRANSPORT` (with the remaining days of the twelve-month window), or
+`UNVERIFIED`. The artifact level is the one the source cannot reach: during this
+migration a target's source does not change at all, the SDK version does.
+
+`SPEC_UNDECLARED` is a **note and not a finding**. Under the current SDKs the
+protocol version belongs to the SDK; 39 of the 42 servers declare nothing and are
+right not to, and a predicate that turned red on all 39 would be switched off
+within a day.
+
+The probe was written against a written summary of the spec rather than the spec
+document, so the wire mode **measures** the rules it would otherwise assume: the
+stateless call is sent twice, once with `Mcp-Method`/`Mcp-Name` and once without,
+and both status codes are reported. `--spec-verified` changes the report's wording
+once the rules have been checked; it never changes a verdict.
+
+`--now` pins the date. A countdown is time-dependent, which breaks the
+provenance promise from the other side — the same commit would otherwise produce
+a different report tomorrow.
+
+### Added — `transport_boot_probe` reads the version the server names
+
+`negotiated_version()` pulls `result.protocolVersion` out of the `initialize`
+result into the per-transport evidence and the report (`schema` 2 → 3), and
+`MCP_PROTOCOL_VERSION` overrides what the gate sends. A successful SSE boot now
+also records `legacy_transport`, because HTTP+SSE is the deprecated form.
+
+### Added — two migration predicates in the portfolio fan-out
+
+* `sdk_upper_bound` — is the resolved SDK major fixed, or whatever the next
+  install picks? `fastmcp` 4.0 is released and breaking, and `fastmcp` 3.x pins
+  `mcp<2.0`, so an unbounded server can be moved onto an incompatible line by an
+  unrelated `uv sync` while nothing in its own repository changes.
+* `sdk_flavour` — the official `mcp` SDK or the standalone `fastmcp` package. Two
+  different projects that cannot share an environment, and `sdk_major` reports
+  `2` for both, which is not the same statement.
+
+Both report **every** target and flag only the concrete risk; neither goes looking
+for a known outlier, because a predicate built around an expected answer confirms
+it. Neither is in `DEFAULT_PREDICATES`: adding a predicate to the default set
+changes the verdict of every existing targets file without anybody editing it.
+
+### Added — list-response asserts in the key-less promptfoo profile
+
+A `list:` variable in `promptfoo/providers/call_tool.py` and four tests asserting
+that `tools/list` and `resources/list` come back in a deterministic order and
+carry a well-formed `ttlMs`/`cacheScope` pair.
+
+There is deliberately **no** stateless assert here. The provider drives the
+in-memory client in-process and there is no wire, so *«a call without `initialize`
+succeeds»* would be a statement about the SDK and would pass for every server,
+migrated or not — the false green this repository exists to prevent. That question
+is measured in `spec_probe.py --url` or it is not measured. The `ttlMs` pair is
+baseline-gated for the mirror-image reason: whether the installed SDK surfaces the
+fields is a fact about the SDK, so the assert fails only on a value that is
+present and malformed, and `raw_shape` keeps «the server omitted it» apart from
+«this client cannot see it».
+
 ## [0.2.0] - 2026-08-03 — the probe family, and what a report may not claim
 
 Six weeks of accumulation get a version. `0.1.0` described an auditor with one

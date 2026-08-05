@@ -535,6 +535,96 @@ def pred_sdk_major(ctx: Ctx) -> Cell:
     return Cell(NA, "", "no mcp/fastmcp dependency in the root manifest")
 
 
+# What counts as an upper bound. `<`/`<=` are the obvious ones; `==` (an exact
+# pin) and `~=` (compatible release, which fixes the major) bound it just as
+# effectively. `!=` does NOT — excluding one version leaves the major open, and
+# an earlier version of this check read `mcp>=2,!=2.1` as bounded.
+_UPPER_BOUND_RE = re.compile(r"(?:<=?|==|~=)\s*\d")
+
+
+def _sdk_dep(ctx: Ctx) -> tuple[str, str] | None:
+    """(distribution, specifier) of the MCP SDK this target declares, or None."""
+    py = _read_pyproject(ctx.root)
+    project = py.get("project") if isinstance(py.get("project"), dict) else {}
+    deps: list[str] = [str(d) for d in (project.get("dependencies") or [])]
+    optional = project.get("optional-dependencies")
+    if isinstance(optional, dict):
+        for group in optional.values():
+            deps.extend(str(d) for d in (group or []))
+    for dep in deps:
+        m = _DEP_RE.match(dep.strip())
+        if m:
+            return dep.strip().split("[")[0].split(">")[0].split("<")[0].split("=")[
+                0
+            ].strip().lower(), dep.strip()
+    return None
+
+
+def pred_sdk_upper_bound(ctx: Ctx) -> Cell:
+    """Does the MCP SDK dependency carry an UPPER bound?
+
+    A lower bound alone (`mcp>=2.0`) means the major is whatever resolved last.
+    That is not a hypothetical: `fastmcp` 4.0 is out and breaking, and `fastmcp`
+    3.x pins `mcp<2.0`, so an unbounded server can be moved onto an incompatible
+    line by an unrelated `uv sync` and nothing in its own repository changes.
+
+    Deliberately SEPARATE from `sdk_major`: that predicate answers "which major",
+    this one answers "can that answer change without anybody editing this repo".
+    A server can be on the right major and still be unbounded, which is the state
+    that produces a surprise, and one cell cannot carry both facts honestly.
+    """
+    found = _sdk_dep(ctx)
+    if found is None:
+        return Cell(NA, "", "no mcp/fastmcp dependency in the root manifest")
+    dist, spec = found
+    if _UPPER_BOUND_RE.search(spec):
+        return Cell(OK, "bounded", spec)
+    return Cell(
+        FLAG,
+        "unbounded",
+        f"{spec!r} has no upper bound — the resolved major is whatever the next "
+        f"install picks. Pin one (`{dist}>=X,<Y`)",
+    )
+
+
+def pred_sdk_flavour(ctx: Ctx) -> Cell:
+    """Which of the two MCP SDKs this target is built on, and the fastmcp-4 risk.
+
+    Two different projects are called FastMCP and cannot share an environment:
+    the official `mcp` SDK (2.x, `MCPServer`) and the standalone `fastmcp`
+    package (now 4.x, breaking, with 3.x pinning `mcp<2.0`). Which one a server
+    uses decides its whole migration path, and until now the matrix could not see
+    it — `sdk_major` reads a NUMBER and reports `2` for both `mcp>=2` and
+    `fastmcp>=2`, which are not the same statement.
+
+    The flavour is read from the manifest rather than from `portfolio.json`'s
+    `sdk_flavour`: the tracker lives in another repository, and a predicate that
+    needed it would be unrunnable on the credential-free Worker. Where the two
+    disagree, this is the measurement and the tracker is the claim.
+
+    NOTE this reports the flavour for EVERY target and flags only the concrete
+    risk. It does not go looking for "the one fastmcp server" — a predicate built
+    around an expected answer confirms it. The outlier pass turns the column into
+    the row that breaks the pattern, which is the whole reason this is a matrix.
+    """
+    found = _sdk_dep(ctx)
+    if found is None:
+        return Cell(NA, "", "no mcp/fastmcp dependency in the root manifest")
+    dist, spec = found
+    if dist != "fastmcp":
+        return Cell(OK, "mcp", spec)
+    if _UPPER_BOUND_RE.search(spec):
+        return Cell(NOTE, "fastmcp", f"{spec!r} — standalone fastmcp, bounded")
+    return Cell(
+        FLAG,
+        "fastmcp",
+        f"{spec!r} — the standalone `fastmcp` package with no upper bound. "
+        "fastmcp 4.0 is released and breaking; fastmcp 3.x pins `mcp<2.0`, so "
+        "this target cannot move onto the official SDK 2.x line without leaving "
+        "fastmcp behind. Pin the major before deciding which way it goes",
+    )
+
+
 _SETTINGS_WRITE_RE = re.compile(r"\.settings\.([A-Za-z_]\w*)\s*=(?!=)")
 
 
@@ -686,11 +776,18 @@ def pred_boot(ctx: Ctx) -> Cell:
 PREDICATES: dict[str, Callable[[Ctx], Cell]] = {
     "manifest": pred_manifest,
     "sdk_major": pred_sdk_major,
+    "sdk_upper_bound": pred_sdk_upper_bound,
+    "sdk_flavour": pred_sdk_flavour,
     "settings_write": pred_settings_write,
     "host_allowlist_knob": pred_host_allowlist_knob,
     "nested_manifests": pred_nested_manifests,
     "boot": pred_boot,
 }
+# `sdk_upper_bound` and `sdk_flavour` are deliberately NOT here. Adding a
+# predicate to the default set changes the verdict of every existing targets file
+# without anybody editing it — a portfolio that was green yesterday goes red this
+# morning for a reason nobody asked about, which is how a sweep loses its
+# audience. They are opt-in per target; see targets.example.yaml.
 DEFAULT_PREDICATES = (
     "manifest",
     "sdk_major",

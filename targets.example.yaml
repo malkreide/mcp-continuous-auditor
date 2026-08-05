@@ -45,6 +45,22 @@ defaults:
 targets:
   - repo: malkreide/zurich-opendata-mcp
     server_import: zurich_opendata_mcp.server:mcp
+    # The two MIGRATION predicates, opt-in. They are not in the default set:
+    # adding a predicate to the default changes the verdict of every existing
+    # targets file without anybody editing it, and a portfolio that goes red
+    # overnight for a reason nobody asked about loses its audience.
+    #
+    #   sdk_upper_bound  is the resolved SDK major fixed, or is it whatever the
+    #                    next install picks? `fastmcp` 4.0 is out and breaking.
+    #   sdk_flavour      the official `mcp` SDK or the standalone `fastmcp`
+    #                    package — two different projects that cannot share an
+    #                    environment, and `sdk_major` reports `2` for both.
+    #
+    # Turn them on for every target once the migration starts; the outlier pass
+    # then names the row that breaks the pattern without being told what to
+    # expect, which is the whole reason this is a matrix.
+    predicates: [manifest, sdk_major, sdk_upper_bound, sdk_flavour,
+                 settings_write, host_allowlist_knob, nested_manifests]
 
   - repo: malkreide/bag-health-mcp
     server_import: bag_health_mcp.server:mcp

@@ -12,8 +12,18 @@ environment, so this file asks the server object rather than pinning either.
 
 promptfoo calls ``call_api(prompt, options, context)``; it reads these vars:
 
-  tool       name of the tool to call (mutually exclusive with `resource`)
+  tool       name of the tool to call (mutually exclusive with `resource`/`list`)
   resource   a resource URI to read, e.g. "zurich://geo/stadtkreise"
+  list       a LIST response to fetch: "tools" | "resources" | "prompts". Spec
+             2026-07-28 requires these to carry `ttlMs`/`cacheScope` and to come
+             back in a deterministic order, and both are payload properties — so
+             they can be asserted here honestly, offline and key-less.
+             What CANNOT be asserted through this provider is anything about the
+             HANDSHAKE: the in-memory client speaks to the server in-process and
+             there is no wire, so "a call without initialize succeeds" would be a
+             statement about the SDK and would be green for every server, migrated
+             or not. That question belongs to scripts/spec_probe.py --url, which
+             measures it on a real connection.
   args       JSON object string of tool arguments (default "{}")
   fixture    fixture basename under promptfoo/fixtures/ (the recorded UPSTREAM
              httpx response the mocked client should replay). Omit for tools
@@ -44,14 +54,15 @@ def call_api(prompt: str, options: dict, context: dict) -> dict:
     vars_ = (context or {}).get("vars", {})
     tool = vars_.get("tool")
     resource = vars_.get("resource")
+    listing = vars_.get("list")
     args = json.loads(vars_.get("args", "{}"))
     fixture = vars_.get("fixture")
 
-    if not tool and not resource:
-        return {"error": "provider needs either `tool` or `resource` in vars"}
+    if not tool and not resource and not listing:
+        return {"error": "provider needs `tool`, `resource` or `list` in vars"}
 
     try:
-        output = asyncio.run(_invoke(tool, resource, args, fixture))
+        output = asyncio.run(_invoke(tool, resource, args, fixture, listing))
         return {"output": output}
     except Exception as exc:  # surface to promptfoo as a provider error, not a crash
         return {"error": f"{type(exc).__name__}: {exc}"}
@@ -184,8 +195,80 @@ def in_memory_client(server: Any) -> Any:
     )
 
 
+_LIST_METHODS = {
+    "tools": "list_tools",
+    "resources": "list_resources",
+    "prompts": "list_prompts",
+}
+
+
+def _list_to_json(kind: str, result: Any) -> str:
+    """A list response, normalised to a JSON object the asserts can read.
+
+    The SDKs hand back either a typed result object or a bare list of items,
+    depending on version and client. Both are reduced to
+    ``{"kind", "names", "ttlMs", "cacheScope", "raw_shape"}``:
+
+      * ``names`` is the ORDER, which spec 2026-07-28 requires to be
+        deterministic — an assert compares two calls, and a set comparison would
+        be blind to exactly the property being checked;
+      * ``ttlMs``/``cacheScope`` are ``null`` when the SDK does not surface them.
+        NULL IS NOT ZERO AND NOT ABSENT-AS-COMPLIANT: the assert that reads them
+        must distinguish "the server omits the field" from "this client cannot
+        see it", which is why ``raw_shape`` records which of the two happened.
+    """
+    items = getattr(result, kind, None)
+    raw_shape = type(result).__name__
+    if items is None and isinstance(result, list):
+        items, raw_shape = result, "list"
+    if items is None:
+        items = []
+    names = []
+    for item in items:
+        name = getattr(item, "name", None) or getattr(item, "uri", None)
+        names.append(str(name) if name is not None else repr(item))
+    ttl = getattr(result, "ttlMs", None)
+    if ttl is None:
+        ttl = getattr(result, "ttl_ms", None)
+    scope = getattr(result, "cacheScope", None)
+    if scope is None:
+        scope = getattr(result, "cache_scope", None)
+    return json.dumps(
+        {
+            "kind": kind,
+            "count": len(names),
+            "names": names,
+            "ttlMs": ttl,
+            "cacheScope": str(scope) if scope is not None else None,
+            # Which shape the SDK returned, so an absent ttlMs can be attributed
+            # to the server or to this client rather than silently to neither.
+            "raw_shape": raw_shape,
+        },
+        ensure_ascii=False,
+    )
+
+
+async def _list(client: Any, kind: str) -> str:
+    method = _LIST_METHODS.get(kind)
+    if method is None:
+        raise ValueError(
+            f"unknown list kind {kind!r} — expected one of {sorted(_LIST_METHODS)}"
+        )
+    fn = getattr(client, method, None)
+    if fn is None:
+        raise RuntimeError(
+            f"the in-memory client exposes no `{method}` — the list response was "
+            "NOT measured, which is not the same as a compliant one"
+        )
+    return _list_to_json(kind, await fn())
+
+
 async def _invoke(
-    tool: str | None, resource: str | None, args: dict, fixture: str | None
+    tool: str | None,
+    resource: str | None,
+    args: dict,
+    fixture: str | None,
+    listing: str | None = None,
 ) -> str:
     mcp = _load_server()
     payload = _fixture_payload(fixture)
@@ -198,6 +281,8 @@ async def _invoke(
 
     with patch("httpx.AsyncClient.request", new=_fake_request):
         async with in_memory_client(mcp) as client:
+            if listing:
+                return await _list(client, listing)
             if resource:
                 return _resource_to_json(await client.read_resource(resource))
             return _result_to_json(await client.call_tool(tool, args))

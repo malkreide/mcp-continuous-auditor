@@ -113,7 +113,29 @@ against a target whose HTTP transport is in fact healthy.
 Stdlib only (subprocess/socket/http.client) — it runs inside the TARGET's
 environment, where we must not add dependencies.
 
+SPEC 2026-07-28 — A REFUSED HANDSHAKE IS NOT A BROKEN SERVER
+------------------------------------------------------------
+The stateless core removes `initialize`/`initialized` and `Mcp-Session-Id`. A
+server that has migrated answers `initialize` with JSON-RPC -32601, and this gate
+used to call that "the server never came up" — a FAIL that travels through
+`nightly_audit_report.py` into `sync_findings_issues.py` and ends as a GitHub
+issue against a healthy target. The first server to finish the migration would
+have been issued a bug report for finishing it.
+
+So a rejected handshake now triggers the SECOND question rather than a verdict:
+can the server serve a real call with no handshake at all? If it can, the result
+is `STATELESS` — a pass with a label. If it cannot, the original failure stands.
+Only -32601 (or a "method not found" message) takes this branch; an internal
+error or a crash keeps failing, because those are what the gate is for.
+
+The version the server names in its `initialize` result is now READ (see
+`negotiated_version`) instead of discarded, and lands in the report. That
+measurement was arriving all along; nothing looked at it, which is why no report
+here could say which spec a target speaks. `scripts/spec_probe.py` is what
+compares it against the other places the version is claimed.
+
 Env:
+  MCP_PROTOCOL_VERSION  the protocol version this gate SENDS (default 2025-06-18)
   MCP_SERVER_IMPORT  "package.module:attr" for the generic launcher
                      (default "server:mcp"; nightly-audit.sh always sets it)
   BOOT_TARGET_ROOT   target checkout to derive from (default: cwd)
@@ -182,6 +204,18 @@ FAIL = "fail"
 # A crash leaves a non-zero status and a traceback; a clean exit after being asked
 # for the wrong transport does not.
 NOT_SELECTED = "not-selected"
+# The server came up and answered MCP, but WITHOUT a handshake — spec 2026-07-28
+# removed `initialize`/`initialized` and `Mcp-Session-Id` in favour of a stateless
+# core. This is a PASS with a label, not a finding.
+#
+# Before this existed, a correctly migrated server produced `FAIL` here: the gate
+# sent `initialize`, got a rejection, and reported "the server never came up" —
+# which travels through nightly_audit_report.py into sync_findings_issues.py and
+# ends as a GitHub issue against a healthy target. A migration in which the
+# auditor files a bug report against the first server to finish it is worse than
+# no auditor. The discriminator is the same shape as NOT_SELECTED above: ask the
+# second question before concluding from the first.
+STATELESS = "stateless"
 
 STDIO = "stdio"
 STREAMABLE_HTTP = "streamable-http"
@@ -198,7 +232,14 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_HTTP_HOST = "mcp-boot-probe.audit.invalid"
 DEFAULT_BIND_HOST = "0.0.0.0"
 
-_PROTOCOL_VERSION = "2025-06-18"
+# The protocol version this gate SENDS. It used to be a bare literal, which is
+# the exact defect class `identity_probe` was written to catch — a hand-maintained
+# version that drifts while nothing breaks and no test fails — sitting in the
+# auditor's own source, fanned out through shipped_probe and rebind_probe into
+# three gates. It is now overridable, and (more to the point) the version the
+# server ANSWERS is read back rather than discarded; see `negotiated_version`.
+DEFAULT_PROTOCOL_VERSION = "2025-06-18"
+_PROTOCOL_VERSION = os.environ.get("MCP_PROTOCOL_VERSION") or DEFAULT_PROTOCOL_VERSION
 _CLIENT_INFO = {"name": "mcp-continuous-auditor transport-boot-probe", "version": "1"}
 
 # Directories that are never part of a target's own source.
@@ -630,6 +671,66 @@ def _initialize_params() -> dict[str, Any]:
     }
 
 
+def _stateless_meta() -> dict[str, Any]:
+    """The `_meta` block a stateless (2026-07-28) request carries.
+
+    Under the stateless core there is no handshake to negotiate in, so every
+    request brings its own protocol version, clientInfo and capabilities. A
+    server on the older spec ignores an unknown `_meta` key, so sending it costs
+    nothing and is what makes ONE request shape work against both.
+    """
+    return {
+        "protocolVersion": _PROTOCOL_VERSION,
+        "clientInfo": _CLIENT_INFO,
+        "capabilities": {},
+    }
+
+
+def _opening_call(stateless: bool, ident: int = 1) -> dict[str, Any]:
+    """The first request of a probe: a handshake, or a real call without one."""
+    if stateless:
+        return {**_rpc("tools/list", ident), "_meta": _stateless_meta()}
+    return _rpc("initialize", ident, _initialize_params())
+
+
+def _has_result(payload: Any) -> bool:
+    return isinstance(payload, dict) and "result" in payload
+
+
+def _handshake_refused(payload: Any) -> bool:
+    """Is this a server that has REMOVED `initialize`, rather than a broken one?
+
+    JSON-RPC -32601 is "method not found", which is what a stateless server
+    answers to a method the spec deleted. Anything else — an internal error, a
+    validation error, a crash — is a genuine failure and must keep failing, so
+    the check is on the code and not on "did initialize succeed".
+    """
+    if not isinstance(payload, dict):
+        return False
+    err = payload.get("error")
+    if not isinstance(err, dict):
+        return False
+    if err.get("code") == -32601:
+        return True
+    return "method not found" in str(err.get("message", "")).lower()
+
+
+def negotiated_version(payload: Any) -> str:
+    """The protocol version the SERVER named. Previously read by nobody.
+
+    `initialize`'s result carried `protocolVersion` all along and this gate threw
+    it away, looking only at `result.tools`. That single omission is why no report
+    in this repository could say which spec a target speaks — the measurement was
+    arriving and being discarded.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return ""
+    return str(result.get("protocolVersion") or "")
+
+
 def _tool_count(result: Any) -> int | None:
     if isinstance(result, dict):
         tools = result.get("tools")
@@ -825,7 +926,12 @@ def probe_stdio(
                 f"initialize failed: {err}; stderr: {_tail(drain_stderr())}",
                 elapsed_s=time.monotonic() - started,
             )
-        if "error" in reply:
+        # A REJECTED handshake is not a broken server. Spec 2026-07-28 removed
+        # `initialize`; a server that has migrated answers -32601 here and is
+        # perfectly healthy. Ask the second question — can it serve a real call
+        # with no handshake at all — before concluding anything about it.
+        stateless = _handshake_refused(reply)
+        if "error" in reply and not stateless:
             _terminate(proc)
             return ProbeResult(
                 plan.transport,
@@ -835,8 +941,14 @@ def probe_stdio(
                 elapsed_s=time.monotonic() - started,
             )
 
-        send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
-        if not send(_rpc("tools/list", 2)):
+        spec = negotiated_version(reply)
+        if not stateless:
+            send(
+                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+            )
+        if not send(
+            _opening_call(stateless, 2) if stateless else _rpc("tools/list", 2)
+        ):
             _terminate(proc)
             return ProbeResult(
                 plan.transport,
@@ -867,13 +979,17 @@ def probe_stdio(
             )
 
         count = _tool_count(listing.get("result"))
+        opened = "no handshake (stateless core)" if stateless else "initialize"
         return ProbeResult(
             plan.transport,
             plan.mode,
             True,
-            f"initialize + tools/list OK ({count if count is not None else '?'} tool(s))",
+            f"{opened} + tools/list OK ({count if count is not None else '?'} tool(s))"
+            + (f"; server negotiated {spec}" if spec else ""),
             tools=count,
             elapsed_s=time.monotonic() - started,
+            status=STATELESS if stateless else OK,
+            evidence={"negotiated_protocol_version": spec, "stateless": stateless},
         )
     finally:
         _terminate(proc)
@@ -1129,20 +1245,28 @@ def http_get_sse(
 
 
 def _resolve_path(
-    port: int, candidates: list[str], host_header: str, timeout: float
+    port: int,
+    candidates: list[str],
+    host_header: str,
+    timeout: float,
+    stateless: bool = False,
 ) -> tuple[str, HttpReply | None]:
-    """Find the endpoint path by trying the candidates with a real initialize. A
-    404/405 means wrong path; anything else (including 421) is the server's real
-    answer and ends the search."""
+    """Find the endpoint path by trying the candidates with a real opening call.
+
+    A 404/405 means wrong path; anything else (including 421) is the server's real
+    answer and ends the search.
+
+    NOTE that `initialize` is not merely the assertion here, it is the DISCOVERY
+    mechanism. So a stateless server that rejects the method breaks path
+    resolution itself, not just the check — the gate would then report "the
+    transport is broken" about a path it never reached. `stateless=True` runs the
+    same search with a real call instead, which is why the caller tries both.
+    """
     last: HttpReply | None = None
     for path in candidates:
         try:
             reply = http_post(
-                port,
-                path,
-                host_header,
-                _rpc("initialize", 1, _initialize_params()),
-                timeout,
+                port, path, host_header, _opening_call(stateless, 1), timeout
             )
         except (OSError, http.client.HTTPException):
             continue
@@ -1234,6 +1358,21 @@ def probe_streamable_http(
         remaining = max(deadline - time.monotonic(), 1.0)
         loop_host = f"127.0.0.1:{port}"
         path, reply = _resolve_path(port, paths, loop_host, min(remaining, 10.0))
+
+        # The handshake did not land. Before calling the transport broken — the
+        # claim that turned a migrated server into a GitHub issue — ask whether
+        # this is a server that no longer HAS a handshake, by making a real call
+        # without one. Only a stateless call that genuinely succeeds may change
+        # the verdict; a second failure leaves the original one standing.
+        stateless = False
+        if reply is None or reply.status != 200 or not _has_result(reply.payload):
+            remaining = max(deadline - time.monotonic(), 1.0)
+            alt_path, alt = _resolve_path(
+                port, paths, loop_host, min(remaining, 10.0), stateless=True
+            )
+            if alt is not None and alt.status == 200 and _has_result(alt.payload):
+                path, reply, stateless = alt_path, alt, True
+
         if reply is None:
             return ProbeResult(
                 plan.transport,
@@ -1252,16 +1391,18 @@ def probe_streamable_http(
                 elapsed_s=time.monotonic() - started,
                 evidence={"path": path, "loopback_status": reply.status},
             )
-        if not isinstance(reply.payload, dict) or "result" not in reply.payload:
+        if not _has_result(reply.payload):
             return ProbeResult(
                 plan.transport,
                 plan.mode,
                 False,
-                f"initialize on {path} did not return a JSON-RPC result; body: {_tail(reply.body, 200)}",
+                f"neither initialize nor a handshake-free call on {path} returned a "
+                f"JSON-RPC result; body: {_tail(reply.body, 200)}",
                 elapsed_s=time.monotonic() - started,
                 evidence={"path": path},
             )
 
+        spec = negotiated_version(reply.payload)
         session_id = reply.headers.get("mcp-session-id", "")
 
         # --- CASE 2: the same request, only the Host header differs -------------
@@ -1271,7 +1412,10 @@ def probe_streamable_http(
                 port,
                 path,
                 probe_host,
-                _rpc("initialize", 3, _initialize_params()),
+                # The SAME request shape that worked for the loopback Host. Case 2
+                # is a difference of one header and nothing else; varying the body
+                # too would make a 421 unattributable.
+                _opening_call(stateless, 3),
                 min(remaining, 10.0),
             )
         except (OSError, http.client.HTTPException) as exc:
@@ -1317,37 +1461,43 @@ def probe_streamable_http(
             )
 
         # --- tools/list on the working session ---------------------------------
-        remaining = max(deadline - time.monotonic(), 1.0)
-        try:
-            http_post(
-                port,
-                path,
-                loop_host,
-                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
-                min(remaining, 10.0),
-                session_id,
-            )
-            listing = http_post(
-                port,
-                path,
-                loop_host,
-                _rpc("tools/list", 2),
-                min(remaining, 10.0),
-                session_id,
-            )
-        except (OSError, http.client.HTTPException) as exc:
-            return ProbeResult(
-                plan.transport,
-                plan.mode,
-                False,
-                f"tools/list could not complete: {type(exc).__name__}: {exc}",
-                elapsed_s=time.monotonic() - started,
-            )
-        if (
-            listing.status != 200
-            or not isinstance(listing.payload, dict)
-            or "result" not in listing.payload
-        ):
+        # In the stateless case the opening call WAS tools/list, so there is
+        # nothing left to ask: repeating it would only measure the same thing a
+        # second time and give a flaky server a second chance to fail.
+        if stateless:
+            listing = reply
+        else:
+            remaining = max(deadline - time.monotonic(), 1.0)
+            try:
+                http_post(
+                    port,
+                    path,
+                    loop_host,
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized",
+                        "params": {},
+                    },
+                    min(remaining, 10.0),
+                    session_id,
+                )
+                listing = http_post(
+                    port,
+                    path,
+                    loop_host,
+                    _rpc("tools/list", 2),
+                    min(remaining, 10.0),
+                    session_id,
+                )
+            except (OSError, http.client.HTTPException) as exc:
+                return ProbeResult(
+                    plan.transport,
+                    plan.mode,
+                    False,
+                    f"tools/list could not complete: {type(exc).__name__}: {exc}",
+                    elapsed_s=time.monotonic() - started,
+                )
+        if listing.status != 200 or not _has_result(listing.payload):
             return ProbeResult(
                 plan.transport,
                 plan.mode,
@@ -1358,15 +1508,27 @@ def probe_streamable_http(
             )
 
         count = _tool_count(listing.payload.get("result"))
+        opened = "no handshake (stateless core)" if stateless else "initialize"
         return ProbeResult(
             plan.transport,
             plan.mode,
             True,
-            f"bound {bind_host}:{port}{path} — initialize + tools/list OK under both a loopback "
-            f"and a non-loopback Host ({count if count is not None else '?'} tool(s))",
+            f"bound {bind_host}:{port}{path} — {opened} + tools/list OK under both a loopback "
+            f"and a non-loopback Host ({count if count is not None else '?'} tool(s))"
+            + (f"; server negotiated {spec}" if spec else ""),
             tools=count,
             elapsed_s=time.monotonic() - started,
-            evidence={"path": path, "probe_host": probe_host, "bind_host": bind_host},
+            status=STATELESS if stateless else OK,
+            evidence={
+                "path": path,
+                "probe_host": probe_host,
+                "bind_host": bind_host,
+                "negotiated_protocol_version": spec,
+                "stateless": stateless,
+                # A session id under the stateless core is itself a legacy signal;
+                # spec_probe.py is what turns that into a LEGACY_TRANSPORT finding.
+                "session_id_issued": bool(session_id),
+            },
         )
     finally:
         _terminate(proc)
@@ -1529,9 +1691,11 @@ def probe_sse(
             plan.mode,
             True,
             f"bound {bind_host}:{port}{used} — SSE handshake + initialize OK under both a "
-            "loopback and a non-loopback Host",
+            "loopback and a non-loopback Host. NOTE: HTTP+SSE is the legacy "
+            "transport, deprecated under spec 2026-07-28 — run "
+            "`scripts/spec_probe.py --url ...` for the deadline",
             elapsed_s=time.monotonic() - started,
-            evidence={"path": used, "endpoint": endpoint},
+            evidence={"path": used, "endpoint": endpoint, "legacy_transport": True},
         )
     finally:
         _terminate(proc)
@@ -1570,11 +1734,33 @@ def render(results: list[ProbeResult], derivation: Derivation) -> str:
             f"Added by the floor (always probed): {', '.join(derivation.floor_added)}"
         )
     lines.append("")
-    icons = {OK: "✅", FAIL: "❌", NOT_SELECTED: "🟡"}
+    icons = {OK: "✅", FAIL: "❌", NOT_SELECTED: "🟡", STATELESS: "✅"}
     for r in results:
         lines.append(
             f"{icons.get(r.status, '?')} {r.transport} [{r.mode}] — {r.detail}"
         )
+
+    negotiated = sorted(
+        {
+            str(r.evidence.get("negotiated_protocol_version") or "")
+            for r in results
+            if r.evidence.get("negotiated_protocol_version")
+        }
+    )
+    if negotiated:
+        lines += ["", "Protocol version(s) the server named: " + ", ".join(negotiated)]
+    stateless = [r for r in results if r.status == STATELESS]
+    if stateless:
+        lines += [
+            "",
+            "## ✅ Stateless core — a PASS, not a finding",
+            "",
+            "For " + ", ".join(r.transport for r in stateless) + " the server "
+            "refused `initialize` (JSON-RPC -32601) and then served a real call "
+            "with no handshake in front of it. That is spec 2026-07-28 behaviour, "
+            "and it is what this gate used to report as “the server never came "
+            "up”. Nothing here is wrong with the target.",
+        ]
 
     unselected = [r for r in results if r.status == NOT_SELECTED]
     if unselected:
@@ -1695,7 +1881,9 @@ def main(argv: list[str] | None = None) -> int:
             Path(report_path).write_text(
                 json.dumps(
                     {
-                        "schema": 2,  # +provenance
+                        # 3: transports carry `negotiated_protocol_version` and the
+                        # `stateless` status; spec_probe.py reads both.
+                        "schema": 3,
                         "outcome": outcome,
                         "exit_code": exit_code,
                         "provenance": prov.as_dict(),
