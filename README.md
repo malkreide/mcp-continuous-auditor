@@ -188,7 +188,7 @@ adoption.example.toml  format reference for the reference-drift mapping; the
                   real one lives in the skill repo, beside its templates
 relay/            optional Cloudflare Worker for real-time Telegram push intake
 tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
-tests/            stdlib unit tests (1000 in 40 files) — run by .github/workflows/tests.yml
+tests/            stdlib unit tests (1004 in 40 files) — run by .github/workflows/tests.yml
 .github/          tests.yml = the auditor's own suite; *.yml.template = CI for the target repo
 docs/plans/       the v2 build plan
 docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)

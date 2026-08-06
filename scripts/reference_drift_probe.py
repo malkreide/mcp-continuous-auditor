@@ -439,6 +439,22 @@ def load_symbol(path: Path, symbol: str) -> tuple[Unit | None, str]:
 def _aliases(tree: ast.AST) -> dict[str, str]:
     """Local name → the dotted name it actually refers to.
 
+    Three bindings count, and the third is not an import at all:
+
+    * ``import asyncio`` / ``import random as rnd``
+    * ``from random import uniform``
+    * ``_sleep = asyncio.sleep`` at MODULE level — a plain assignment of a
+      dotted name to a name. It is an alias in every sense that matters here,
+      and it is a common idiom rather than an exotic one: four of the servers
+      in this portfolio bind the backoff sleep that way so a test can patch the
+      module attribute without reaching into every import in the process. Read
+      literally, ``await _sleep(delay)`` looked like a symbol that does not
+      sleep, and the probe reported four adoptions as lagging when none was.
+
+    Only module level, and only a bare dotted name on the right-hand side: a
+    rebinding inside a function is control flow, and a call or a subscript on
+    the right is a value, not another name for one.
+
     Relative imports are skipped: ``from .http import retry`` names something
     inside the repository, whose full path differs per repository by
     construction, and resolving it would manufacture a difference.
@@ -452,6 +468,20 @@ def _aliases(tree: ast.AST) -> dict[str, str]:
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             for alias in node.names:
                 out[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    for node in getattr(tree, "body", []):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target, value = node.targets[0], node.value
+        if not isinstance(target, ast.Name) or not isinstance(value, ast.Attribute):
+            continue
+        dotted = _dotted(value)
+        # Resolve through what is already known, so `import asyncio as aio`
+        # followed by `_sleep = aio.sleep` still lands on `asyncio.sleep`.
+        head, _, rest = dotted.partition(".")
+        if head in out and rest:
+            dotted = f"{out[head]}.{rest}"
+        if dotted and target.id not in out:
+            out[target.id] = dotted
     return out
 
 
