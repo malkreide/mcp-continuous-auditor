@@ -58,6 +58,53 @@ promptfoo JSON to one outcome:
 `nightly-summary.json` so the agent opens one issue per finding class with the
 right label.
 
+## Which target — and how many
+
+Until 2026-08-06 the answer was a constant in `scripts/nightly-audit.sh`:
+
+```bash
+TARGET_REPO="${TARGET_REPO:-malkreide/zurich-opendata-mcp}"
+```
+
+So the nightly run audited **one** server out of a portfolio of 44 and nothing in
+its output said so. That is the same class as the sweep that reported "33 von 33
+ok" against 43 active servers: a true sentence about the wrong set. The default
+is gone. The script now refuses to run without one of two explicit answers:
+
+```bash
+AUDIT_MANIFEST=manifest.json scripts/nightly-audit.sh          # the whole portfolio
+TARGET_REPO=malkreide/zurich-opendata-mcp scripts/nightly-audit.sh   # one named target
+```
+
+**Sweep mode** takes the target list from `coverage_manifest.py --format json`,
+read and validated by `scripts/coverage.py` — the same module every probe uses,
+so the shell does not parse the manifest itself and there is no twelfth copy of
+the rule. It then re-execs *itself* once per target, each with its own
+`AUDIT_DIR` under `.audit/targets/<name>/`, so single-target mode stays the only
+code path that runs a gate. Each child gets an outer time bound
+(`SWEEP_TIMEOUT_TARGET`, default 7200s) above the per-gate bounds: over 44
+targets one wedged child takes the night, and a night that produced nothing is
+indistinguishable from a night that found nothing.
+
+The sweep ends with `n/44 abgedeckt`, and its exit code is the portfolio-level
+version of the same three answers:
+
+| Code | Meaning |
+|---|---|
+| 0 | every manifest entry measured or excused, no findings |
+| 2 | complete coverage, findings on at least one target |
+| 1 | coverage **incomplete** — at least one target was not measured |
+
+A child that hard-fails (its own exit 1: a gate could not *run*) is neither a
+clean target nor a finding. It is an unmeasured one, it is named in the summary
+under `OHNE ERGEBNIS`, and it costs the sweep its completeness. `1` outranks `2`
+for the reason the rest of this repository exists: a run that did not look
+everywhere has not raised a finding, it has raised nothing.
+
+`AUDIT_ALLOW_SKIP` excuses entries, one `id:grund` per line. The reason is
+mandatory and gets printed — a skip without one is not a skip, it is a gap with
+an alibi.
+
 ## The two human gates
 
 1. **Issues are automatic, PRs are not.** On findings a committed script

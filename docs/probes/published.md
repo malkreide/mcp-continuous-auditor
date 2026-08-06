@@ -44,7 +44,26 @@ The same rule governs coverage. With `--manifest`, the target list comes from th
 manifest and the run must account for every name on it: each one is probed,
 explicitly skipped with a reason (`--allow-skip NAME:REASON`), or reported as
 missing. A sweep that quietly covered a prefix of the list would look exactly
-like a complete one.
+like a complete one. The reading, the validation and the denominator live in
+`scripts/coverage.py` and are shared with every other portfolio run — see
+[README.md](README.md#coverage-the-denominator-comes-from-the-manifest-never-from-the-run).
+
+### The entrypoint listing, and the direction it used to fail
+
+The smoke stage asks the installed distribution which console scripts it
+declares. That question can itself fail — a broken `.dist-info`, a metadata
+reader that raises — and the failure used to arrive as an empty list, which read
+as «declares no console script»: `no_entrypoint`, which is `smoke_failed`, which
+is a **finding against the target**. The probe's own blindness was booked as the
+package's defect, which is the rule of this directory inverted.
+
+Three outcomes now, and they are three sentences:
+
+| What happened | Status | What the evidence says |
+|---|---|---|
+| the listing failed | `error` → `smoke_unverified` | the error text; nothing about the package was established |
+| the listing ran, empty | `no_entrypoint` | `entry_points(group='console_scripts') = []` |
+| declared, not installed | `no_entrypoint` | the declared names, and that `bin/` has none of them |
 
 ## Running it
 

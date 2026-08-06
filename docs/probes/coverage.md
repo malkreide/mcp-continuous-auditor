@@ -109,6 +109,32 @@ of `portfolio.json` and the tracker is what needs updating; a `UNVERIFIED wire:`
 line means the endpoint was never reached and **nothing was measured** — fix the
 URL and re-run rather than recording it as a result.
 
+## The coverage layer itself has never seen the real manifest
+
+Added 2026-08-06: `scripts/coverage.py` (the manifest reader and the
+denominator) and `scripts/coverage_run.py` (one probe over every manifest
+entry). They are the answer to the sweep that reported «33 von 33 ok» against 43
+active servers, and the same rule applies to them as to everything else on this
+page.
+
+**Run:** the unit fixtures, `tests/test_coverage.py` and
+`tests/test_coverage_run.py` — including the three counter-checks the mechanism
+exists for (a deliberately absent entry exits non-zero *and* names itself; a
+reasoned skip exits 0 *and* prints its reason; an empty manifest aborts instead
+of reporting `0/0 ok`). Plus `tests/test_nightly_sweep.py`, which lifts the real
+`sweep_over_manifest` out of `scripts/nightly-audit.sh` and drives it in bash
+with a stubbed child.
+
+**Not run:** against the actual `coverage_manifest.py --format json` output of
+`swiss-public-data-mcp`. Every manifest this repository has read so far was
+written by a test. The validation is deliberately fail-closed for exactly that
+reason — a field this tool does not recognise stops the run rather than turning
+every entry into a justified omission — but «the fixture agreed» is all the
+green above it means, same as every other row here.
+
+To close it: run any probe through the driver against a real manifest and a real
+`--repos-root`, and record the `n/44 abgedeckt` line with its date.
+
 ## Why this is written down rather than remembered
 
 A probe suite that has only ever run against its own fixtures is in exactly the

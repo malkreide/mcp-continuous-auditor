@@ -432,6 +432,50 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(pp.decide_status(result)[0], "ok")
 
 
+class EntrypointListingTest(unittest.TestCase):
+    """Jeder negative Status traegt seine Beobachtung — auch dieser.
+
+    Der Befund: `_run` meldet einen gescheiterten Aufruf als `{"error": …}`,
+    und `.get("scripts") or []` machte daraus eine leere Liste. Der Lauf sagte
+    dann «die Distribution deklariert kein Console-Script» — ein FUND gegen das
+    Ziel (`no_entrypoint` → `smoke_failed`), erzeugt aus der eigenen Blindheit
+    der Sonde. Die schlimmere Richtung von «nicht hingesehen = nichts da».
+    """
+
+    def _smoke(self, payload: dict) -> object:
+        orig = pp._run
+        pp._run = lambda *a, **k: payload  # type: ignore[assignment]
+        self.addCleanup(lambda: setattr(pp, "_run", orig))
+        env = Path(tempfile.mkdtemp(prefix="entrypoints-"))
+        (env / "bin").mkdir()
+        return pp.smoke_start(env / "bin" / "python", "demo-mcp", env, 1.0)
+
+    def test_a_failed_listing_is_not_measured_and_carries_the_error(self) -> None:
+        got = self._smoke({"error": "AttributeError: no dist-info"})
+        self.assertEqual(got.status, "error")
+        self.assertIn("AttributeError", got.evidence)
+        self.assertIn("NOT established", got.detail)
+
+    def test_a_failed_listing_is_never_a_finding_against_the_target(self) -> None:
+        result = measured([finding("demo-mcp/1.2.3")], "1.2.3", True)
+        result.smoke = self._smoke({"error": "boom"})
+        self.assertEqual(pp.decide_status(result)[0], "smoke_unverified")
+
+    def test_an_empty_listing_stays_a_finding_and_names_the_observation(self) -> None:
+        """Gemessen und leer: das IST ein Mangel — und sagt jetzt, was es sah."""
+        got = self._smoke({"scripts": []})
+        self.assertEqual(got.status, "no_entrypoint")
+        self.assertIn("console_scripts", got.evidence)
+
+    def test_declared_but_not_installed_is_its_own_sentence(self) -> None:
+        """Vorher las sich das als 'deklariert kein Console-Script', waehrend
+        `pyproject.toml` zwei nennt."""
+        got = self._smoke({"scripts": ["demo-mcp", "demo-mcp-admin"]})
+        self.assertEqual(got.status, "no_entrypoint")
+        self.assertIn("demo-mcp-admin", got.evidence)
+        self.assertIn("did not place", got.detail)
+
+
 class WatchTest(unittest.TestCase):
     """The process half of the smoke stage, against a real subprocess.
 

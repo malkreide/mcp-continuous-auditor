@@ -61,6 +61,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import coverage  # noqa: E402
+
 _API = "https://api.github.com"
 
 # States in which GitHub CAN build a merge ref, so workflows do run:
@@ -100,83 +104,46 @@ class Finding:
         return f"{self.repo}#{self.number} [{self.status}] {self.title[:60]} — {ev}"
 
 
+ARCHIVED = "archiviert (read-only, PRs dort sind ohnehin fest)"
+
+
 def read_manifest(
     path: Path,
 ) -> tuple[int, list[tuple[str, str]], list[tuple[str, str]]]:
     """Split the manifest into a total, targets, and justified omissions.
 
-    The total counts EVERY declared repository, skipped or not. Counting only
-    the swept ones would make the denominator depend on the same judgement the
-    coverage check exists to audit — a bug I shipped once already, where an
+    The ``repositories``-shaped view of ``scripts/coverage.py``: that module
+    owns the validation and the denominator, this function owns what a
+    repository entry means. Both used to live here in full — and, separately,
+    in ``published_probe.py``. One rule in two implementations is two chances
+    to get the denominator wrong, and it had already gone wrong once (an
     all-green run exited 1 because ``2 swept + 1 skipped`` was compared against
-    an expected 2.
+    an expected 2).
 
-    A missing ``repositories`` key is refused rather than defaulted to empty.
-    Absent and empty are different claims: empty says "this portfolio owns no
-    repositories", absent says "this manifest does not match this tool". Read
-    optimistically, a renamed field would turn every entry into nothing at all
-    and the run would report ``0/0 geprueft`` with exit 0 — indistinguishable
-    from a swept portfolio.
+    Archived repositories are the manifest's own justified omission: they are
+    read-only, so an open pull request there is stuck by definition.
     """
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if "repositories" not in data:
-        raise SystemExit(
-            f"{path}: kein Feld 'repositories'. Fehlend und leer sind verschiedene "
-            "Aussagen: leer heisst 'keine Repos', fehlend heisst 'dieses Manifest "
-            "passt nicht zu diesem Werkzeug' (erzeugt coverage_manifest.py "
-            "--format json den Block schon?)"
-        )
-    repos = data["repositories"]
-    if not isinstance(repos, list) or not repos:
-        raise SystemExit(
-            f"{path}: leere Repo-Liste. Ein Lauf ohne Ziele meldet sonst "
-            "'0/0 geprueft' und Exit 0 — nicht unterscheidbar von einem "
-            "geprueften Portfolio"
-        )
-
-    targets: list[tuple[str, str]] = []
-    skipped: list[tuple[str, str]] = []
-    for i, r in enumerate(repos):
-        if not isinstance(r, dict) or "id" not in r or "repository" not in r:
-            raise SystemExit(f"{path}: Eintrag {i} hat kein 'id'/'repository'-Feld")
-        url = str(r["repository"]).rstrip("/")
-        # Nicht nur die Schraegstriche zaehlen: `git@github.com:o/a.git` hat
-        # genau einen und kaeme sonst als Slug durch, um dann bei jedem Repo
-        # als HTTP-Fehler zu enden — also als "nicht erhoben" statt als das,
-        # was es ist: ein kaputter Eintrag im Manifest.
-        slug = url.removeprefix("https://github.com/")
-        parts = slug.split("/")
-        if (
-            not url.startswith("https://github.com/")
-            or len(parts) != 2
-            or not all(parts)
-        ):
-            raise SystemExit(
-                f"{path}: {r['id']}: 'repository' ist keine "
-                f"github.com/<owner>/<name>-URL ({url!r})"
-            )
-        if r.get("archived"):
-            skipped.append((slug, "archiviert (read-only, PRs dort sind ohnehin fest)"))
-        else:
-            targets.append((slug, r["id"]))
-    return len(repos), targets, skipped
+    total, targets, omissions = coverage.read_manifest(
+        path,
+        field="repository",
+        section=coverage.REPOSITORIES,
+        value_of=coverage.github_slug(path),
+        omit_when=lambda raw: ARCHIVED if raw.get("archived") else None,
+    )
+    return (
+        total,
+        [(e.value, e.id) for e in targets],
+        [(o.name, o.reason) for o in omissions],
+    )
 
 
 def parse_allow_skip(values: list[str]) -> dict[str, str]:
     """``repo:grund`` — the reason is mandatory.
 
     A skip without a reason is not a skip, it is a gap with an alibi.
+    Shared: ``scripts/coverage.py``.
     """
-    out: dict[str, str] = {}
-    for v in values:
-        name, sep, reason = v.partition(":")
-        if not sep or not reason.strip():
-            raise SystemExit(
-                f"--allow-skip {v!r}: erwartet 'repo:grund'. Ohne Grund ist ein "
-                "uebersprungenes Repo von einem vergessenen nicht zu unterscheiden"
-            )
-        out[name.strip()] = reason.strip()
-    return out
+    return coverage.parse_allow_skip(values, noun="repo")
 
 
 # --- thin GitHub REST layer (urllib) ----------------------------------------
@@ -295,10 +262,28 @@ def main(argv: list[str] | None = None) -> int:
     if not token:
         raise SystemExit(f"{args.token_env} ist nicht gesetzt")
 
-    total, targets, archived = read_manifest(args.manifest)
+    total, entries, omissions = coverage.read_manifest(
+        args.manifest,
+        field="repository",
+        section=coverage.REPOSITORIES,
+        value_of=coverage.github_slug(args.manifest),
+        omit_when=lambda raw: ARCHIVED if raw.get("archived") else None,
+    )
     allowed = parse_allow_skip(args.allow_skip)
-    skipped = archived + [(r, g) for r, g in allowed.items()]
-    swept = [(slug, sid) for slug, sid in targets if slug not in allowed]
+    # Ein `--allow-skip` auf einen Namen, den das Manifest nicht kennt, bewirkt
+    # nichts und sieht wie eine Entscheidung aus. Der gefaehrliche Fall ist der
+    # umbenannte Eintrag: der Operator glaubt, ein Ziel auszulassen, waehrend
+    # ein anderes unbemerkt dazukam.
+    stray = coverage.unknown_skips(allowed, entries, omissions)
+    if stray:
+        raise SystemExit(
+            "--allow-skip nennt Namen, die im Manifest nicht vorkommen: "
+            + ", ".join(stray)
+            + ". Ein Skip, der nichts ueberspringt, ist keine Entscheidung"
+        )
+    kept, by_flag = coverage.split_allowed(entries, allowed)
+    skipped = [(o.name, o.reason) for o in (*omissions, *by_flag)]
+    swept = [(e.value, e.id) for e in kept]
 
     now = dt.datetime.now(dt.UTC)
     findings: list[Finding] = []
@@ -319,11 +304,16 @@ def main(argv: list[str] | None = None) -> int:
     # dieser Block gebaut ist; einmal ausgeliefert habe ich sie schon.
     unreached = {r for r, _ in errors}
     measured = [slug for slug, _ in swept if slug not in unreached]
-    covered = len(measured) + len(skipped)
     # Ein Repo ohne Ergebnis waere ein stiller Ausfall — genau die Sorte, die
     # aussieht wie ein sauberer Lauf. Fehler zaehlen gegen dieselbe Soll-Zahl,
     # sind aber KEINE Deckung: ein HTTP 404 heisst nicht "dort ist nichts".
-    coverage_ok = covered + len(errors) == total and not errors
+    cov = coverage.build(
+        total,
+        len(measured),
+        [coverage.Omission(r, g) for r, g in skipped],
+        sorted(unreached),
+    )
+    coverage_ok = cov.complete
 
     if args.format == "json":
         json.dump(
@@ -331,11 +321,12 @@ def main(argv: list[str] | None = None) -> int:
                 "schema": 1,
                 "probe": "pr-health",
                 "coverage": {
-                    "expected": total,
+                    **cov.as_dict(),
+                    # `measured`/`ok` bleiben als Alias erhalten: sie stehen in
+                    # den Berichten, die dieser Lauf schon geschrieben hat.
                     "measured": len(measured),
-                    "skipped": [{"repo": r, "reason": g} for r, g in skipped],
-                    "errors": [{"repo": r, "detail": d} for r, d in errors],
                     "ok": coverage_ok,
+                    "errors": [{"repo": r, "detail": d} for r, d in errors],
                 },
                 "findings": [f.__dict__ for f in findings],
             },
@@ -355,14 +346,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         for r, g in skipped:
             print(f"  uebersprungen: {r} ({g})")
+        print(cov.covered())
 
     if not coverage_ok:
         print(
-            f"Deckung unvollstaendig: {covered} von {total} — "
+            f"Deckung unvollstaendig: {cov.covered()} — "
             "'nicht hingesehen' und 'nichts gefunden' sind verschiedene Aussagen",
             file=sys.stderr,
         )
-        return 1
+        return coverage.EXIT_INCOMPLETE
     return 2 if findings else 0
 
 

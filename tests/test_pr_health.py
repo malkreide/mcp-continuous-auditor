@@ -336,8 +336,9 @@ class ExitCodeTest(unittest.TestCase):
         """
         rc, out = self._run(None, self._REPO)
         self.assertEqual(rc, 1)
-        self.assertIn("Deckung unvollstaendig: 0 von 1", out)
-        self.assertNotIn("2 von 1", out)
+        self.assertIn("Deckung unvollstaendig", out)
+        self.assertIn("0/1 abgedeckt", out)
+        self.assertNotIn("2/1", out)
 
 
 class AllowSkipTest(unittest.TestCase):

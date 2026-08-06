@@ -45,6 +45,9 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 - **Spec-Probe** — welche MCP-Protokollversion *spricht* der Server tatsächlich? Das Boot-Gate trug ein einziges handgepflegtes Literal (`"2025-06-18"`), schickte es in jedem Request und verwarf die Antwort des Servers — kein Report hier konnte die Spec eines Ziels benennen.
   `scripts/spec_probe.py` vergleicht Quelltext, *installiertes* SDK, `mcp_spec_version` aus `portfolio.json` und den Draht und meldet `SPEC_DRIFT`, `LEGACY_TRANSPORT` mit Frist-Countdown oder `UNVERIFIED` — nie «nicht messbar» als «in sync».
   `SPEC_UNDECLARED` ist eine Notiz und kein Befund, denn unter den aktuellen SDKs gehört die Version dem SDK — [docs/probes/spec.md](docs/probes/spec.md).
+- **Deckung gegen das Manifest** — ein Portfolio-Lauf meldete «33 von 33 ok», während `portfolio.json` 43 aktive Server listete. Der Satz war wahr und die Menge falsch: Zähler und Nenner kamen aus derselben Liste, also konnte nichts ihm widersprechen.
+  `scripts/coverage.py` ist der einzige Leser des Deckungs-Manifests des Portfolios, und `scripts/coverage_run.py` führt jede Ein-Ziel-Sonde über jeden Eintrag darin.
+  Ein Ziel ohne Ergebnis zählt gegen den Nenner und ist **keine** Deckung, deshalb liefert unvollständige Deckung Exit `1` und steht vor einem Befund — [docs/probes/README.md](docs/probes/README.md).
 - **Jeder Report benennt seinen Commit** — ein Identity-Befund war im Moment der Messung korrekt und zehn Minuten später falsch, weil `main` weitergezogen war und der Report keinen SHA nannte.
   `scripts/probe_provenance.py` erfasst `HEAD` plus einen Digest des unversionierten Standes zu Beginn jeder Probe und liest beides am Ende erneut.
   Hat sich der Baum bewegt, lautet der Status `MOVED_DURING_RUN` und der Exit-Code `4` — kein Ergebnis, denn der Lauf hat nicht einen Baum gelesen — [docs/probes/provenance.md](docs/probes/provenance.md).
@@ -178,13 +181,21 @@ scripts/          Audit-Harness, Live-Probe, nightly-audit-Cron-Kern, Budget-Gua
                   zugesicherten Eigenschaften statt des Texts
                   probe_provenance.py = der HEAD-SHA, den jeder Report trägt,
                   und der Status MOVED_DURING_RUN, wenn der Baum sich bewegt hat
+                  coverage.py = der EINE Leser des Deckungs-Manifests und der
+                  Nenner, gegen den jeder Portfolio-Lauf gehalten wird. Ein Lauf
+                  meldete «33 von 33 ok» bei 43 aktiven Servern; Zähler und
+                  Nenner kamen aus derselben Liste
+                  coverage_run.py = dieselbe Regel für die Ein-Ziel-Sonden: eine
+                  Sonde über jeden Manifest-Eintrag, am Ende `n/44 abgedeckt`.
+                  Ein Ziel ohne Ergebnis zählt gegen den Nenner und ist KEINE
+                  Deckung — Exit 1 steht vor einem Befund
 targets.example.yaml  Formatreferenz für die Ziel-Liste der Fächerung; die echte
                   targets.yaml ist gitignored (Inventar, kein Quellcode)
 adoption.example.toml  Formatreferenz für die Zuordnung der Reference-Drift-
                   Probe; die echte liegt im Skill-Repo, neben den Vorlagen
 relay/            optionaler Cloudflare-Worker für Telegram-Push-Intake in Echtzeit
 tensorzero/       Phase 5: LLM-Gateway-Config + Stack (Cost-Caps, A/B, Audit-Trail)
-tests/            stdlib-Unit-Tests (938 in 37 Dateien) — laufen via
+tests/            stdlib-Unit-Tests (1000 in 40 Dateien) — laufen via
                   .github/workflows/tests.yml
 .github/          tests.yml = die eigene Suite des Auditors;
                   *.yml.template = CI für das Ziel-Repo
