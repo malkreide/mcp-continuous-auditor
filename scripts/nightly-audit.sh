@@ -49,11 +49,40 @@
 # never inlined, nothing outside the project workspace is written, and the
 # target is only ever read. Outputs land in the gitignored .audit/ work dir.
 #
+# TWO MODES, AND WHY THE CONSTANT IS GONE
+#   Until 2026-08-06 this script audited ONE target and the name of that target
+#   was a default in line 168: `TARGET_REPO="${TARGET_REPO:-malkreide/zurich-
+#   opendata-mcp}"`. The nightly run therefore reported on one server every
+#   night, out of a portfolio of 44, and nothing in the output said so. That is
+#   the same defect as the 2026-07-31 sweep that reported "33 of 33 ok" against
+#   a portfolio of 43: a true sentence about the wrong set. A hand-maintained
+#   target drifts exactly the way a hand-maintained version number drifts, and
+#   for the same reason — nothing downstream disagrees with it.
+#
+#   SWEEP MODE (AUDIT_MANIFEST set): the target list comes from
+#   `coverage_manifest.py --format json` in the portfolio repo, read and
+#   validated by scripts/coverage.py — the same module every probe uses. This
+#   script then re-execs ITSELF once per target, each in its own AUDIT_DIR, and
+#   ends with `n/44 abgedeckt`. A target whose run HARD-FAILS (exit 1) is not
+#   coverage: the gates did not run there, and "did not look" is not "nothing
+#   found".
+#
+#   SINGLE MODE (TARGET_REPO set): exactly what this script always did. It is
+#   what a sweep child runs, and what an operator runs for one server.
+#
+#   Neither set is an error, not a default. A run that picks its own target is
+#   the thing being removed.
+#
 # Usage:
+#   AUDIT_MANIFEST=manifest.json scripts/nightly-audit.sh [REF]   # whole portfolio
 #   TARGET_REPO=malkreide/zurich-opendata-mcp scripts/nightly-audit.sh [REF]
 #
 # Env:
-#   TARGET_REPO         owner/name of the target (default: malkreide/zurich-opendata-mcp)
+#   AUDIT_MANIFEST      path to coverage_manifest.py --format json. Set → sweep.
+#   AUDIT_ALLOW_SKIP    newline-separated `id:grund` entries excused from the
+#                       sweep. The reason is MANDATORY — a skip without one is
+#                       not a skip, it is a gap with an alibi.
+#   TARGET_REPO         owner/name of the target. No default: see above.
 #   TARGET_REF          git ref to pin (default: main)
 #   AUDIT_DIR           work dir, gitignored (default: <repo>/.audit)
 #   MCP_SERVER_IMPORT   "package.module:attr" — where the target's server
@@ -165,9 +194,121 @@ set -uo pipefail   # NOT -e: we must observe every gate's exit code, not abort o
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/.." && pwd)"
 
-TARGET_REPO="${TARGET_REPO:-malkreide/zurich-opendata-mcp}"
 TARGET_REF="${TARGET_REF:-${1:-main}}"
 AUDIT_DIR="${AUDIT_DIR:-${REPO_ROOT}/.audit}"
+AUDIT_MANIFEST="${AUDIT_MANIFEST:-}"
+AUDIT_ALLOW_SKIP="${AUDIT_ALLOW_SKIP:-}"
+
+# --- 0) the sweep: one child run per manifest entry ---------------------------
+# Runs BEFORE anything else, because in sweep mode this process does no auditing
+# of its own — it iterates and counts. Every child is this same script with
+# TARGET_REPO set, so single mode stays the only code path that runs a gate.
+sweep_over_manifest() {
+  local manifest="$1" ref="$2"
+  local allow=() line kind a b
+  local -a target_ids=() target_slugs=() skip_names=() skip_reasons=()
+  local total=0 measured=0 rc findings=0
+  local -a unmeasured=()
+
+  if [ -n "${AUDIT_ALLOW_SKIP}" ]; then
+    while IFS= read -r line; do
+      [ -n "${line}" ] && allow+=(--allow-skip "${line}")
+    done <<< "${AUDIT_ALLOW_SKIP}"
+  fi
+
+  # A whole child run needs its own outer bound for the same reason every gate
+  # has one: over 44 targets, ONE wedged child takes the night, and a night that
+  # produced nothing is indistinguishable from a night that found nothing. The
+  # child bounds its own gates; this is the backstop above them, so keep it
+  # comfortably larger than their sum.
+  local tmo
+  tmo="$(command -v timeout || command -v gtimeout || true)"
+  if [ -z "${tmo}" ]; then
+    echo "FATAL: timeout(1) nicht gefunden — kein unbegrenzter Sweep" >&2
+    return 1
+  fi
+  local per_target="${SWEEP_TIMEOUT_TARGET:-7200}"
+
+  # The list, and the DENOMINATOR, come from scripts/coverage.py — validated
+  # there, not parsed here. A shell that grep'd the manifest itself would be a
+  # twelfth copy of the rule and the only one without a test.
+  local listing
+  if ! listing="$(python3 "${HERE}/coverage.py" --manifest "${manifest}" \
+        --section repositories --format lines ${allow[@]+"${allow[@]}"})"; then
+    echo "FATAL: ${manifest} konnte nicht gelesen werden — kein Lauf" >&2
+    return 1
+  fi
+
+  while IFS=$'\t' read -r kind a b; do
+    case "${kind}" in
+      TOTAL)  total="${a}" ;;
+      TARGET) target_ids+=("${a}"); target_slugs+=("${b}") ;;
+      SKIP)   skip_names+=("${a}"); skip_reasons+=("${b}") ;;
+    esac
+  done <<< "${listing}"
+
+  echo "==> Sweep ueber ${manifest}: ${total} Eintraege, ${#target_slugs[@]} zu pruefen"
+
+  local i
+  for i in "${!target_slugs[@]}"; do
+    local slug="${target_slugs[$i]}" id="${target_ids[$i]}"
+    local child_dir="${AUDIT_DIR}/targets/${slug##*/}"
+    echo
+    echo "----- ${id} (${slug}) -----"
+    NIGHTLY_SWEEP_CHILD=1 TARGET_REPO="${slug}" AUDIT_DIR="${child_dir}" \
+      "${tmo}" --kill-after=60s "${per_target}s" bash "${BASH_SOURCE[0]}" "${ref}"
+    rc=$?
+    case "${rc}" in
+      0) measured=$((measured + 1)) ;;
+      2) measured=$((measured + 1)); findings=$((findings + 1)) ;;
+      # 1 is this script's HARD failure: a gate could not RUN. That is not a
+      # clean target and it is not a finding either — it is an unmeasured one,
+      # and it must cost the sweep its completeness rather than disappear.
+      *) unmeasured+=("${id} (exit ${rc})") ;;
+    esac
+  done
+
+  local covered=$((measured + ${#skip_names[@]}))
+  echo
+  echo "===== SWEEP  ${manifest} ====="
+  for i in "${!skip_names[@]}"; do
+    echo "  uebersprungen: ${skip_names[$i]} (${skip_reasons[$i]})"
+  done
+  for line in ${unmeasured[@]+"${unmeasured[@]}"}; do
+    echo "  OHNE ERGEBNIS: ${line}"
+  done
+  echo "  ${measured}/${total} gemessen, ${#skip_names[@]} uebersprungen, ${#unmeasured[@]} ohne Ergebnis"
+  if [ "${covered}" -eq "${total}" ] && [ "${#unmeasured[@]}" -eq 0 ] && [ "${total}" -gt 0 ]; then
+    echo "  ${covered}/${total} abgedeckt — vollstaendig"
+  else
+    echo "  ${covered}/${total} abgedeckt — UNVOLLSTAENDIG"
+    echo "  'nicht hingesehen' und 'nichts gefunden' sind verschiedene Aussagen" >&2
+    return 1
+  fi
+  [ "${findings}" -gt 0 ] && return 2
+  return 0
+}
+
+if [ -n "${AUDIT_MANIFEST}" ] && [ -z "${NIGHTLY_SWEEP_CHILD:-}" ]; then
+  if [ -n "${TARGET_REPO:-}" ]; then
+    echo "FATAL: AUDIT_MANIFEST und TARGET_REPO schliessen sich aus — entweder das" >&2
+    echo "       ganze Portfolio oder ein benanntes Ziel, nicht beides" >&2
+    exit 1
+  fi
+  mkdir -p "${AUDIT_DIR}"
+  sweep_over_manifest "${AUDIT_MANIFEST}" "${TARGET_REF}"
+  exit $?
+fi
+
+# Single mode. No default: a run that picks its own target is what was removed.
+if [ -z "${TARGET_REPO:-}" ]; then
+  echo "FATAL: weder TARGET_REPO noch AUDIT_MANIFEST gesetzt." >&2
+  echo "       Bis 2026-08-06 stand hier eine Konstante, und der naechtliche Lauf" >&2
+  echo "       berichtete ueber einen Server von 44, ohne das zu sagen." >&2
+  echo "       AUDIT_MANIFEST=<coverage_manifest.json>  fuer das ganze Portfolio" >&2
+  echo "       TARGET_REPO=<owner/name>                 fuer ein benanntes Ziel" >&2
+  exit 1
+fi
 MCP_SERVER_IMPORT="${MCP_SERVER_IMPORT:-zurich_opendata_mcp.server:mcp}"
 # PROMPTFOO_PROFILE selects the profile evaluated this run; it is resolved to a
 # concrete config path after the hard_fail helper is defined (below). An explicit

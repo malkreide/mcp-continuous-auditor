@@ -45,6 +45,9 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 - **Spec probe** — which MCP protocol version does the server actually *speak*? The boot gate carried one hand-maintained literal (`"2025-06-18"`), sent it in every request, and threw the server's answer away — so no report here could name a target's spec.
   `scripts/spec_probe.py` compares the source, the *installed* SDK, `portfolio.json`'s `mcp_spec_version` and the live wire, and reports `SPEC_DRIFT`, `LEGACY_TRANSPORT` with a deadline countdown, or `UNVERIFIED` — never «could not measure» as «in sync».
   `SPEC_UNDECLARED` is a note and not a finding, because under the current SDKs the version belongs to the SDK — [docs/probes/spec.md](docs/probes/spec.md).
+- **Coverage against the manifest** — a portfolio sweep reported "33 of 33 ok" while `portfolio.json` listed 43 active servers. The sentence was true and the set was wrong: the numerator came out of the same list as the denominator, so nothing downstream could disagree with it.
+  `scripts/coverage.py` is the single reader of the portfolio's coverage manifest, and `scripts/coverage_run.py` runs any single-target probe over every entry in it.
+  A target with no result counts against the total and is **not** coverage, so incomplete coverage exits `1` and outranks a finding — [docs/probes/README.md](docs/probes/README.md).
 - **Every report names its commit** — an identity finding was correct when measured and false ten minutes later, because `main` moved and the report named no SHA.
   `scripts/probe_provenance.py` captures `HEAD` plus a digest of the uncommitted state at the start of every probe and re-reads both at the end.
   If the tree moved, the status is `MOVED_DURING_RUN` and exit `4` — no verdict, because the run did not read one tree — [docs/probes/provenance.md](docs/probes/provenance.md).
@@ -171,13 +174,21 @@ scripts/          audit harness, live-probe, nightly-audit core, budget guard,
                   guarantees rather than its text
                   probe_provenance.py = the HEAD SHA every report carries, and
                   the MOVED_DURING_RUN status when the tree changed underneath
+                  coverage.py = the ONE reader of the portfolio's coverage
+                  manifest, and the denominator every sweep is held against. A
+                  sweep once reported "33 of 33 ok" against 43 active servers;
+                  the numerator came out of the same list as the denominator
+                  coverage_run.py = that rule applied to the single-target
+                  probes: one probe over every manifest entry, ending in
+                  `n/44 abgedeckt`. A target with no result counts against the
+                  total and is NOT coverage — exit 1 outranks a finding
 targets.example.yaml  format reference for the fan-out target list; the real
                   targets.yaml is gitignored (inventory, not source)
 adoption.example.toml  format reference for the reference-drift mapping; the
                   real one lives in the skill repo, beside its templates
 relay/            optional Cloudflare Worker for real-time Telegram push intake
 tensorzero/       Phase 5: LLM-gateway config + stack (cost-caps, A/B, audit-trail)
-tests/            stdlib unit tests (938 in 37 files) — run by .github/workflows/tests.yml
+tests/            stdlib unit tests (1000 in 40 files) — run by .github/workflows/tests.yml
 .github/          tests.yml = the auditor's own suite; *.yml.template = CI for the target repo
 docs/plans/       the v2 build plan
 docs/cron/        the daily nightly-audit cron (flow, model hard-fail, install)

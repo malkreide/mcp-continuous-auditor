@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `scripts/coverage.py`: der Nenner kommt aus dem Manifest, nicht aus dem Lauf
+
+Am 2026-07-31 meldete ein Portfolio-Lauf «33 von 33 ok». Der Satz war wahr und
+die Menge falsch: `portfolio.json` listete 43 aktive Server, zehn davon waren nie
+im Lauf. Nichts widersprach der Zahl, weil Zähler und Nenner aus derselben Liste
+kamen.
+
+`coverage_manifest.py --format json` im Portfolio-Repo ist die Antwort darauf,
+und bis jetzt las genau eine Sonde es. Inzwischen waren es zwei — mit zwei
+eigenen Kopien derselben Regel, von denen eine den Nenner schon einmal falsch
+hatte (`2 geprüft + 1 übersprungen` gegen erwartete `2`, also Exit 1 bei lauter
+grünen Ergebnissen).
+
+Das Lesen, die Validierung, die Auslassungs-Gründe und der Deckungs-Exit-Code
+stehen jetzt einmal in `scripts/coverage.py`. `published_probe.py` und
+`pr_health.py` rechnen damit; ihre `read_manifest`/`parse_allow_skip` sind dünne
+Sichten darauf geblieben. Validiert wird fail-closed, weil jede der vier
+Fehlerarten sonst in demselben falschen Grün endet: fehlender Abschnitt, leere
+Liste, fehlendes Feld (fehlend ≠ `null`), Wert weder Name noch `null`. Neu ist
+ausserdem, dass ein `--allow-skip` auf einen Namen, den das Manifest nicht kennt,
+abgelehnt statt ignoriert wird — ein Skip, der nichts überspringt, sieht wie eine
+Entscheidung aus.
+
+### Added — `scripts/coverage_run.py`: eine Sonde über jeden Manifest-Eintrag
+
+Die meisten Sonden messen EIN Ziel (`--target`, `--dist`, `BOOT_TARGET_ROOT`).
+Statt elf Schleifen mit elf Kopien derselben Rechnung iteriert ein Treiber. Er
+übersetzt die drei Arten, ein Ziel zu benennen, einmal, kennt den Exit-Vertrag
+jeder Sonde (`identity` meldet seinen Befund mit `1`, `2` heisst dort «kein
+pyproject.toml») und bucht **jeden Code, den kein Vertrag kennt — 124, 137 —
+als nicht gemessen statt als Befund**. Ein Ziel ohne Checkout wird namentlich
+ausgewiesen und zählt gegen den Nenner, ist aber keine Deckung. Unvollständige
+Deckung liefert `1` und steht vor einem Befund (`2`). Die Begründung für Treiber
+statt Schleifen steht in `docs/probes/README.md`.
+
+### Changed — `nightly-audit.sh` iteriert über das Manifest statt über eine Konstante
+
+Bis jetzt stand in Zeile 168 `TARGET_REPO="${TARGET_REPO:-malkreide/zurich-opendata-mcp}"`.
+Der nächtliche Lauf berichtete damit über einen Server von 44, und nichts in
+seiner Ausgabe sagte das — dieselbe Klasse wie der Lauf oben. Die Vorgabe ist
+weg. Das Skript verlangt eine von zwei ausdrücklichen Antworten: `AUDIT_MANIFEST`
+(Sweep über das Portfolio) oder `TARGET_REPO` (ein benanntes Ziel); beides
+zusammen wird abgelehnt, keines von beiden auch. Im Sweep liest es die Zielliste
+über `scripts/coverage.py` — die Shell zerlegt das Manifest nicht selbst — und
+ruft sich je Ziel selbst auf, mit eigenem `AUDIT_DIR` und einer äusseren
+Zeitschranke (`SWEEP_TIMEOUT_TARGET`, 7200s) über den Gate-Schranken. Ein Kind,
+das hart fehlschlägt, ist weder sauber noch ein Befund: es steht unter
+`OHNE ERGEBNIS` und kostet den Sweep seine Vollständigkeit.
+
+### Fixed — die eigene Blindheit der Published-Probe wurde als Befund gebucht
+
+`_run` meldet einen gescheiterten Unterprozess als `{"error": …}`, und
+`.get("scripts") or []` machte daraus eine leere Liste. Ein fehlgeschlagenes
+Auflisten der Console-Scripts las sich dadurch als «die Distribution deklariert
+kein Console-Script» — `no_entrypoint`, also `smoke_failed`, also ein Fund gegen
+das Ziel. Die schlimmere Richtung von «nicht hingesehen = nichts da».
+
+Jetzt drei Sätze statt einem: ein gescheitertes Auflisten ist `error` (nicht
+gemessen) mit dem Fehlertext als Beleg; eine leere, aber gelaufene Auflistung
+bleibt ein Befund und nennt ihre Beobachtung; und «deklariert, aber nicht
+installiert» ist ein eigener Befund mit den deklarierten Namen. Alle Zweige der
+übrigen Sonden, die `unverified`/`no_*`/`unconfirmed` setzen, wurden dabei
+durchgegangen — sie tragen ihre Beobachtung bereits.
+
 ### Fixed — a declared property was only checked when the checkouts were there
 
 `reference_drift_probe.py` skipped the whole declared-property comparison when no

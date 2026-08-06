@@ -177,6 +177,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # implementation of that would be a second place for it to be subtly wrong.
 import contextlib
 
+import coverage  # noqa: E402
 import probe_provenance  # noqa: E402
 import yank_probe as yp
 
@@ -1023,21 +1024,58 @@ def smoke_start(
     own timeout on every healthy target.
     """
     got = _run(py, CONSOLE_SCRIPTS, dist, timeout=120)
+    # The listing itself can fail — a broken `.dist-info`, a metadata reader that
+    # raises, an interpreter that will not start. `_run` reports that as
+    # `{"error": …}`, and `.get("scripts") or []` used to flatten it into an
+    # empty list, which then read as "this distribution declares no console
+    # script". That is the failure this whole file is about, in its worst
+    # direction: the probe's own blindness became a FINDING against the target
+    # (`no_entrypoint` → `smoke_failed`). Not looking is not a measurement.
+    if got.get("error"):
+        return Smoke(
+            status="error",
+            detail=(
+                "the installed distribution's console scripts could not be listed, "
+                "so whether it has an entrypoint was NOT established — this is a "
+                "gap in the probe, not a statement about the package"
+            ),
+            evidence=str(got["error"])[:400],
+        )
+
     scripts = got.get("scripts") or []
     bindir = env / ("Scripts" if os.name == "nt" else "bin")
     entry = next((bindir / n for n in scripts if (bindir / n).exists()), None)
-    if entry is None:
+    if entry is None and not scripts:
         return Smoke(
             status="no_entrypoint",
             detail=(
                 "the installed distribution declares no console script — there "
                 "is nothing for a user to start, whatever the source tree does"
             ),
+            # The observation, not just the verdict: the listing ran and came
+            # back empty. Without it this line is indistinguishable from the
+            # branch above, which is why they shared one for so long.
+            evidence="entry_points(group='console_scripts') = []",
+        )
+    if entry is None:
+        # Declared and not installed. A different defect from "declares none",
+        # and it used to render as that one — so the reader was told the
+        # package ships no entrypoint while `pyproject.toml` names two.
+        return Smoke(
+            status="no_entrypoint",
+            detail=(
+                f"the distribution declares {len(scripts)} console script(s) but "
+                f"none of them exists in {bindir.name}/ — the install did not "
+                "place what the metadata promises"
+            ),
+            evidence=", ".join(scripts[:6]),
         )
 
     text, exit_code, error = watch([str(entry)], env, seconds)
     if error:
-        return Smoke(status="error", entrypoint=entry.name, detail=error)
+        return Smoke(
+            status="error", entrypoint=entry.name, detail=error, evidence=error[:400]
+        )
     return classify_smoke(text, exit_code, entry.name, seconds, event)
 
 
@@ -1297,7 +1335,9 @@ def _as_dict(r: Result) -> dict[str, Any]:
     }
 
 
-def read_manifest(path: Path) -> tuple[int, list[str], list[tuple[str, str]]]:
+def read_manifest(
+    path: Path,
+) -> tuple[int, list[tuple[str, str | None]], list[tuple[str, str]]]:
     """Split a coverage manifest into a total, targets, and justified omissions.
 
     Produced by ``coverage_manifest.py --format json`` in the portfolio repo. An
@@ -1306,57 +1346,27 @@ def read_manifest(path: Path) -> tuple[int, list[str], list[tuple[str, str]]]:
     *because the manifest says so*, not because a list somewhere happened not to
     mention it. That difference is the whole point.
 
-    The total counts EVERY manifest entry, probeable or not. Counting only the
-    probeable ones would make the denominator depend on the same judgement the
-    coverage check exists to audit.
+    The reading, the validation and the denominator all live in
+    ``scripts/coverage.py`` now; this is the ``pypi_dist``-shaped view of it.
+    They used to live here AND, in a second slightly different copy, in
+    ``pr_health.py`` — one rule, two implementations, two chances to get the
+    denominator wrong. See that module for why each check exists.
 
-    The manifest is validated rather than read optimistically, because the two
-    ways it can be wrong both end in a false green:
-
-    * an **empty** ``servers`` list would report ``0/0 geprueft`` and exit 0 —
-      indistinguishable from an audited portfolio;
-    * a **missing** ``pypi_dist`` key would be read like an explicit ``null``,
-      so if the producer ever renames the field, every entry silently becomes a
-      justified omission and nothing is measured at all.
-
-    Both would recreate exactly the failure this whole mechanism exists to
-    prevent, one layer further out. An absent key and a deliberate ``null`` are
-    different claims and must not share a code path.
+    ``start_event`` stays this probe's business: it is optional, and a missing
+    one means "not recorded", not "has none". The caller then falls back to its
+    default — and the finding says that it did.
     """
-    data = json.loads(path.read_text(encoding="utf-8"))
-    servers = data.get("servers")
-    if not isinstance(servers, list):
-        raise SystemExit(f"{path}: kein 'servers'-Feld mit einer Liste")
-    if not servers:
-        raise SystemExit(
-            f"{path}: leere Zielliste. Ein Lauf ohne Ziele meldet sonst '0/0 geprueft' "
-            "und Exit 0 — nicht unterscheidbar von einem geprueften Portfolio"
-        )
-
-    targets, unpublished = [], []
-    for i, s in enumerate(servers):
-        if not isinstance(s, dict) or "id" not in s:
-            raise SystemExit(f"{path}: Eintrag {i} hat kein 'id'-Feld")
-        if "pypi_dist" not in s:
-            raise SystemExit(
-                f"{path}: Eintrag {s['id']} hat kein Feld 'pypi_dist'. Fehlend und "
-                "null sind verschiedene Aussagen: null heisst 'kein Paket', "
-                "fehlend heisst 'das Manifest passt nicht zu diesem Werkzeug'"
-            )
-        dist = s["pypi_dist"]
-        if dist is None:
-            unpublished.append((s["id"], "kein Paket auf dem Index (laut Manifest)"))
-        elif isinstance(dist, str) and dist.strip():
-            # `start_event` ist optional: fehlt es oder ist es null, heisst das
-            # "nicht erhoben", nicht "hat keins". Der Aufrufer faellt dann auf
-            # seine Vorgabe zurueck — und der Befund sagt, dass er das tat.
-            targets.append((dist, s.get("start_event")))
-        else:
-            raise SystemExit(
-                f"{path}: Eintrag {s['id']}: 'pypi_dist' ist weder Name noch null"
-            )
-
-    return len(servers), targets, unpublished
+    total, targets, omissions = coverage.read_manifest(
+        path,
+        field="pypi_dist",
+        section=coverage.SERVERS,
+        null_reason="kein Paket auf dem Index",
+    )
+    return (
+        total,
+        [(e.value, e.get("start_event")) for e in targets],
+        [(o.name, o.reason) for o in omissions],
+    )
 
 
 def parse_allow_skip(items: list[str]) -> dict[str, str]:
@@ -1364,15 +1374,9 @@ def parse_allow_skip(items: list[str]) -> dict[str, str]:
 
     Skipping is allowed; skipping silently is not. Requiring the reason on the
     command line puts the omission into the run's own output instead of leaving
-    it with whoever typed the command.
+    it with whoever typed the command. Shared: ``scripts/coverage.py``.
     """
-    out: dict[str, str] = {}
-    for item in items:
-        name, sep, reason = item.partition(":")
-        if not sep or not reason.strip():
-            raise SystemExit(f"--allow-skip braucht 'name:grund', bekommen: {item!r}")
-        out[name.strip()] = reason.strip()
-    return out
+    return coverage.parse_allow_skip(items)
 
 
 def main() -> int:
@@ -1500,9 +1504,13 @@ def main() -> int:
     # aussieht wie ein sauberer Lauf. Beides zaehlt gegen dieselbe Soll-Zahl.
     prov.recheck()
     missing = [d for d, _ in targets if d not in {r.dist for r in results}]
-    coverage_ok = not args.manifest or (
-        len(results) + len(skipped) == expected and not missing
+    cov = coverage.build(
+        expected,
+        len(results),
+        [coverage.Omission(n, why) for n, why in skipped],
+        missing,
     )
+    coverage_ok = not args.manifest or cov.complete
 
     if args.format == "json":
         # Die Ausgabe ist immer ein Objekt: die blanke Liste hatte keinen Platz
@@ -1516,27 +1524,15 @@ def main() -> int:
             "results": payload,
         }
         if args.manifest:
-            out["coverage"] = {
-                "expected": expected,
-                "probed": len(results),
-                "skipped": [{"name": n, "reason": why} for n, why in skipped],
-                "missing": missing,
-                "complete": coverage_ok,
-            }
+            out["coverage"] = cov.as_dict()
         print(json.dumps(out, indent=2, ensure_ascii=False))
     else:
         print(prov.render())
         for r in results:
             print(render(r))
         if args.manifest:
-            line = f"{len(results)}/{expected} geprueft"
-            if skipped:
-                line += " — uebersprungen: " + ", ".join(
-                    f"{n} ({why})" for n, why in skipped
-                )
-            if missing:
-                line += " — OHNE ERGEBNIS: " + ", ".join(missing)
-            print(line)
+            print(cov.render())
+            print(cov.covered())
 
     if not coverage_ok:
         return 1
