@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — `_sleep = asyncio.sleep` is an alias, and the probe could not see it
+
+`reference_drift_probe.py` resolved `import x as y` and `from x import y` but not
+a module-level assignment of a dotted name to a name. Four servers in the
+portfolio bind the backoff sleep exactly that way, so a test can patch the module
+attribute without reaching every import in the process. Read literally,
+`await _sleep(delay)` looks like a symbol that does not sleep — and the probe
+reported four correct adoptions as lagging.
+
+Found by running the probe against the portfolio for the first time, not by
+reading it. That is the noise class the whole design exists to avoid: a probe
+that cannot tell a renamed adoption from a regression produces a red run
+everybody learns to ignore, and a naming convention is the most ordinary rename
+there is.
+
+Only module level, and only a bare dotted name on the right: a rebinding inside a
+function is control flow, and `x = mod.factory()` binds a value rather than
+another name for one. Both are tested. An assignment resolves through what is
+already known, so `import asyncio as aio` followed by `_sleep = aio.sleep` still
+lands on `asyncio.sleep`.
+
+One indirection is still invisible and is left that way: two servers wrap the
+sleep in a one-line helper of their own. Seeing through that is inter-procedural
+analysis, which this probe does not do — so the property was dropped from the
+manifest rather than shipped with two findings nobody can fix.
+
+`coverage.md` now records a full run instead of a half one: 19 of 19 declared
+sites read, five `REFERENCE_STALE`, no `REFERENCE_UNADOPTED`. Two of the five are
+the case this probe was built for — a wall-clock budget in 7 of 18 servers and a
+typed upstream error in 15 of 18, neither of which came back to the template. The
+other three (`Retry-After`, jitter, cap-after-jitter) are in **no** server at all,
+which the case history did not predict and the report states plainly rather than
+implying the servers are ahead. The unanimity layer had 18 readable sites and
+still reported nothing: 15 of 18 is not unanimity, and it remains the one part
+with no evidence outside the tests.
+
+
 ### Added — `scripts/coverage.py`: der Nenner kommt aus dem Manifest, nicht aus dem Lauf
 
 Am 2026-07-31 meldete ein Portfolio-Lauf «33 von 33 ok». Der Satz war wahr und

@@ -195,7 +195,7 @@ adoption.example.toml  Formatreferenz für die Zuordnung der Reference-Drift-
                   Probe; die echte liegt im Skill-Repo, neben den Vorlagen
 relay/            optionaler Cloudflare-Worker für Telegram-Push-Intake in Echtzeit
 tensorzero/       Phase 5: LLM-Gateway-Config + Stack (Cost-Caps, A/B, Audit-Trail)
-tests/            stdlib-Unit-Tests (1000 in 40 Dateien) — laufen via
+tests/            stdlib-Unit-Tests (1004 in 40 Dateien) — laufen via
                   .github/workflows/tests.yml
 .github/          tests.yml = die eigene Suite des Auditors;
                   *.yml.template = CI für das Ziel-Repo

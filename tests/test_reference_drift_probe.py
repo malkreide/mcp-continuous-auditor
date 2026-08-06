@@ -611,6 +611,39 @@ class UnitTest(unittest.TestCase):
         )
         self.assertIn("random.uniform", [name for name, _ in unit.calls()])
 
+    def test_module_level_assignment_is_an_alias(self):
+        """`_sleep = asyncio.sleep` so a test can patch the module attribute.
+
+        Four servers in the portfolio bind the backoff sleep exactly this way.
+        Read literally, `await _sleep(delay)` looks like a symbol that does not
+        sleep, and the probe called four correct adoptions lagging.
+        """
+        unit = self.unit(
+            "import asyncio\n\n_sleep = asyncio.sleep\n\n\n"
+            "async def f():\n    await _sleep(1)\n"
+        )
+        self.assertIn("asyncio.sleep", [name for name, _ in unit.calls()])
+
+    def test_assignment_alias_resolves_through_an_import_alias(self):
+        unit = self.unit(
+            "import asyncio as aio\n\n_sleep = aio.sleep\n\n\n"
+            "async def f():\n    await _sleep(1)\n"
+        )
+        self.assertIn("asyncio.sleep", [name for name, _ in unit.calls()])
+
+    def test_a_call_on_the_right_hand_side_is_not_an_alias(self):
+        """`x = mod.factory()` binds a value, not another name for one."""
+        unit = self.unit(
+            "import mod\n\nclient = mod.factory()\n\n\ndef f():\n    return client.get()\n"
+        )
+        self.assertNotIn("mod.factory.get", [name for name, _ in unit.calls()])
+
+    def test_a_rebinding_inside_a_function_is_not_an_alias(self):
+        unit = self.unit(
+            "import time\n\n\ndef f():\n    nap = time.sleep\n    return nap\n"
+        )
+        self.assertNotIn("nap", rdp._aliases(unit.node))
+
     def test_relative_import_is_left_alone(self):
         """A repo-internal module path differs per repository by construction."""
         unit = self.unit("from .http import retry\n\n\ndef f():\n    return retry()\n")
