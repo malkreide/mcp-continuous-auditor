@@ -1,7 +1,9 @@
 # What has actually been measured — and against what
 
 > The auditor is not deployed. Nothing here has ever spoken to a live MCP **server**
-> — though as of 2026-08-07 two probes have spoken to a live **data source**.
+> — though as of 2026-08-07 two probes have spoken to a live **data source**, and
+> three probes have measured real portfolio repositories twice: once before a
+> remediation and once after.
 
 This page applies the repository's own rule to the repository itself.
 
@@ -49,8 +51,8 @@ page exists for, and it is empty on purpose.
 | doc-claim | ✅ | ✅ this repo | — | n/a |
 | parity | ✅ | ✅ this repo | — | n/a |
 | reference-drift | ✅ | ✅ 19 sites in 18 repos — see below | — | n/a |
-| live-schedule | ✅ | ✅ 5 portfolio servers (2026-08-07) — see below | — | n/a |
-| schema-field | ✅ | ✅ `zh-education-mcp`, 6/6 datasets (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
+| live-schedule | ✅ | ✅ 5 portfolio servers, twice (2026-08-07) — see below | — | n/a |
+| schema-field | ✅ | ✅ `zh-education-mcp`, 6/6 datasets, twice (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
 | value-domain | ✅ | ✅ `zh-education-mcp`, 6/6 datasets, 122 379 rows (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
 | spec | ✅ | ✅ this repo | — | ❌ **never** |
@@ -139,15 +141,47 @@ agreeing is not two measurements.**
 Against this repository the probe reports `NO_LIVE_TESTS` — correctly, the
 auditor's own suite is stdlib `unittest` with no `live` marker anywhere.
 
+### The second reading, after the remediation landed
+
+The five pull requests merged the same day, and the probe was run again against
+each repository's `main`. **All five flipped**, which is the first time anything
+in this directory has measured the same target before and after a change:
+
+| target | first reading | remediation | second reading |
+|---|---|---|---|
+| `zh-education-mcp` | `LIVE_UNSCHEDULED` | new `live-tests.yml` | `LIVE_SCHEDULED` |
+| `swiss-transport-mcp` | `LIVE_UNSCHEDULED` | new `live-tests.yml` | `LIVE_SCHEDULED` |
+| `register-mcp` | `LIVE_UNSCHEDULED` | new `live-tests.yml` | `LIVE_SCHEDULED` |
+| `fedlex-mcp` | `LIVE_UNSCHEDULED` | new `live-tests.yml` | `LIVE_SCHEDULED` |
+| `swiss-snb-mcp` | `LIVE_SCHEDULED_SILENT` | notification in the *existing* nightly job | `LIVE_SCHEDULED` |
+
+The last row is the one worth reading twice. Its remediation was **not** a second
+cron — the nightly job had been running since the repository was written. What it
+gained was the half `DRIFT-005` names beside the schedule: somebody sees a red
+result. A probe that had only the two states «scheduled / not scheduled» would
+have prescribed a duplicate nightly run against `data.snb.ch` and called that a
+fix.
+
+`swiss-transport-mcp`'s second reading is `LIVE_SCHEDULED` and its **first
+scheduled run will be red**: the live tests skip without `TRANSPORT_API_KEY`,
+which the repository does not yet hold. That is the correct answer — a secret
+nobody set is not a green contract with the source — but it is also the reason
+this row is a mechanism and not yet a measurement.
+
 ### What is still not covered
 
-* **No `UNVERIFIED` branch has fired against a real target.** The opaque-command
-  and undecidable-marker paths are fixture-tested only — and they are the two
-  that keep a false finding from being printed.
-* **No target has been measured twice.** Whether a repository that *gains* a
-  scheduled run flips the verdict is shown in fixtures, not in the field. The
-  four remediation pull requests opened on 2026-08-07 are exactly that
-  experiment, and this page should record the second reading once they land.
+* **No `UNVERIFIED` branch has fired against a real target.** The
+  opaque-command and undecidable-marker paths are fixture-tested only — and they
+  are the two that keep a false finding from being printed. (The opaque path now
+  *appears* in four real reports, against the `python scripts/classify_live_run.py`
+  step, but it is never the verdict there because a pytest call was found in the
+  same job.)
+* **No `LIVE_SCHEDULED` has been contradicted by an actual run.** Every second
+  reading above says a cron exists and would be visible. Whether these workflows
+  do what the YAML says will be known on the first Monday, not before.
+* **The `hollow_scripts` branch has never fired.** A live test file executed as
+  a script *without* a `__main__` block is the sharpest finding this probe can
+  make; `swiss-snb-mcp` had the block, so the branch is fixture-tested only.
 
 ## The full run, and what it found: `schema_field_probe` + `value_domain_probe`
 
@@ -219,6 +253,48 @@ probe saying so **with the number** instead of with silence. The `HANDLED` statu
 exists because of this run: the previous code would have gone red on four
 correctly handled datasets, which is how a gate gets switched off.
 
+### The second reading, after the finding was fixed
+
+`zh-education-mcp` fixed `Total_19_Jahre_alt` the same day, and the probe was run
+again against its `main`:
+
+```
+SCHEMA_OK   6 of 6 declared dataset(s) measured;
+            0 field name(s) do not resolve against the live source
+```
+
+Both `MIXED_CASE_HEADER` notes are still there, which is the point of a note: the
+source has not changed its habits, and the next reader of that code needs to know
+that lowercasing on read is a second wrong name rather than a fix.
+
+`value_domain_probe`, second reading against the same commit:
+`VALUE_DOMAIN_HANDLED`, the same four shares (18.6 %, 18.1 %, 16.3 %, 1.0 %) over
+the same row counts. A stable number four days running is not nothing — it is the
+difference between «the source suppresses small counts» as a claim and as a
+measurement.
+
+### `FIXTURE_PINS_OLD_HEADER`: the reader ran, the finding could not
+
+`zh-education-mcp` gained recorded CSV fixtures on 2026-08-07
+(`tests/fixtures/`, with a `PROVENANCE.md` naming the recording date). The
+committed `schema_fields.toml` does **not** declare them yet, so the probe was
+run against a local manifest with all six `fixture =` lines added.
+
+Result: all six fixtures were read and compared, and **no** finding — correctly,
+because they were recorded from the same source on the same day. So:
+
+* the branch that **reads** a declared fixture has now run against real recorded
+  files, six of them;
+* the branch that **reports** a stale one still has not fired, and could not
+  have. A fixture recorded today cannot pin yesterday's header.
+
+That is a weaker statement than «exercised», and it is the true one. The finding
+direction stays unconfirmed until a fixture has had time to go stale — or until
+the same measurement runs against a repository whose fixtures are older.
+
+Declaring the six in the committed manifest is the obvious next step and is not
+done here; this page records what was measured, not what was configured.
+
 ### What is still not covered
 
 * **Only one target.** Six datasets in one repository. No other server in the
@@ -226,10 +302,9 @@ correctly handled datasets, which is how a gate gets switched off.
   been paid exactly once and the two gaps it exposed may not be the last two.
 * **No JSON source has been read live.** Both probes support it; every dataset
   measured so far is CSV.
-* **`FIXTURE_PINS_OLD_HEADER` has still never fired against a real fixture.**
-  `zh-education-mcp` has no recorded CSV to declare — its fixtures are
-  hand-written rows inside the tests — so the branch that explains a green
-  suite is fixture-tested only.
+* **No `FIELD_MISSING` has been produced against a real target.** The one live
+  finding so far was `FIELD_CASE_DRIFT`. The sharper-sounding of the two codes is
+  fixture-tested only.
 
 ## The named gap: `spec_probe --url`
 
