@@ -245,6 +245,21 @@ PROBES: dict[str, ProbeSpec] = {
         argv_of=_dist_argv("yank_probe.py"),
         null_reason="kein Paket auf dem Index",
     ),
+    "live-schedule": ProbeSpec(
+        name="live-schedule",
+        script="live_schedule_probe.py",
+        shape="checkout",
+        section=coverage.REPOSITORIES,
+        field="repository",
+        argv_of=_target_argv("live_schedule_probe.py"),
+        # Der Standardvertrag. Erwaehnenswert ist nur, wie oft die 3 hier
+        # legitim ist: ein Repo ohne `live`-Marke hat keine Live-Suite, die
+        # geplant laufen koennte. Das ist NICHT MESSBAR und nicht gruen — sonst
+        # zaehlt jeder Server ohne Live-Tests als abgedeckt, und die Frage,
+        # ob er welche braucht, faellt aus der Bilanz.
+        note="3 = keine Live-Suite, dokumentierte Fremdabdeckung oder ein "
+        "nicht lesbarer Workflow — gemessen wurde nichts",
+    ),
 }
 
 
