@@ -49,6 +49,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds the index row: a probe nobody can find is a probe nobody runs, and
   nothing else in this repository enforces that table.
 
+### Documented — the second reading, and one branch that still has not fired
+
+`docs/probes/coverage.md` promised a second reading once the four remediation
+pull requests landed. They landed the same day; this records it.
+
+**`live_schedule_probe`, five targets, before and after — all five flipped.** The
+first time anything in this directory has measured the same target across a
+change rather than once. Four went `LIVE_UNSCHEDULED` → `LIVE_SCHEDULED` through
+a new `live-tests.yml`; `swiss-snb-mcp` went `LIVE_SCHEDULED_SILENT` →
+`LIVE_SCHEDULED` through a notification added to the nightly job it already had.
+
+That last row is why the probe has three states rather than two. With only
+«scheduled / not scheduled» it would have prescribed a duplicate nightly run
+against `data.snb.ch` and called that a fix.
+
+**`schema_field_probe`, second reading: `SCHEMA_OK`, 6/6.** The
+`Total_19_Jahre_alt` finding was fixed the same day and the probe confirms it
+against the live source. Both `MIXED_CASE_HEADER` notes remain, which is what a
+note is for: the source has not changed its habits.
+
+**`value_domain_probe`, second reading: the same four shares over the same row
+counts.** A stable 18.6 % four days running is the difference between «the source
+suppresses small counts» as a claim and as a measurement.
+
+**`FIXTURE_PINS_OLD_HEADER` — the reader ran, the finding could not.**
+`zh-education-mcp` gained recorded CSV fixtures with a dated `PROVENANCE.md`. Run
+against a local manifest declaring all six, every fixture was read and compared
+and none was stale — correctly, since they were recorded from the same source on
+the same day. So the branch that *reads* a declared fixture has now met six real
+recorded files, and the branch that *reports* a stale one still has not fired and
+could not have. That is a weaker sentence than «exercised» and it is the true
+one.
+
+Three gaps are named that were not on the page before: no `LIVE_SCHEDULED` has
+yet been contradicted by an actual scheduled run (the first Monday decides), the
+`hollow_scripts` branch has never fired against real code, and no `FIELD_MISSING`
+has been produced against a real target — the one live schema finding was
+`FIELD_CASE_DRIFT`.
+
+Also carried forward: `swiss-transport-mcp`'s first scheduled run will be red
+because `TRANSPORT_API_KEY` is not set. That is the correct answer and also the
+reason its row is a mechanism rather than a measurement.
+
 ### Fixed — a live suite run as a script read as no live suite at all
 
 Measured on 2026-08-07 against the four remaining servers from the
