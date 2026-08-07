@@ -13,6 +13,34 @@
 # Die Test-Matrix in .github/workflows/tests.yml faehrt 3.11 und 3.13.
 target-version = "py311"
 
+# Markdown bleibt aussen vor — und zwar als bewusste Entscheidung, nicht als
+# Versehen.
+#
+# Bis ruff 0.15.8 war die Formatierung von Python-Bloecken in Markdown
+# `preview`-only: ein `ruff format --check .` liess `.md` unberuehrt und meldete
+# «Markdown formatting is experimental, enable preview mode», sobald man eine
+# solche Datei direkt uebergab. Seit 0.16.1 ist sie stabil und standardmaessig
+# an. Der Sprung auf 0.16.1 haette dieses Gate damit ueber Nacht auf
+# Dokumentation ausgeweitet, die niemand angefasst hat — genau der Effekt, gegen
+# den der Pin ueberhaupt existiert.
+#
+# Gemessen beim Bump: kein einziges `.py` in diesem Repo formatiert sich unter
+# 0.16.1 anders. Betroffen waren ausschliesslich vier `.md` (CHANGELOG und drei
+# docs/probes/-Seiten), und portfolioweit dieselbe Lage — bei mcp-audit-skill 82
+# Dateien. Das ist kein Argument gegen Markdown-Formatierung, sondern dagegen,
+# sie als Nebenwirkung eines Versions-Bumps einzufuehren: sie umbricht
+# Code-Beispiele in Prosa, und ob das erwuenscht ist, entscheidet man an den
+# Beispielen, nicht am Pin.
+#
+# Sie zu uebernehmen ist deshalb eine eigene, messbare Aenderung: diese Zeile
+# entfernen, `ruff format .` laufen lassen, Diff lesen.
+#
+# `extend-exclude`, nicht `exclude`: `exclude` ERSETZT ruffs Vorgabeliste, und
+# damit waeren `.venv/`, `node_modules/` und Konsorten wieder im Gate.
+# Gemessen: zwei Dateien unter `.venv/` und `node_modules/` werden mit
+# `exclude` beanstandet, mit `extend-exclude` nicht.
+extend-exclude = ["*.md"]
+
 [lint]
 # Expliziter Regelsatz, gleichgezogen mit dem uebrigen Portfolio. Ein `select`
 # in der Konfiguration ersetzt die eingebauten Defaults vollstaendig; damit ist
