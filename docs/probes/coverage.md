@@ -48,6 +48,7 @@ page exists for, and it is empty on purpose.
 | doc-claim | ✅ | ✅ this repo | — | n/a |
 | parity | ✅ | ✅ this repo | — | n/a |
 | reference-drift | ✅ | ✅ 19 sites in 18 repos — see below | — | n/a |
+| live-schedule | ✅ | ⚠️ this repo only (`NO_LIVE_TESTS`) — see below | — | n/a |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
 | spec | ✅ | ✅ this repo | — | ❌ **never** |
 | transport boot | ✅ | ✅ locally launched checkouts | — | ❌ — it starts the server itself |
@@ -96,6 +97,33 @@ written implementations is a high bar and none of the differences cleared it —
 15 of 18 removed the bare `RuntimeError`, not 18 of 18. On this portfolio the
 declared properties are doing the work, and the layer that needs no declaration
 has still never produced a finding against real code.
+
+## The finding that has not been reproduced here: `live_schedule_probe`
+
+The probe was written from a hand sweep of ten portfolio servers on 2026-08-03,
+which found five with a scheduled live run (`srgssr`, `lindas`, `termdat`,
+`swisstopo`, `parlament`) and five without (`zh-education`, `swiss-transport`,
+`register`, `fedlex`, `swiss-snb`). **That sweep was done by hand, before the
+probe existed, and the probe has not re-derived it.** Ten numbers read off ten
+repositories by a person are the reason this file was written; they are not a
+result this tool has produced, and the table above says `⚠️` rather than `✅`
+for that reason.
+
+Against this repository it reports `NO_LIVE_TESTS` — correctly, since the
+auditor's own suite is stdlib `unittest` with no `live` marker anywhere. That
+exercises one branch and settles nothing about the other five.
+
+To close it, over the real portfolio:
+
+```bash
+python scripts/coverage_run.py --probe live-schedule \
+    --manifest manifest.json --repos-root ~/portfolio --format json
+```
+
+The number to record is not «how many findings» but the split between exit 2 and
+exit 3: a portfolio that comes back mostly `NO_LIVE_TESTS` has a different
+problem from one that comes back `LIVE_UNSCHEDULED`, and only the second is the
+one `DRIFT-005` describes.
 
 ## The named gap: `spec_probe --url`
 

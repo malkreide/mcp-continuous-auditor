@@ -145,7 +145,7 @@ openclaw/cron/    nightly-audit Cron-Job-Spec + Installer (täglich 03:00 → Te
 skills/           python-auditor, fastmcp-testing, promptfoo-eval,
                   identity-probe, published-probe, shipped-probe, yank-probe,
                   lockfile-probe, doc-claim-probe, parity-probe,
-                  reference-drift-probe
+                  reference-drift-probe, live-schedule-probe
                   (shipped-probe hat den früheren release-gap-Skill aufgenommen)
 schemas/          generierte Tool-Output-JSON-Schemas = der Drift-Detektor
 promptfoo/        deterministische Asserts, Schema-Drift, Red-Team + Fixtures

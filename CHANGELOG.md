@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `live_schedule_probe.py`: `-m "not live"` is not a place where tests run
+
+`DRIFT-005` has been `enforced` in the audit catalogue since the `meteoswiss-mcp`
+incident of 2026-07-30 — the first live run in months, three of six tests on the
+floor, the upstream endpoint retired two days earlier. Nothing measured it. A
+hand sweep of ten portfolio servers on 2026-08-03 found **five in violation**:
+`srgssr`, `lindas`, `termdat`, `swisstopo` and `parlament` schedule a live run;
+`zh-education`, `swiss-transport`, `register`, `fedlex` and `swiss-snb` do not.
+
+`zh-education` is on the second list, and that is the point. It is where four of
+six datasets were read under field names the source had stopped using, where
+eight tools answered every query with an empty list and «Schulgemeinde nicht
+gefunden», and where every unit test stayed green because the fixtures pin the
+old header. Only a live run could have contradicted it. There was none.
+
+The probe reads the checkout and asks three things: is the `live` marker
+**applied** to a test (decided on the syntax tree — the marker in a docstring is
+not a suite); does a `schedule:`/`cron:` workflow run a pytest call that
+**selects** it; would a failure be **seen** (a step or job reacting to
+`failure()`, or a known notifier action). Findings are `LIVE_UNSCHEDULED` and
+`LIVE_SCHEDULED_SILENT`; exit 2.
+
+The `-m` expression is **evaluated, not grepped**, because a substring match
+gets it wrong in both directions at once: `not live` contains the word and
+excludes, `not slow` does not contain it and selects. The expression is parsed
+with `ast` and asked whether any assignment of the other markers selects a test
+carrying `live`. Over twelve free names it says so instead of guessing.
+
+Every reason the probe might simply not have *seen* a live run is spent before
+the finding is reached — a scheduled step running `make`/`tox`/`nox`/a shell
+script, an undecidable marker expression, a workflow that does not parse, no
+`.github/workflows/` at all: `UNVERIFIED`, with the command or expression
+quoted. `pip install pytest` is explicitly not a live run; without that rule,
+installing the tool satisfies the check the tool exists to enforce.
+
+Two exit-3 states carry the rule of this directory. `NO_LIVE_TESTS` — no marker
+applied anywhere — is not green: whether the server *needs* live tests is
+`OPS-001`'s question, and booking it clean would let every untested server count
+as covered. `CLAIMS_EXTERNAL_COVERAGE` is the escape hatch `DRIFT-005` allows,
+and it stays at 3 because the claim is a sentence in a README; whether the
+auditor actually runs the suite is not in the checkout. The claim is printed
+with its file and line, recorded rather than believed.
+
+`NO_MANUAL_TRIGGER` and `SPARSE_CADENCE` are notes and never decide the exit
+code. A monthly run is a different animal from no run at all, and collapsing the
+two would cost `LIVE_UNSCHEDULED` its meaning.
+
+Registered in `coverage_run.py` as `--probe live-schedule`.
+[`docs/probes/live-schedule.md`](docs/probes/live-schedule.md),
+`skills/live-schedule-probe/`, `tests/test_live_schedule_probe.py`.
+`docs/probes/coverage.md` records the hand sweep as **not reproduced** by the
+probe: ten numbers read off ten repositories by a person are the reason the
+file exists, not a result this tool has produced.
+
 ### Fixed — `wraps` measured a coding habit, not the ordering it exists to check
 
 `caps_after_jitter` asks whether the ceiling is applied AFTER the jitter. The
