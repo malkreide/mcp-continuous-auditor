@@ -65,6 +65,18 @@ of the other markers selects a test carrying `live`. Over
 A call with no `-m` at all admits live tests. `pytest tests/` runs the suite,
 and whether the suite runs is the entire question.
 
+## A test file run as a script is resolved
+
+`swiss-snb-mcp` runs `python tests/test_live_scenarios.py` nightly — no pytest
+on the line. The file carries the marker and an `if __name__ == "__main__":`
+block, so it really does run; read as "not a pytest call", the repository came
+back `LIVE_UNSCHEDULED` falsely.
+
+Such a call is resolved against the checkout: marker **and** `__main__` block ⇒
+the schedule counts; marker but **no** `__main__` block ⇒ a finding of its own,
+because run as a script the file imports and exits 0 without executing a test;
+anything else ⇒ opaque.
+
 ## Not measured is not clean
 
 The finding this probe must never invent is `LIVE_UNSCHEDULED` on a repository

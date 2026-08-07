@@ -49,7 +49,7 @@ page exists for, and it is empty on purpose.
 | doc-claim | ✅ | ✅ this repo | — | n/a |
 | parity | ✅ | ✅ this repo | — | n/a |
 | reference-drift | ✅ | ✅ 19 sites in 18 repos — see below | — | n/a |
-| live-schedule | ✅ | ⚠️ this repo only (`NO_LIVE_TESTS`) — see below | — | n/a |
+| live-schedule | ✅ | ✅ 5 portfolio servers (2026-08-07) — see below | — | n/a |
 | schema-field | ✅ | ✅ `zh-education-mcp`, 6/6 datasets (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
 | value-domain | ✅ | ✅ `zh-education-mcp`, 6/6 datasets, 122 379 rows (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
@@ -63,8 +63,9 @@ page exists for, and it is empty on purpose.
 
 The last column holds two different wires, and the distinction matters. Most rows
 point at a deployed **MCP server**, and that column is still empty because there
-is no deployment. The two bottom rows point at a **data source** — the cantonal
-endpoint a server reads — and those were reached for real on 2026-08-07. A live
+is no deployment. The `schema-field` and `value-domain` rows point at a **data
+source** — the cantonal endpoint a server reads — and those were reached for real
+on 2026-08-07. A live
 run against `www.bista.zh.ch` says nothing about whether any MCP server boots.
 
 ## The full run, and what it found: `reference_drift_probe`
@@ -106,6 +107,47 @@ written implementations is a high bar and none of the differences cleared it —
 15 of 18 removed the bare `RuntimeError`, not 18 of 18. On this portfolio the
 declared properties are doing the work, and the layer that needs no declaration
 has still never produced a finding against real code.
+
+## The full run, and what it found: `live_schedule_probe`
+
+The probe was written from a hand sweep of ten portfolio servers on 2026-08-03,
+which found five with a scheduled live run and five without. On **2026-08-07** it
+was run against the five «without» — the first time it measured anything but its
+own fixtures.
+
+**Four of five confirmed. The fifth was a false finding, and it was the
+probe's.**
+
+| target | hand sweep, 2026-08-03 | probe, 2026-08-07 |
+|---|---|---|
+| `zh-education-mcp` | no scheduled run | `LIVE_UNSCHEDULED` ✓ |
+| `swiss-transport-mcp` | no scheduled run | `LIVE_UNSCHEDULED` ✓ |
+| `register-mcp` | no scheduled run | `LIVE_UNSCHEDULED` ✓ |
+| `fedlex-mcp` | no scheduled run | `LIVE_UNSCHEDULED` ✓ |
+| `swiss-snb-mcp` | no scheduled run | **`LIVE_SCHEDULED_SILENT`** — it runs nightly |
+
+`swiss-snb-mcp` has run its live suite every night since it was written, through
+two steps that read `python tests/test_live_scenarios.py`. No pytest on the line,
+so the probe recognised neither a pytest call nor an opaque wrapper and concluded
+absence — the direction its own docstring calls the dangerous one. Such a call is
+now resolved against the checkout, and the server's real defect is what the probe
+reports instead: the nightly run exists, and nothing in it reacts to `failure()`.
+
+The hand sweep made the same mistake, which is why the two agreed. **Two readers
+agreeing is not two measurements.**
+
+Against this repository the probe reports `NO_LIVE_TESTS` — correctly, the
+auditor's own suite is stdlib `unittest` with no `live` marker anywhere.
+
+### What is still not covered
+
+* **No `UNVERIFIED` branch has fired against a real target.** The opaque-command
+  and undecidable-marker paths are fixture-tested only — and they are the two
+  that keep a false finding from being printed.
+* **No target has been measured twice.** Whether a repository that *gains* a
+  scheduled run flips the verdict is shown in fixtures, not in the field. The
+  four remediation pull requests opened on 2026-08-07 are exactly that
+  experiment, and this page should record the second reading once they land.
 
 ## The full run, and what it found: `schema_field_probe` + `value_domain_probe`
 
