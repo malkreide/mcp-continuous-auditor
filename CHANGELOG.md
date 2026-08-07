@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `value_domain_probe.py`: `int("1 bis 5")` and the 18.6 % nobody measured
+
+`zh-education-mcp` against `www.bista.zh.ch`, 2026-08-03. The code called `int()`
+on the column `anzahl`. For small case counts the source does not publish a
+number — to protect the individuals behind them it publishes the string
+`"1 bis 5"`. Beside that, `"NULL"` and empty cells. `int("1 bis 5")` raises, and
+the caller of the tool saw «unerwarteter interner Fehler» and nothing else: no
+column, no value, no hint that the source was doing something deliberate and
+documented.
+
+The shares are why this is a probe and not a one-off fix: **18.6 %** of 13 902
+rows, **18.1 %** of 62 684, **1.0 %** of 35 903. A one-in-five chance of a crash
+is not an edge case, it is the endpoint's normal behaviour — and no test could
+see it, because a fixture carries the rows somebody chose while writing the
+fixture, and nobody chooses the suppressed ones.
+
+It reuses `schema_field_probe` outright — the manifest (`schema_fields.toml`),
+the GET, the delimiter sniffing, the record resolution — because the question is
+asked of the same datasets through the same declared sites, and a second copy of
+that code would be a second place for it to be subtly wrong. Three helpers there
+became public in the same change (`find_symbol`, `split_header`,
+`resolve_records`).
+
+Three ways of writing a coercion are accepted, because they are ways of writing
+one thing and a check that takes only the first is measuring who wrote the line:
+`int(row["x"])`, the name-bound form over one hop, and a wrapped argument when
+exactly one column is inside it. `int(float(x))` is attributed to the **inner**
+call — the one that meets the raw string — so the column is not also reported as
+holding fractional values it is never asked to parse as integers.
+
+Values land in five buckets (`integer`, `fractional`, `empty`, `null_literal`,
+`non_numeric`), because the remedies differ and «this is sometimes not a number»
+is a weaker sentence than «one value in five is not a number». `1'234` and
+`1 234` are integers; reading Swiss thousands separators as prose would drown the
+finding in noise. Which buckets *offend* depends on the column's own coercer:
+`int("12.5")` raises just as `int("1 bis 5")` does, so `fractional` counts
+against an `int()` column and not against a `float()` one.
+
+**The truncation rule** is what the byte cap costs. Values found ⇒ finding,
+capped or not, with the row count the share is over. Nothing found and the
+response read to the end ⇒ clean. Nothing found and the read **capped** ⇒
+`UNVERIFIED`: the tail was not read, and the suppressed rows cluster exactly
+where nobody looked. A partial final line is dropped before parsing — a row cut
+in half by the cap would otherwise be a domain violation the probe invented out
+of its own budget.
+
+`COERCION_GUARDED` is a note and not an absolution: a `try` catching `ValueError`
+answers «does this raise», not «is one row in five silently missing from the
+total the tool reports», so the share still prints and the dataset is still a
+finding. A `try` catching `KeyError` is not counted as a guard at all — that
+would silence exactly the call sites that crash. `COLUMN_NAME_DRIFT` hands the
+name itself to `schema_field_probe`: two probes, one opinion each.
+
+Registered in `coverage_run.py` as `--probe value-domain`.
+[`docs/probes/value-domain.md`](docs/probes/value-domain.md),
+`skills/value-domain-probe/`, `tests/test_value_domain_probe.py`.
+`docs/probes/coverage.md` records it beside the schema-field row as **never run
+against anything**: the three shares were counted by hand on downloaded extracts,
+and no run of this code has reproduced them.
+
 ### Added — `schema_field_probe.py`: the code's field names against the live source
 
 `zh-education-mcp` against `www.bista.zh.ch`, 2026-08-03. The code read

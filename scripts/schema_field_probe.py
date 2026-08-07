@@ -300,7 +300,7 @@ class KeyRead:
         return {"name": self.name, "line": self.line, "form": self.form}
 
 
-def _find_symbol(tree: ast.Module, symbol: str) -> ast.AST | None:
+def find_symbol(tree: ast.Module, symbol: str) -> ast.AST | None:
     """A top-level or nested function/class by name — the whole tree is walked.
 
     A method named in the manifest as if it were a module-level function is the
@@ -326,7 +326,7 @@ def read_site_keys(target: Path, site: Site) -> tuple[list[KeyRead], str | None]
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, SyntaxError) as exc:
         return [], f"{site.file} could not be parsed: {exc}"
-    node = _find_symbol(tree, site.symbol)
+    node = find_symbol(tree, site.symbol)
     if node is None:
         return [], f"{site.file} has no symbol named {site.symbol!r}"
 
@@ -372,7 +372,7 @@ def http_get(url: str, limit: int, timeout: int = DEFAULT_TIMEOUT) -> bytes:
         raise SourceError(f"{type(exc).__name__}: {exc}") from exc
 
 
-def _split_header(line: str, declared: str | None) -> tuple[list[str], str]:
+def split_header(line: str, declared: str | None) -> tuple[list[str], str]:
     """The header row, and the delimiter it was read with.
 
     A sniffed delimiter is reported alongside the fields, because reading a
@@ -402,11 +402,11 @@ def fields_from_csv(body: bytes, dataset: Dataset) -> tuple[list[str], str]:
     line = text.split("\n", 1)[0].rstrip("\r")
     if not line.strip():
         raise SourceError("the first line of the response is empty")
-    fields, delimiter = _split_header(line, dataset.delimiter)
+    fields, delimiter = split_header(line, dataset.delimiter)
     return [f for f in fields if f], delimiter
 
 
-def _resolve_records(payload: Any, record_path: str | None) -> list[Any] | None:
+def resolve_records(payload: Any, record_path: str | None) -> list[Any] | None:
     if record_path:
         node: Any = payload
         for segment in record_path.split("."):
@@ -440,7 +440,7 @@ def fields_from_json(
         payload = json.loads(body.decode(dataset.encoding, errors="replace"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise SourceError(f"the response is not JSON: {exc}") from exc
-    records = _resolve_records(payload, dataset.record_path)
+    records = resolve_records(payload, dataset.record_path)
     if records is None:
         where = (
             f"record_path {dataset.record_path!r}"

@@ -19,6 +19,7 @@ green and wrong at the same time.
 | parity | Does the translated documentation still say the same thing? | [parity.md](parity.md) |
 | reference-drift | Is the copied template still the best version of itself — in both directions? | [reference-drift.md](reference-drift.md) |
 | schema-field | Does the code read the field names the source delivers? | [schema-field.md](schema-field.md) |
+| value-domain | Does a column the code coerces to a number actually hold numbers? | [value-domain.md](value-domain.md) |
 | live-schedule | Do the live tests run anywhere, or are they only marked? | [live-schedule.md](live-schedule.md) |
 | spec | Which MCP protocol version does this server actually speak? | [spec.md](spec.md) |
 | provenance | Which commit is this report about? | [provenance.md](provenance.md) |

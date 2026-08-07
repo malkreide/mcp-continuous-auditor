@@ -259,6 +259,16 @@ PROBES: dict[str, ProbeSpec] = {
         note="3 = kein schema_fields.toml, Quelle nicht lesbar oder eine "
         "Fundstelle ohne Treffer — gemessen wurde nichts",
     ),
+    "value-domain": ProbeSpec(
+        name="value-domain",
+        script="value_domain_probe.py",
+        shape="checkout",
+        section=coverage.REPOSITORIES,
+        field="repository",
+        argv_of=_target_argv("value_domain_probe.py"),
+        note="3 = kein schema_fields.toml, keine int()/float()-Stelle, Quelle "
+        "nicht lesbar oder ein gedeckelter Lauf ohne Fund — gemessen wurde nichts",
+    ),
     "live-schedule": ProbeSpec(
         name="live-schedule",
         script="live_schedule_probe.py",
