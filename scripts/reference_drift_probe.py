@@ -52,12 +52,23 @@ So the probe compares the PROPERTIES the template guarantees, on two layers.
    predicate over the symbol:
 
    * ``calls``   — a call to a dotted name (``time.monotonic`` = a wall-clock
-     budget exists)
+     budget exists). Note the limit, because it produced a false positive on
+     2026-08-07: ``calls`` cannot tell TIMING something from LIMITING it.
+     ``i14y-mcp`` called ``time.perf_counter()`` twice to compute an
+     ``elapsed_ms`` for a log line and nothing else, and counted as a server
+     with a budget — it was the only one of eleven that appeared to have one,
+     and it did not. Declare the bound itself where a manifest can (``asyncio``
+     deadline calls alongside the clock read), and read the two lines before
+     trusting a lone clock call.
    * ``literal`` — a string literal (``retry-after`` = the server's own hint is
      read; a header name is on the wire and cannot be renamed away)
-   * ``wraps``   — a call to ``outer`` whose ARGUMENT subtree contains a call to
-     ``inner`` (``min`` wrapping ``random.uniform`` = the ceiling is applied
-     after the jitter, not before it — the ordering, not just the presence)
+   * ``wraps``   — a call to ``outer`` that encloses a call to ``inner``
+     (``min`` wrapping ``random.uniform`` = the ceiling is applied after the
+     jitter, not before it — the ordering, not just the presence). BOTH shapes
+     count: the inner call written inside the outer call's arguments, and the
+     inner call bound to a local that an argument then names. They are mutually
+     exclusive, and reading only the first reported all six correct adopters as
+     lagging — see ``_bound_to_inner``.
    * ``raises`` / ``handles`` — an exception type raised, or caught
 
    each with ``expect = "present"`` or ``"absent"``, because half of these fixes
@@ -118,6 +129,7 @@ import json
 import re
 import sys
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -559,6 +571,47 @@ def _raw_caught(node: ast.AST) -> list[str]:
     return out
 
 
+def _bound_to_inner(unit: Unit, inner: Sequence[str]) -> set[str]:
+    """Locals assigned from an expression that contains one of ``inner``.
+
+    `wraps` asks about ORDER — does the ceiling sit outside the jitter? — and
+    order can be written two ways that no single expression satisfies at once:
+
+        return min(base * random.uniform(0.5, 1.5), CAP)   # lexical
+        jittered = base * random.uniform(0.5, 1.5)         # name-bound
+        return min(jittered, CAP)
+
+    The choice between them IS whether a name is bound, so a lexical-only read
+    does not measure the ordering — it measures a coding habit. Measured against
+    the eleven-server sweep of 2026-08-03: every one of the six repositories
+    that applies the cap after the jitter writes the second form. Read lexically,
+    `caps_after_jitter` failed 6 of 6 adoptions that hold exactly the behaviour
+    it describes, and the finding pointed at correct code.
+
+    Deliberately shallow. Only a direct assignment inside the same unit counts —
+    no transitive chains, no attributes, no augmented assignment. A wider
+    analysis would start reporting a cap where the value merely passed through,
+    and a false *positive* here is worse than the false negative it replaces:
+    this property exists to catch `min(cap, base) * jitter`, which is not a
+    bound at all.
+    """
+    out: set[str] = set()
+    for node in ast.walk(unit.node):
+        if not isinstance(node, ast.Assign):
+            continue
+        value_unit = Unit(node.value, unit.aliases)
+        if not any(
+            _tail_match(found, want)
+            for found, _ in value_unit.calls()
+            for want in inner
+        ):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                out.add(target.id)
+    return out
+
+
 def _tail_match(recorded: str, declared: str) -> bool:
     """One dotted name is a tail of the other.
 
@@ -599,14 +652,22 @@ def _observed(prop: Property, unit: Unit) -> bool:
             _tail_match(name, want) for name in unit.caught() for want in prop.any_of
         )
     if prop.kind == "wraps":
+        # Two shapes, and they are MUTUALLY EXCLUSIVE — see `_bound_to_inner`.
+        bound = _bound_to_inner(unit, prop.inner)
         for name, call in unit.calls():
             if not _tail_match(name, prop.outer):
                 continue
             arguments = [*call.args, *(kw.value for kw in call.keywords)]
             for argument in arguments:
+                # (a) Lexical: the inner call sits inside the outer call's args.
                 inner = Unit(argument, unit.aliases)
                 for found, _ in inner.calls():
                     if any(_tail_match(found, want) for want in prop.inner):
+                        return True
+                # (b) Name-bound: an argument mentions a local that was assigned
+                #     from an expression containing the inner call.
+                for node in ast.walk(argument):
+                    if isinstance(node, ast.Name) and node.id in bound:
                         return True
         return False
     # Unreachable: `_property` rejects every other kind at load time.

@@ -744,5 +744,84 @@ class CliTest(BedCase):
         self.assertNotIn("every readable adoption site agree", text)
 
 
+class WrapsShapeTest(unittest.TestCase):
+    """`wraps` asks about ORDER, and order can be written two ways.
+
+    Measured against the eleven-server sweep of 2026-08-03: every one of the six
+    repositories that applies the cap after the jitter binds a local first. Read
+    lexically only, `caps_after_jitter` failed 6 of 6 adoptions that hold exactly
+    the behaviour it describes — the finding pointed at correct code.
+    """
+
+    PROP = rdp.Property(
+        id="caps_after_jitter",
+        says="applies the ceiling after jittering",
+        kind="wraps",
+        outer="min",
+        inner=("random.uniform",),
+        expect="present",
+    )
+
+    def holds(self, body: str) -> bool:
+        source = f"import random\n\nCAP = 20.0\n\n\ndef f(base):\n{body}"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "m.py"
+            path.write_text(source, encoding="utf-8")
+            unit, reason = rdp.load_symbol(path, "f")
+        self.assertEqual(reason, "")
+        assert unit is not None
+        return rdp.holds(self.PROP, unit)
+
+    def test_lexical_shape_holds(self):
+        """min(base * random.uniform(...), CAP) — the inner call inside the args."""
+        self.assertTrue(
+            self.holds("    return min(base * random.uniform(0.5, 1.5), CAP)\n")
+        )
+
+    def test_name_bound_shape_holds(self):
+        """jittered = ...; min(jittered, CAP) — what every real adopter writes."""
+        self.assertTrue(
+            self.holds(
+                "    jittered = base * random.uniform(0.5, 1.5)\n"
+                "    return min(jittered, CAP)\n"
+            )
+        )
+
+    def test_the_wrong_order_still_fails(self):
+        """The whole point of the property: a cap applied BEFORE the jitter.
+
+        `min(base, CAP) * random.uniform(...)` contains a cap and a jitter and
+        is not bounded — 20s times 1.5 is 30s. If this ever passes, the property
+        has stopped measuring anything.
+        """
+        self.assertFalse(
+            self.holds(
+                "    capped = min(base, CAP)\n"
+                "    return capped * random.uniform(0.5, 1.5)\n"
+            )
+        )
+
+    def test_an_unrelated_local_does_not_count(self):
+        """A name bound from something else must not satisfy the property."""
+        self.assertFalse(
+            self.holds("    plain = base * 2\n    return min(plain, CAP)\n")
+        )
+
+    def test_the_binding_must_be_inside_the_same_symbol(self):
+        """Deliberately shallow: no transitive chains, no cross-function flow.
+
+        A wider analysis would start reporting a cap where the value merely
+        passed through, and a false positive is worse here than the false
+        negative it replaces.
+        """
+        self.assertFalse(
+            self.holds(
+                "    jittered = base * random.uniform(0.5, 1.5)\n"
+                "    passed_on = jittered\n"
+                "    return min(passed_on, CAP)\n"
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

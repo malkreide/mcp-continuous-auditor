@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — `wraps` measured a coding habit, not the ordering it exists to check
+
+`caps_after_jitter` asks whether the ceiling is applied AFTER the jitter. The
+check walked the outer call's argument subtrees looking for the inner call, and
+so recognised exactly one way of writing it:
+
+```python
+return min(base * random.uniform(0.5, 1.5), CAP)     # lexikalisch — erkannt
+jittered = base * random.uniform(0.5, 1.5)           # namensbindend — NICHT
+return min(jittered, CAP)
+```
+
+Measured against the eleven-server sweep of 2026-08-03: **all six** repositories
+in the portfolio that apply the cap after the jitter write the second form.
+Read lexically only, the property failed 6 of 6 adoptions that hold exactly the
+behaviour it describes — every finding it produced pointed at correct code.
+
+The two shapes are **mutually exclusive**: no single expression satisfies both,
+because the choice between them *is* whether a name is bound. A check that
+accepts only one is not measuring the ordering; it is measuring who wrote the
+line. Both are accepted now.
+
+Deliberately shallow — a direct assignment inside the same symbol, no transitive
+chains, no attributes, no augmented assignment. A wider analysis would start
+reporting a cap where the value merely passed through, and a false *positive* is
+worse here than the false negative it replaces: this property exists to catch
+`min(cap, base) * jitter`, which is not a bound at all. `WrapsShapeTest` pins
+all five cases, the wrong order among them.
+
+### Documented — `calls` cannot tell timing from limiting
+
+From the same reading, and not fixable in the check: `wall_clock_budget` is
+declared as `kind = "calls"` over `time.monotonic` / `time.perf_counter`, and a
+clock read looks identical whether it bounds something or merely measures it.
+`i14y-mcp` called `time.perf_counter()` twice to compute an `elapsed_ms` for a
+log line and nothing else — and counted as the one server of eleven with a
+wall-clock budget. It had none.
+
+The honest count for that sweep was 6 of 18, not 7. The limitation is now stated
+where the property kinds are described, with the guidance that follows from it:
+declare the bound itself where the manifest can, and read the two lines before
+trusting a lone clock call.
+
+
 ### Fixed — `_sleep = asyncio.sleep` is an alias, and the probe could not see it
 
 `reference_drift_probe.py` resolved `import x as y` and `from x import y` but not
