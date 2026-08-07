@@ -29,7 +29,7 @@ jobs:
       # NOTE: this version and the `rev` in .pre-commit-config.yaml must agree.
       # The last step of this job checks that.
       - name: Install pinned Ruff
-        run: pip install ruff==0.15.8
+        run: pip install ruff==0.16.1
 
       # Root plus every subproject with its own pyproject.toml — `ci.yml.template`
       # ships exactly this, so it runs here too. The rationale is written out in
