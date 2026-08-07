@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `also`: an adoption may span the files it names
+
+`reference_drift_probe.py` follows a call from the declared symbol into a
+helper of the SAME file (auditor#81). One portfolio adoption does not fit in
+one file, and it is not an exotic arrangement.
+
+`seco-labor-mcp` keeps `compute_delay` and `parse_retry_after` in
+`retry_policy.py` and calls them from **two** retry loops, in `server.py` and
+`uvg.py`. Neither file holds all eight declared properties alone: the loops
+carry the error handling and the budget, the policy module carries the jitter,
+the cap and the header name. The manifest could only choose which half to
+under-report — and it under-reported the half with three properties in it, so
+the probe filed **six** findings against a server that holds every one of them.
+
+An adoption may now declare `also = ["…"]`: further files of the same
+repository whose functions the entry symbol may **call**. Three properties, and
+each has a test and a mutation behind it:
+
+* It does NOT widen the scope to those files. Only what the entry actually
+  reaches is followed, exactly as within one file — declaring a file and never
+  calling into it changes nothing.
+* The entry file WINS a name collision. A helper defined beside the entry is
+  the one it actually reaches, whatever a declared file calls by the same name.
+* A declared path that cannot be read or parsed is REPORTED, not skipped.
+  Dropping it silently would turn a stale mapping into a quiet narrowing of the
+  measurement, which is the failure this probe exists to prevent.
+
+Measured against the real repositories: `seco-labor-mcp` disappears from the
+report entirely, both entries, all six findings. The four that remain are
+unchanged and each has a named cause — `swiss-statistics-mcp` hands its policy
+to `tenacity` as a callback that is never called in the file,
+`bag-health-mcp` and `amtsblatt-mcp` catch a superclass rather than the two
+declared types, and `lobbywatch-mcp` is finding 5 in the manifest.
+
+### Fixed — `_reachable_helpers` said "module-level" after it had stopped being true
+
+A docstring left behind by auditor#81. `_named_functions` walks the tree, so a
+method is a helper too — the code was right and the sentence was not. Noted
+here rather than fixed in silence: a caption that outlives its subject is the
+class of defect two probes in this repository exist to catch.
+
 ### Added
 
 - **Vendored-copy probe (`scripts/vendored_copy_probe.py`).** Asks whether the

@@ -1008,3 +1008,125 @@ class HelperScopeTest(unittest.TestCase):
             "    return delay()\n"
         )
         self.assertTrue(rdp.holds(prop, self.unit(together, "entry")))
+
+
+class AlsoFilesTest(unittest.TestCase):
+    """An adoption may span files it names, and only those.
+
+    THE SHAPE. `seco-labor-mcp` keeps `compute_delay` and `parse_retry_after` in
+    `retry_policy.py` and calls them from two retry loops in two other modules.
+    Neither file holds all eight declared properties alone: the loops carry the
+    error handling and the budget, the policy module carries the jitter, the cap
+    and the header name. Before `also` the manifest could only choose which half
+    to under-report — and it under-reported the half with three properties in it.
+    """
+
+    CALLS = rdp.Property(
+        id="jitters",
+        says="spreads the retry",
+        kind="calls",
+        any_of=("random.random",),
+        expect="present",
+    )
+
+    LOOP = (
+        "from . import policy\n\n\ndef fetch():\n    return policy.compute_delay(1)\n"
+    )
+    POLICY = (
+        "import random\n\n\ndef compute_delay(attempt):\n    return random.random()\n"
+    )
+
+    def load(self, also: list[str]):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "loop.py").write_text(self.LOOP, encoding="utf-8")
+            (root / "policy.py").write_text(self.POLICY, encoding="utf-8")
+            return rdp.load_symbol(root / "loop.py", "fetch", [root / f for f in also])
+
+    def test_without_also_the_property_reads_as_absent(self):
+        """The state before this field — and the reason it was added."""
+        unit, reason = self.load([])
+        self.assertEqual(reason, "")
+        assert unit is not None
+        self.assertFalse(rdp.holds(self.CALLS, unit))
+
+    def test_a_declared_file_makes_the_helper_followable(self):
+        unit, reason = self.load(["policy.py"])
+        self.assertEqual(reason, "")
+        assert unit is not None
+        self.assertTrue(rdp.holds(self.CALLS, unit))
+
+    def test_declaring_a_file_does_not_widen_to_everything_in_it(self):
+        """`also` makes a CALL followable; it does not put the file in scope."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "loop.py").write_text(
+                "def fetch():\n    return 1\n", encoding="utf-8"
+            )
+            (root / "policy.py").write_text(self.POLICY, encoding="utf-8")
+            unit, reason = rdp.load_symbol(
+                root / "loop.py", "fetch", [root / "policy.py"]
+            )
+        self.assertEqual(reason, "")
+        assert unit is not None
+        self.assertFalse(rdp.holds(self.CALLS, unit))
+
+    def test_the_entry_file_wins_a_name_collision(self):
+        """A helper defined here is the one the entry actually reaches."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "loop.py").write_text(
+                "def compute_delay(a):\n    return 1\n\n\n"
+                "def fetch():\n    return compute_delay(1)\n",
+                encoding="utf-8",
+            )
+            (root / "policy.py").write_text(self.POLICY, encoding="utf-8")
+            unit, reason = rdp.load_symbol(
+                root / "loop.py", "fetch", [root / "policy.py"]
+            )
+        self.assertEqual(reason, "")
+        assert unit is not None
+        self.assertFalse(rdp.holds(self.CALLS, unit))
+
+    def test_an_unreadable_declared_file_is_reported_not_skipped(self):
+        """A stale mapping must be loud, never a quiet narrowing."""
+        unit, reason = self.load(["gone.py"])
+        self.assertIsNone(unit)
+        self.assertIn("declared in `also`", reason)
+
+    def test_an_unparseable_declared_file_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "loop.py").write_text(self.LOOP, encoding="utf-8")
+            (root / "broken.py").write_text("def (\n", encoding="utf-8")
+            unit, reason = rdp.load_symbol(
+                root / "loop.py", "fetch", [root / "broken.py"]
+            )
+        self.assertIsNone(unit)
+        self.assertIn("not parseable", reason)
+
+    def test_the_manifest_rejects_a_non_list_also(self):
+        with self.assertRaisesRegex(rdp.ManifestError, "`also` must be a list"):
+            rdp._site(
+                {
+                    "repo": "a/b",
+                    "file": "x.py",
+                    "since": "2026-08-07",
+                    "also": "policy.py",
+                },
+                "where",
+            )
+
+    def test_the_manifest_rejects_an_empty_path_in_also(self):
+        with self.assertRaisesRegex(rdp.ManifestError, "`also` must be a list"):
+            rdp._site(
+                {"repo": "a/b", "file": "x.py", "since": "2026-08-07", "also": [""]},
+                "where",
+            )
+
+    def test_also_is_optional_and_defaults_to_nothing(self):
+        site = rdp._site(
+            {"repo": "a/b", "file": "x.py", "since": "2026-08-07"}, "where"
+        )
+        self.assertEqual(site.also, ())
+        self.assertEqual(site.as_dict()["also"], [])

@@ -199,6 +199,9 @@ class Site:
     file: str
     symbol: str
     since: str
+    # Further files of the same repository whose functions the entry symbol may
+    # call. Opt-in per adoption; see `load_symbol`.
+    also: tuple[str, ...] = ()
     path: Path | None = None
     unit: Unit | None = None
     unverified: str = ""
@@ -213,6 +216,7 @@ class Site:
             "file": self.file,
             "symbol": self.symbol,
             "since": self.since,
+            "also": list(self.also),
             "path": str(self.path) if self.path else "",
             "read": self.unit is not None,
             "unverified": self.unverified,
@@ -345,11 +349,19 @@ def _site(raw: object, where: str) -> Site:
         raise ManifestError(
             f"{where}: adoption of `{raw['repo']}` has since={since!r}, not YYYY-MM-DD"
         )
+    also_raw = raw.get("also", [])
+    if not isinstance(also_raw, list) or any(
+        not isinstance(f, str) or not f for f in also_raw
+    ):
+        raise ManifestError(
+            f"{where}: `also` must be a list of file paths, got {also_raw!r}"
+        )
     return Site(
         repo=str(raw["repo"]),
         file=str(raw["file"]),
         symbol=str(raw.get("symbol", "")),
         since=since,
+        also=tuple(also_raw),
     )
 
 
@@ -469,8 +481,20 @@ def _named_functions(tree: ast.Module) -> dict[str, ast.AST]:
     return out
 
 
-def _reachable_helpers(tree: ast.Module, entry: ast.AST) -> tuple[ast.AST, ...]:
-    """The module-level functions ``entry`` calls, followed to ``HELPER_DEPTH``.
+def _reachable_helpers(
+    tree: ast.Module, entry: ast.AST, extra: dict[str, ast.AST] | None = None
+) -> tuple[ast.AST, ...]:
+    """The named functions ``entry`` calls, followed to ``HELPER_DEPTH``.
+
+    Named, not module-level: `_named_functions` walks the tree, so a method is
+    a helper too. (This line said "module-level" until 2026-08-07 — the code was
+    right and the sentence was left behind, which is the sort of thing this
+    probe exists to notice one layer out.)
+
+    ``extra`` is the function table of the files an adoption declared under
+    `also`. It is merged UNDER the entry file's own table: a helper defined here
+    is the one the entry actually reaches, whatever a declared file happens to
+    call by the same name.
 
     WHY A PROPERTY MAY LEAVE ITS SYMBOL
     -----------------------------------
@@ -510,6 +534,8 @@ def _reachable_helpers(tree: ast.Module, entry: ast.AST) -> tuple[ast.AST, ...]:
       any of these properties say.
     """
     functions = _named_functions(tree)
+    for name, node in (extra or {}).items():
+        functions.setdefault(name, node)
     seen: set[int] = {id(entry)}
     frontier: list[ast.AST] = [entry]
     out: list[ast.AST] = []
@@ -530,8 +556,29 @@ def _reachable_helpers(tree: ast.Module, entry: ast.AST) -> tuple[ast.AST, ...]:
     return tuple(out)
 
 
-def load_symbol(path: Path, symbol: str) -> tuple[Unit | None, str]:
-    """(unit, reason-it-could-not-be-read). An empty ``symbol`` means the module."""
+def load_symbol(
+    path: Path, symbol: str, also: Sequence[Path] = ()
+) -> tuple[Unit | None, str]:
+    """(unit, reason-it-could-not-be-read). An empty ``symbol`` means the module.
+
+    ``also`` names further files of the same repository whose functions may be
+    followed from the entry symbol. It exists for one shape, and the shape is
+    real: `seco-labor-mcp` keeps `compute_delay` and `parse_retry_after` in
+    `retry_policy.py` and calls them from two retry loops in two other modules.
+    Neither file holds all eight declared properties alone — the loops carry the
+    error handling and the budget, the policy module carries the jitter, the cap
+    and the header name — so no single-file mapping can describe that adoption.
+    Before this field the manifest could only choose which half to under-report.
+
+    Opt-in and per adoption, never inferred. Declaring `also` does NOT widen the
+    scope to those files: only functions the entry actually calls are followed,
+    exactly as within one file. What changes is that such a call may now cross a
+    module boundary the manifest has named.
+
+    A declared path that cannot be read is REPORTED, not skipped. Dropping it
+    silently would turn a stale mapping into a quiet narrowing of the
+    measurement — the failure this probe exists to prevent.
+    """
     try:
         source = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -543,13 +590,26 @@ def load_symbol(path: Path, symbol: str) -> tuple[Unit | None, str]:
     aliases = _aliases(tree)
     if not symbol:
         return Unit(tree, aliases), ""
+
+    extra: dict[str, ast.AST] = {}
+    for extra_path in also:
+        try:
+            extra_tree = ast.parse(
+                extra_path.read_text(encoding="utf-8"), filename=str(extra_path)
+            )
+        except OSError as exc:
+            return None, f"{extra_path} (declared in `also`) could not be read: {exc}"
+        except SyntaxError as exc:
+            return None, f"{extra_path} (declared in `also`) is not parseable: {exc}"
+        for name, node in _named_functions(extra_tree).items():
+            extra.setdefault(name, node)
     node: ast.AST = tree
     for part in symbol.split("."):
         found = _child(node, part)
         if found is None:
             return None, f"{path}: no symbol `{symbol}` (`{part}` not found)"
         node = found
-    return Unit(node, aliases, _reachable_helpers(tree, node)), ""
+    return Unit(node, aliases, _reachable_helpers(tree, node, extra)), ""
 
 
 def _aliases(tree: ast.AST) -> dict[str, str]:
@@ -1057,7 +1117,9 @@ def _resolve_template(
             )
             continue
         site.path = root / site.file
-        site.unit, site.unverified = load_symbol(site.path, site.symbol)
+        site.unit, site.unverified = load_symbol(
+            site.path, site.symbol, [root / f for f in site.also]
+        )
         if site.unit is None:
             report.unverified.append(
                 Unverified(
