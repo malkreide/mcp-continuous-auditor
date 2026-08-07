@@ -89,6 +89,35 @@ against one.
 The last row of that table is not a loophole either. `pytest tests/` with no
 `-m` runs the live suite, and whether the live suite runs is the whole question.
 
+## A test file run as a script is resolved, not dismissed
+
+`swiss-snb-mcp` runs its live suite nightly with two steps that read
+
+```yaml
+- run: python tests/test_live_scenarios.py
+- run: python tests/test_live_warehouse.py
+```
+
+No pytest on the line at all. Both files carry `pytestmark = pytest.mark.live`
+**and** an `if __name__ == "__main__":` block that runs every scenario and exits
+non-zero on failure. Read as "not a pytest call", that repository came back
+`LIVE_UNSCHEDULED` — a false finding against a server that has been running its
+live tests every single night.
+
+So `python <file>.py` is recorded and then resolved against the checkout, which
+is the only place the answer is:
+
+| The file | Verdict |
+|---|---|
+| carries the marker **and** has a `__main__` block | it runs — the schedule counts |
+| carries the marker, **no** `__main__` block | finding, with its own sentence |
+| anything else | opaque ⇒ `UNVERIFIED` |
+
+The middle row is worth the code it costs. A live test file executed as a script
+without a `__main__` block imports its dependencies and exits 0 — **a green cron
+that runs no test.** That is not the absence of an answer, it is a wrong one,
+and it is the DRIFT-005 failure mode one level further in.
+
 ## What a finding is not allowed to claim
 
 The dangerous direction here is a false `LIVE_UNSCHEDULED` — the workflow does

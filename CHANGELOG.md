@@ -49,6 +49,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds the index row: a probe nobody can find is a probe nobody runs, and
   nothing else in this repository enforces that table.
 
+### Fixed — a live suite run as a script read as no live suite at all
+
+Measured on 2026-08-07 against the four remaining servers from the
+`DRIFT-005` sweep. Three came back `LIVE_UNSCHEDULED` correctly.
+**`swiss-snb-mcp` came back `LIVE_UNSCHEDULED` falsely**, and it is the one that
+has been running its live tests every single night since it was written:
+
+```yaml
+live:
+  if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+  steps:
+    - run: python tests/test_live_scenarios.py
+    - run: python tests/test_live_warehouse.py
+```
+
+No pytest on the line. Both files carry `pytestmark = pytest.mark.live` and an
+`if __name__ == "__main__":` block that runs every scenario and exits non-zero
+on failure. The probe recognised neither a pytest invocation nor an opaque
+wrapper, and concluded absence — the exact direction its own docstring calls the
+dangerous one.
+
+`python <file>.py` is now recorded and **resolved against the checkout**, which
+is the only place the answer is: marker plus a `__main__` block means it runs and
+the schedule counts; marker without one is a finding with its own sentence,
+because run as a script the file imports and exits 0 without executing a single
+test — a green cron that answers the question falsely, worse than no cron;
+anything else stays opaque and therefore `UNVERIFIED`.
+
+`swiss-snb-mcp` now reads `LIVE_SCHEDULED_SILENT`, which is its real defect: the
+nightly run exists and no step or job reacts to `failure()`, so a red night
+reaches nobody.
+
+The lesson is the same one the `normalised` knob taught two changes ago: a
+repository that did the thing *its own way* was unreadable to a probe written
+from one example. Fixture-tested, both times, and wrong the first time it met a
+real portfolio.
 
 ### Changed — the first live run of the two data-source probes, and what it cost
 

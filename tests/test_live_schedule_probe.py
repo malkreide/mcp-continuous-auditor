@@ -142,7 +142,7 @@ class PytestCallTest(unittest.TestCase):
 
     def test_installing_pytest_is_not_running_it(self):
         """The false positive that would make an install satisfy the check."""
-        calls, opaque = lsp.parse_pytest_calls("pip install pytest pytest-asyncio")
+        calls, opaque, _ = lsp.parse_pytest_calls("pip install pytest pytest-asyncio")
         self.assertEqual(calls, [])
         self.assertEqual(opaque, [])
 
@@ -158,13 +158,13 @@ class PytestCallTest(unittest.TestCase):
             ".venv/bin/pytest -m live",
         ):
             with self.subTest(line=line):
-                calls, _ = lsp.parse_pytest_calls(line)
+                calls, _, _ = lsp.parse_pytest_calls(line)
                 self.assertEqual(len(calls), 1, line)
                 self.assertEqual(calls[0].marker_expr, "live")
                 self.assertIs(calls[0].admits, True)
 
     def test_chained_commands_are_split(self):
-        calls, _ = lsp.parse_pytest_calls('uv sync && pytest tests/ -m "not live"')
+        calls, _, _ = lsp.parse_pytest_calls('uv sync && pytest tests/ -m "not live"')
         self.assertEqual(len(calls), 1)
         self.assertIs(calls[0].admits, False)
 
@@ -176,13 +176,42 @@ class PytestCallTest(unittest.TestCase):
             "nox -s live",
         ):
             with self.subTest(line=line):
-                calls, opaque = lsp.parse_pytest_calls(line)
+                calls, opaque, _ = lsp.parse_pytest_calls(line)
                 self.assertEqual(calls, [])
                 self.assertEqual(opaque, [line])
 
     def test_an_explicit_live_flag_counts(self):
-        calls, _ = lsp.parse_pytest_calls("pytest tests/ --run-live")
+        calls, _, _ = lsp.parse_pytest_calls("pytest tests/ --run-live")
         self.assertIs(calls[0].admits, True)
+
+
+class ScriptCallTest(unittest.TestCase):
+    """`python tests/test_live_x.py` — a live suite run as a script.
+
+    `swiss-snb-mcp` runs its live tests exactly this way, nightly. Read as
+    «not a pytest call», it came back LIVE_UNSCHEDULED — a false finding
+    against a server that runs its live tests every single night.
+    """
+
+    def test_a_python_file_invocation_is_recorded(self):
+        calls, opaque, scripts = lsp.parse_pytest_calls(
+            "python tests/test_live_scenarios.py"
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(opaque, [])
+        self.assertEqual([s.path for s in scripts], ["tests/test_live_scenarios.py"])
+
+    def test_python_dash_m_is_not_a_file_invocation(self):
+        _, _, scripts = lsp.parse_pytest_calls("python -m pytest tests/")
+        self.assertEqual(scripts, [])
+
+    def test_a_main_guard_is_what_makes_the_file_run(self):
+        with_guard = (
+            "import pytest\n\npytestmark = pytest.mark.live\n\n"
+            'if __name__ == "__main__":\n    raise SystemExit(0)\n'
+        )
+        self.assertTrue(lsp.has_main_guard(with_guard))
+        self.assertFalse(lsp.has_main_guard("import pytest\n"))
 
 
 class CronCadenceTest(unittest.TestCase):
@@ -335,6 +364,53 @@ class VerdictTest(unittest.TestCase):
         joined = " ".join(report.notes)
         self.assertIn(lsp.NOTE_SPARSE, joined)
         self.assertIn(lsp.NOTE_NO_DISPATCH, joined)
+
+
+@unittest.skipIf(yaml is None, "PyYAML is not installed")
+class ScriptInvocationVerdictTest(unittest.TestCase):
+    """The swiss-snb-mcp shape, resolved against the checkout."""
+
+    SCRIPT_WORKFLOW = SCHEDULED_WORKFLOW.replace(
+        "pytest tests/ -m live -v", "python tests/test_live.py"
+    )
+    RUNNABLE = (
+        "import pytest\n\npytestmark = pytest.mark.live\n\n"
+        "def test_real():\n    assert True\n\n\n"
+        'if __name__ == "__main__":\n    raise SystemExit(0)\n'
+    )
+    HOLLOW = (
+        "import pytest\n\npytestmark = pytest.mark.live\n\n"
+        "def test_real():\n    assert True\n"
+    )
+
+    def _probe(self, source: str, workflow: str | None = None):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_target(
+                Path(tmp),
+                tests={"test_live.py": source},
+                workflows={"live.yml": workflow or self.SCRIPT_WORKFLOW},
+            )
+            return lsp.probe(root)
+
+    def test_a_live_file_with_a_main_block_counts_as_scheduled(self):
+        report = self._probe(self.RUNNABLE)
+        self.assertEqual(report.status, lsp.SCHEDULED)
+        self.assertEqual(report.scheduled[0].resolved_scripts, ["tests/test_live.py"])
+
+    def test_a_live_file_without_one_runs_nothing_and_says_so(self):
+        """A green cron that executes no test answers the question falsely."""
+        report = self._probe(self.HOLLOW)
+        self.assertEqual(report.status, lsp.UNSCHEDULED)
+        self.assertIn("__main__", report.reason)
+        self.assertIn("exits 0 without executing a single test", report.reason)
+
+    def test_a_script_that_is_not_a_live_test_file_is_opaque(self):
+        workflow = self.SCRIPT_WORKFLOW.replace(
+            "python tests/test_live.py", "python scripts/refresh_cache.py"
+        )
+        report = self._probe(self.RUNNABLE, workflow=workflow)
+        self.assertEqual(report.status, lsp.UNVERIFIED)
+        self.assertIn("refresh_cache.py", report.reason)
 
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")
