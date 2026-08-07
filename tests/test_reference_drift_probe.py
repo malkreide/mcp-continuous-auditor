@@ -825,3 +825,186 @@ class WrapsShapeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HelperScopeTest(unittest.TestCase):
+    """A property may follow a call out of the declared symbol into a helper.
+
+    THE INCIDENT. This file and the skill's own `tools/checks/adoption.py` read
+    ONE manifest from two sides, and until 2026-08-07 they meant different
+    things by `symbol`: the skill took the symbol plus the functions it calls,
+    this took the symbol alone. Nobody noticed while the templates were one flat
+    function.
+
+    Then the 2026-08-03 repair extracted helpers. `retry-after` moved into
+    `parse_retry_after`, `random.random` into `compute_delay`, and
+    `fetch_with_retry` calls them and touches neither. This reader therefore
+    reported `reads_retry_after`, `jitters` and `caps_after_jitter` as satisfied
+    *nowhere* — over a template that satisfies all three and 23 adoption sites
+    that do too. A finding that indicts everything indicts nothing.
+    """
+
+    def unit(self, source: str, symbol: str) -> rdp.Unit:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "m.py"
+            path.write_text(source, encoding="utf-8")
+            unit, reason = rdp.load_symbol(path, symbol)
+        self.assertEqual(reason, "")
+        assert unit is not None
+        return unit
+
+    LITERAL = rdp.Property(
+        id="reads_retry_after",
+        says="honours the server's own hint",
+        kind="literal",
+        any_of=("retry-after",),
+        expect="present",
+    )
+    CALLS = rdp.Property(
+        id="jitters",
+        says="spreads the retry",
+        kind="calls",
+        any_of=("random.random",),
+        expect="present",
+    )
+
+    SOURCE = (
+        "import random\n\n\n"
+        "def parse_retry_after(resp):\n"
+        '    return resp.headers.get("retry-after")\n\n\n'
+        "def compute_delay(attempt, resp):\n"
+        "    hinted = parse_retry_after(resp)\n"
+        "    return hinted or random.random()\n\n\n"
+        "async def fetch_with_retry(url):\n"
+        "    return compute_delay(1, None)\n"
+    )
+
+    def test_a_literal_in_a_helper_is_seen(self):
+        unit = self.unit(self.SOURCE, "fetch_with_retry")
+        self.assertTrue(rdp.holds(self.LITERAL, unit))
+
+    def test_a_call_two_helpers_deep_is_seen(self):
+        """`fetch_with_retry` → `compute_delay` → `random.random`."""
+        unit = self.unit(self.SOURCE, "fetch_with_retry")
+        self.assertTrue(rdp.holds(self.CALLS, unit))
+
+    def test_without_following_neither_would_be(self):
+        """The counter-check: the entry symbol alone holds neither property.
+
+        Without this, the two tests above could pass for the wrong reason — a
+        source where the entry happens to contain the literal itself would
+        satisfy them while the following was broken.
+        """
+        entry_only = rdp.Unit(self.unit(self.SOURCE, "fetch_with_retry").node)
+        self.assertFalse(rdp.holds(self.LITERAL, entry_only))
+        self.assertFalse(rdp.holds(self.CALLS, entry_only))
+
+    def test_a_method_counts_as_a_helper(self):
+        """`swiss-efv-mcp` puts its jitter in `EFVClient._delay`.
+
+        A module-level-only reading called it unadopted for a property it
+        plainly holds. `ast.walk` is what the skill uses, so it is what this
+        uses.
+        """
+        source = (
+            "import random\n\n\n"
+            "class C:\n"
+            "    def _delay(self):\n"
+            "        return random.random()\n\n"
+            "    async def fetch(self):\n"
+            "        return self._delay()\n"
+        )
+        unit = self.unit(source, "C.fetch")
+        self.assertTrue(rdp.holds(self.CALLS, unit))
+
+    def test_an_unrelated_helper_is_not_followed(self):
+        """Only what the entry reaches. Otherwise the scope is 'the file'."""
+        source = (
+            "import random\n\n\n"
+            "def unrelated():\n"
+            "    return random.random()\n\n\n"
+            "async def fetch():\n"
+            "    return 1\n"
+        )
+        self.assertFalse(rdp.holds(self.CALLS, self.unit(source, "fetch")))
+
+    def test_a_callback_passed_by_name_is_not_followed(self):
+        """A documented limit, and a live one.
+
+        `swiss-statistics-mcp` hands `wait=_retry_wait` to tenacity; no call to
+        it appears in the file. The report says so rather than widening to cover
+        it — following bare name references would follow every function ever
+        mentioned.
+        """
+        source = (
+            "import random\n\n\n"
+            "def _wait(state):\n"
+            "    return random.random()\n\n\n"
+            "async def fetch():\n"
+            "    return retrying(wait=_wait)\n"
+        )
+        self.assertFalse(rdp.holds(self.CALLS, self.unit(source, "fetch")))
+
+    def test_the_depth_is_bounded(self):
+        """`HELPER_DEPTH` hops, not "until the file runs out".
+
+        The chain length is a LITERAL, deliberately. A first version of this
+        test built it from `rdp.HELPER_DEPTH + 2` and therefore grew with the
+        constant it was meant to pin: raising the bound to 99 left it green,
+        which the mutation run caught. A test that scales itself with its own
+        subject measures nothing.
+        """
+        self.assertLessEqual(rdp.HELPER_DEPTH, 5, "the literal chain below assumes it")
+        chain = "import random\n\n\n"
+        for i in range(6):
+            nxt = f"h{i + 1}()" if i < 5 else "random.random()"
+            chain += f"def h{i}():\n    return {nxt}\n\n\n"
+        chain += "def entry():\n    return h0()\n"
+        self.assertFalse(rdp.holds(self.CALLS, self.unit(chain, "entry")))
+
+    def test_a_chain_within_the_bound_is_followed(self):
+        """The other direction, so the test above cannot pass by never following."""
+        chain = (
+            "import random\n\n\n"
+            "def h2():\n    return random.random()\n\n\n"
+            "def h1():\n    return h2()\n\n\n"
+            "def entry():\n    return h1()\n"
+        )
+        self.assertTrue(rdp.holds(self.CALLS, self.unit(chain, "entry")))
+
+    def test_wraps_is_evaluated_per_root_not_across_helpers(self):
+        """A binding in one helper must not satisfy a `min` in another.
+
+        They are different scopes at runtime; pairing them would report an
+        ordering nobody wrote.
+        """
+        prop = rdp.Property(
+            id="caps_after_jitter",
+            says="ceiling after jitter",
+            kind="wraps",
+            outer="min",
+            inner=("random.random",),
+            expect="present",
+        )
+        split = (
+            "import random\n\nCAP = 20.0\n\n\n"
+            "def binds():\n"
+            "    jittered = random.random()\n"
+            "    return jittered\n\n\n"
+            "def caps():\n"
+            "    return min(jittered, CAP)\n\n\n"
+            "def entry():\n"
+            "    binds()\n"
+            "    return caps()\n"
+        )
+        self.assertFalse(rdp.holds(prop, self.unit(split, "entry")))
+
+        together = (
+            "import random\n\nCAP = 20.0\n\n\n"
+            "def delay():\n"
+            "    jittered = random.random()\n"
+            "    return min(jittered, CAP)\n\n\n"
+            "def entry():\n"
+            "    return delay()\n"
+        )
+        self.assertTrue(rdp.holds(prop, self.unit(together, "entry")))

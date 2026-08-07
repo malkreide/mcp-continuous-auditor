@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Vendored-copy probe (`scripts/vendored_copy_probe.py`).** Asks whether the
+  files that declare byte identity across repositories still match — and
+  whether anything says so when they stop.
+
+  **The case.** `sparql_client.py` is held in `swiss-environment-mcp` and
+  `fedlex-mcp`, and both copies carry a header saying they are kept
+  byte-identical. On 2026-08-07 they were 250 and 140 lines: the retry policy
+  (`ARCH-014`) had been repaired in one and never reached the other. **And the
+  marker read `v1.1.0` on both sides** — which is why it survived. In each
+  repository only one half is visible, and both halves declared the same
+  version, so no artefact anywhere disagreed with anything.
+
+  **Why not `reference_drift_probe.py`.** That probe compares a template
+  against its adopters by AST *property*, and refuses a text diff on purpose:
+  an adopter that renames `MAX_DELAY_S` to `RETRY_MAX_DELAY` has adopted
+  correctly. A vendored copy is not adopted, it is duplicated, and it declares
+  byte identity about itself. Where that is the contract, comparing bytes *is*
+  the contract.
+
+  Findings: `COPY_DRIFT` (`medium` when the difference is trailing whitespace
+  only — still drift, but a different job), `MARKER_STALE` (`high`, the
+  incident: copies differ under one marker), `MARKER_SPLIT` (`low`, drift that
+  announces itself), `MARKER_MISSING`. Never a pass: `SITE_MISSING`,
+  `SITE_UNREADABLE`, `GROUP_UNMEASURED` — a group compared against one file is
+  unmeasured, not clean, and exits `3`.
+
+  The mapping is declared in `vendored.toml` and nowhere else; there is no
+  name-similarity fallback, for the reason the sister probe gives in the same
+  words. Nothing is fetched.
+
+  Verified against the real repositories in both states: green on today's
+  `main`, and both findings on the pre-repair state that produced the incident.
+
+- **`vendored.example.toml`** — the format's committed reference, and what the
+  tests parse.
+
+- **`docs/probes/vendored-copy.md`**, listed in `docs/probes/README.md`. A test
+  holds the index row: a probe nobody can find is a probe nobody runs, and
+  nothing else in this repository enforces that table.
+
+### Fixed — the two readers of `adoption.toml` meant different things by `symbol`
+
+`reference/adoption.toml` says at the top that it is read from two sides: by
+Check 17 in the skill (`tools/checks/adoption.py`) against the TEMPLATES, and by
+this probe against the SERVERS. It did not say that the two sides scoped a
+property differently.
+
+| Reader | Scope |
+|---|---|
+| `tools/checks/adoption.py::_scope` | the symbol **plus the functions it calls**, to `HELPER_DEPTH` |
+| `reference_drift_probe.py::load_symbol` | the symbol, and nothing else |
+
+It cost nothing while the templates were one flat function. Then the 2026-08-03
+repair extracted helpers: in `reference/retry_backoff.py` the `retry-after`
+literal moved into `parse_retry_after` and `random.random` into
+`compute_delay`, and `fetch_with_retry` calls them and touches neither.
+
+**The probe then reported `reads_retry_after`, `jitters` and `caps_after_jitter`
+as satisfied nowhere** — over a template that satisfies all three, and 23
+adoption sites that do too, every one of which had made the same extraction.
+Check 17 said all eight properties held, on the same file, on the same day.
+
+A finding that indicts everything indicts nothing, and that shape is what gave
+it away: the verdict was about the scope of the measurement, not about any code.
+
+`load_symbol` now follows calls into named functions of the same file, using
+`ast.walk` and `setdefault` — line for line what the skill does, because the two
+have to agree or the manifest means two things again. `ast.walk` and not
+`tree.body` is load-bearing: `swiss-efv-mcp` puts its jitter in
+`EFVClient._delay`, and a module-level-only reading called it unadopted for a
+property it plainly holds.
+
+`wraps` is evaluated **per root**. A binding in one helper must not satisfy a
+`min` in another — they are different scopes at runtime, and pairing them across
+would report an ordering nobody wrote.
+
+**What is deliberately still not followed**, and both are live cases rather than
+hypotheticals:
+
+* A helper **referenced** but not called. `swiss-statistics-mcp` hands
+  `wait=_retry_wait` to `tenacity`; no call to it appears in the file, so the
+  three properties living in that callback still read as unadopted there. The
+  report is honest about the shape rather than quietly widened — following bare
+  name references would follow every function ever mentioned.
+* Anything in **another module**. `seco-labor-mcp` keeps its policy in
+  `retry_policy.py` while the manifest maps `server.py` and `uvg.py`; that is a
+  mapping to fix in the manifest, not a scope to widen here.
+
+**The findings this made visible.** Because the template itself failed the three
+properties, per-site comparison for them never ran. It runs now, and the first
+run names `bag-health-mcp` and `amtsblatt-mcp` (both catch a superclass rather
+than the two declared types), `swiss-statistics-mcp` (the callback above) and
+`seco-labor-mcp` (the cross-module mapping). None of them is new; they were
+drowned out by a verdict that pointed at everything.
+
 ### Behoben — der zweite Guard ohne Adressat, und was der Formatter wirklich zusaetzlich faengt
 
 `redteam-regen.yml.template` lief auf `schedule` und sonst nichts, ohne

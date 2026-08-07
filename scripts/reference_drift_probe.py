@@ -154,6 +154,12 @@ NOT_A_TEMPLATE = {"__init__.py", "conftest.py"}
 # coincidence, and a floor of one would turn this layer into a two-file diff.
 DEFAULT_FLOOR = 3
 
+# How far a property may follow a call out of the declared symbol and into a
+# module-level helper of the same file. Mirrors `HELPER_DEPTH` in the skill's
+# own reader (`tools/checks/adoption.py`) — the two read one manifest and have
+# to mean the same thing by `symbol`; see the note on `load_symbol`.
+HELPER_DEPTH = 3
+
 PROPERTY_KINDS = ("calls", "literal", "wraps", "raises", "handles")
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -373,6 +379,18 @@ class Unit:
 
     node: ast.AST
     aliases: dict[str, str] = field(default_factory=dict)
+    helpers: tuple[ast.AST, ...] = ()
+
+    @property
+    def roots(self) -> tuple[ast.AST, ...]:
+        """The entry symbol first, then the helpers it reaches.
+
+        Order matters for nothing except readability; what matters is that a
+        property may be satisfied in any of them. Sub-expression units — the
+        ones built inside `_observed` to look at a single argument — carry no
+        helpers and behave exactly as they did before.
+        """
+        return (self.node, *self.helpers)
 
     def resolve(self, dotted: str) -> str:
         head, _, rest = dotted.partition(".")
@@ -382,16 +400,23 @@ class Unit:
         return f"{target}.{rest}" if rest else target
 
     def calls(self) -> list[tuple[str, ast.Call]]:
-        return [(self.resolve(name), call) for name, call in _raw_calls(self.node)]
+        return [
+            (self.resolve(name), call)
+            for root in self.roots
+            for name, call in _raw_calls(root)
+        ]
 
     def literals(self) -> set[str]:
-        return _literals(self.node)
+        seen: set[str] = set()
+        for root in self.roots:
+            seen |= _literals(root)
+        return seen
 
     def raised(self) -> list[str]:
-        return [self.resolve(name) for name in _raw_raised(self.node)]
+        return [self.resolve(name) for root in self.roots for name in _raw_raised(root)]
 
     def caught(self) -> list[str]:
-        return [self.resolve(name) for name in _raw_caught(self.node)]
+        return [self.resolve(name) for root in self.roots for name in _raw_caught(root)]
 
     def facts(self) -> frozenset[str]:
         """The rename-stable facts the unanimity layer compares.
@@ -409,7 +434,8 @@ class Unit:
         """
         constructed = {
             id(node.exc)
-            for node in ast.walk(self.node)
+            for root in self.roots
+            for node in ast.walk(root)
             if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
         }
         out = {
@@ -424,6 +450,84 @@ class Unit:
 
 def _tail(dotted: str) -> str:
     return dotted.rsplit(".", 1)[-1]
+
+
+def _named_functions(tree: ast.Module) -> dict[str, ast.AST]:
+    """Every `def`/`async def` in the file, by name — methods included.
+
+    `ast.walk` and not `tree.body`, and `setdefault` so the first definition of
+    a name wins: this is `tools/checks/adoption.py::_functions` line for line,
+    and the two have to agree or the manifest means two things again. Methods
+    matter in practice — `swiss-efv-mcp` puts its jitter in
+    `EFVClient._delay`, and a module-level-only reading calls that server
+    unadopted for a property it plainly holds.
+    """
+    out: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            out.setdefault(node.name, node)
+    return out
+
+
+def _reachable_helpers(tree: ast.Module, entry: ast.AST) -> tuple[ast.AST, ...]:
+    """The module-level functions ``entry`` calls, followed to ``HELPER_DEPTH``.
+
+    WHY A PROPERTY MAY LEAVE ITS SYMBOL
+    -----------------------------------
+    This file and the skill's own `tools/checks/adoption.py` read ONE manifest
+    from two sides. Until 2026-08-07 they meant different things by `symbol`:
+    the skill took the symbol plus the module functions it calls, this took the
+    symbol and nothing else. Nobody noticed while the templates were one flat
+    function.
+
+    Then the 2026-08-03 repair extracted helpers. In `reference/retry_backoff.py`
+    the `retry-after` literal moved into `parse_retry_after` and `random.random`
+    into `compute_delay`; `fetch_with_retry` calls them and touches neither. The
+    single-symbol reading therefore reported `reads_retry_after`, `jitters` and
+    `caps_after_jitter` as satisfied *nowhere* — over a template that satisfies
+    all three, and 23 adoption sites that do too, every one of which had made
+    the same extraction.
+
+    A finding that indicts everything indicts nothing, and that shape is what
+    gave it away: the verdict was about the scope of the measurement, not about
+    any code. The skill's Check 17 said all eight properties held on the same
+    file, on the same day.
+
+    THE LIMITS, WHICH ARE THE POINT
+    -------------------------------
+    * CALLED, not merely referenced. A helper passed by name and invoked by
+      somebody else is not followed — `swiss-statistics-mcp` hands
+      `wait=_retry_wait` to `tenacity`, and no call to it appears anywhere in
+      this file. That server therefore still reads as unadopted for the three
+      properties that live in the callback, and the report is honest about the
+      shape rather than quietly widened to cover it. Following bare name
+      references would follow every function ever mentioned.
+    * SAME FILE ONLY. Nothing is imported and followed across modules. A
+      property that chased imports would eventually measure a library.
+    * BOUNDED by `HELPER_DEPTH`, the same constant the skill uses. Three hops is
+      what the portfolio's deepest correct adoption needs; unbounded following
+      would end at "the property holds somewhere in the file", which is not what
+      any of these properties say.
+    """
+    functions = _named_functions(tree)
+    seen: set[int] = {id(entry)}
+    frontier: list[ast.AST] = [entry]
+    out: list[ast.AST] = []
+    for _ in range(HELPER_DEPTH):
+        nxt: list[ast.AST] = []
+        for node in frontier:
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                helper = functions.get(_dotted(call.func).rsplit(".", 1)[-1])
+                if helper is not None and id(helper) not in seen:
+                    seen.add(id(helper))
+                    nxt.append(helper)
+                    out.append(helper)
+        frontier = nxt
+        if not frontier:
+            break
+    return tuple(out)
 
 
 def load_symbol(path: Path, symbol: str) -> tuple[Unit | None, str]:
@@ -445,7 +549,7 @@ def load_symbol(path: Path, symbol: str) -> tuple[Unit | None, str]:
         if found is None:
             return None, f"{path}: no symbol `{symbol}` (`{part}` not found)"
         node = found
-    return Unit(node, aliases), ""
+    return Unit(node, aliases, _reachable_helpers(tree, node)), ""
 
 
 def _aliases(tree: ast.AST) -> dict[str, str]:
@@ -571,7 +675,9 @@ def _raw_caught(node: ast.AST) -> list[str]:
     return out
 
 
-def _bound_to_inner(unit: Unit, inner: Sequence[str]) -> set[str]:
+def _bound_to_inner(
+    root: ast.AST, aliases: dict[str, str], inner: Sequence[str]
+) -> set[str]:
     """Locals assigned from an expression that contains one of ``inner``.
 
     `wraps` asks about ORDER — does the ceiling sit outside the jitter? — and
@@ -588,7 +694,10 @@ def _bound_to_inner(unit: Unit, inner: Sequence[str]) -> set[str]:
     `caps_after_jitter` failed 6 of 6 adoptions that hold exactly the behaviour
     it describes, and the finding pointed at correct code.
 
-    Deliberately shallow. Only a direct assignment inside the same unit counts —
+    Deliberately shallow, and scoped to ONE root. A binding in one helper must
+    not satisfy a `min` in another: the two would be different scopes at
+    runtime, and pairing them across would report an ordering nobody wrote.
+    Only a direct assignment inside the same root counts —
     no transitive chains, no attributes, no augmented assignment. A wider
     analysis would start reporting a cap where the value merely passed through,
     and a false *positive* here is worse than the false negative it replaces:
@@ -596,10 +705,10 @@ def _bound_to_inner(unit: Unit, inner: Sequence[str]) -> set[str]:
     bound at all.
     """
     out: set[str] = set()
-    for node in ast.walk(unit.node):
+    for node in ast.walk(root):
         if not isinstance(node, ast.Assign):
             continue
-        value_unit = Unit(node.value, unit.aliases)
+        value_unit = Unit(node.value, aliases)
         if not any(
             _tail_match(found, want)
             for found, _ in value_unit.calls()
@@ -653,22 +762,26 @@ def _observed(prop: Property, unit: Unit) -> bool:
         )
     if prop.kind == "wraps":
         # Two shapes, and they are MUTUALLY EXCLUSIVE — see `_bound_to_inner`.
-        bound = _bound_to_inner(unit, prop.inner)
-        for name, call in unit.calls():
-            if not _tail_match(name, prop.outer):
-                continue
-            arguments = [*call.args, *(kw.value for kw in call.keywords)]
-            for argument in arguments:
-                # (a) Lexical: the inner call sits inside the outer call's args.
-                inner = Unit(argument, unit.aliases)
-                for found, _ in inner.calls():
-                    if any(_tail_match(found, want) for want in prop.inner):
-                        return True
-                # (b) Name-bound: an argument mentions a local that was assigned
-                #     from an expression containing the inner call.
-                for node in ast.walk(argument):
-                    if isinstance(node, ast.Name) and node.id in bound:
-                        return True
+        # Evaluated PER ROOT: the binding and the outer call have to sit in the
+        # same function, which is what they do at runtime.
+        for root in unit.roots:
+            root_unit = Unit(root, unit.aliases)
+            bound = _bound_to_inner(root, unit.aliases, prop.inner)
+            for name, call in root_unit.calls():
+                if not _tail_match(name, prop.outer):
+                    continue
+                arguments = [*call.args, *(kw.value for kw in call.keywords)]
+                for argument in arguments:
+                    # (a) Lexical: the inner call sits inside the outer args.
+                    inner = Unit(argument, unit.aliases)
+                    for found, _ in inner.calls():
+                        if any(_tail_match(found, want) for want in prop.inner):
+                            return True
+                    # (b) Name-bound: an argument mentions a local assigned from
+                    #     an expression containing the inner call.
+                    for node in ast.walk(argument):
+                        if isinstance(node, ast.Name) and node.id in bound:
+                            return True
         return False
     # Unreachable: `_property` rejects every other kind at load time.
     raise ManifestError(f"unknown property kind {prop.kind!r}")
