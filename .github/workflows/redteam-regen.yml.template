@@ -3,12 +3,40 @@
 #
 # TEMPLATE for the TARGET MCP-server repo (e.g. zurich-opendata-mcp), NOT the
 # auditor. Ships as `.yml.template` so GitHub does not run it in the auditor repo.
-# To activate: copy to `.github/workflows/redteam-regen.yml`.
+# To activate: copy to `.github/workflows/redteam-regen.yml`, and copy the two
+# scripts it drives — `scripts/regen_guard.py` and `scripts/drift_issue.py`.
+# Both are stdlib-only, so nothing else needs installing for them.
 #
 # It runs `promptfoo redteam generate` (pinned attacker model) and, if the
 # committed `redteam.generated.yaml` changed, opens a PR. Regeneration is thus a
 # DELIBERATE, human-reviewed change — the eval gate always runs against COMMITTED
 # cases, never a moving target (T-A). The eval of those cases is the graded CI job.
+#
+# THE FAILURE THIS FILE IS SHAPED AROUND
+# --------------------------------------
+# This workflow runs on `schedule` and nothing else, and until now it had no
+# `issues: write` and no routing. That combination has no addressee: a red weekly
+# run appears in no pull request, and the job summary is seen by whoever opens
+# the run, which for a cron is nobody. It is not a hypothetical — a scheduled
+# guard elsewhere in this portfolio was red across six consecutive merges and was
+# never answered.
+#
+# Worse than a red run is a quiet one. When regeneration stops, the graded CI job
+# keeps evaluating the cases that are already committed and stays green; the
+# adversarial set simply stops growing, and nothing anywhere turns a colour. So
+# the finding needs a destination that survives: a tracking issue that is opened
+# or updated on a bad week and CLOSES ITSELF on a good one. Without the close it
+# becomes standing noise, and the answer to noise is to switch the guard off —
+# the close is what decides whether this job is still running in six months.
+#
+# WHY THE DECISION IS NOT IN THIS FILE
+# ------------------------------------
+# `echo` and a tool call may live in YAML; an `if` that decides red or green may
+# not (`OPS-008`). Inline logic runs only inside a workflow, so it cannot be
+# unit-tested, and what cannot be unit-tested cannot be mutation-tested. That is
+# not a style preference: `scripts/regen_guard.py` has a third state precisely
+# because moving the decision out of YAML made a two-state collapse visible, the
+# same way it did for `live-probe.yml.template`.
 
 name: redteam-regen
 
@@ -18,10 +46,12 @@ on:
     - cron: "23 5 * * 4"
   workflow_dispatch: {}
 
-# Least privilege: read code, write a branch + open the PR.
+# Least privilege: read code, write a branch + open the PR, and file the tracking
+# issue that gives a scheduled run somebody to report to.
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 concurrency:
   group: redteam-regen
@@ -37,14 +67,28 @@ jobs:
       # so a bump is a reviewable change. Its key comes from secrets.
       REDTEAM_ATTACKER: openai:gpt-4o-mini
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      REDTEAM_SET: promptfoo/redteam/redteam.generated.yaml
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # `continue-on-error` on both working steps is what makes the routing step
+      # reachable at all. Without it a failed regeneration ends the job, and the
+      # only state this guard could ever report would be the one it already
+      # reports badly: nothing.
       - name: Regenerate committed red-team cases
+        id: generate
+        continue-on-error: true
         run: bash promptfoo/redteam/generate.sh
+
       - name: Open a PR if the red-team set changed
+        id: pr
+        continue-on-error: true
         uses: peter-evans/create-pull-request@v6
         with:
           add-paths: promptfoo/redteam/redteam.generated.yaml
@@ -60,3 +104,68 @@ jobs:
             gate for expanding red-team coverage (Analysis T-A).
           labels: redteam
           draft: true
+
+      # Classify the run: finding / clear / unknown. Three, not two — "no finding
+      # was produced" and "everything is in order" are different sentences, and
+      # only the second may close an issue.
+      #
+      # `unknown` is the state a TEMPLATE needs most. Most repositories that copy
+      # this file will not have configured an attacker key on day one. Folding
+      # that into `finding` opens a ticket in every one of them for a workflow
+      # nobody switched on; folding it into `clear` closes a real ticket on a run
+      # that generated nothing. Both end with the guard switched off.
+      #
+      # Step outcomes and the secret's presence go through the environment, not
+      # through `${{ }}` interpolated into a shell command line.
+      - name: Classify the regeneration run
+        id: guard
+        if: always()
+        env:
+          HAVE_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+          GENERATE_OUTCOME: ${{ steps.generate.outcome }}
+          PR_OUTCOME: ${{ steps.pr.outcome }}
+        run: |
+          python scripts/regen_guard.py \
+            --have-key "${HAVE_KEY}" \
+            --generate-outcome "${GENERATE_OUTCOME}" \
+            --pr-outcome "${PR_OUTCOME}" \
+            --artifact "${REDTEAM_SET}" \
+            --out redteam-regen-report.md
+
+      # Route it to the one addressee a scheduled job has. The router is the same
+      # tested three-state script `live-probe.yml.template` uses; it is given this
+      # run as a single probe, and it reads an ABSENT `alert=` as "did not run" by
+      # its own rule rather than by a second copy of that rule here. On `unknown`
+      # the classifier writes neither the verdict nor the report, so both halves
+      # have to agree before anything is opened or closed.
+      #
+      # `always()` is load-bearing: `clear` and `unknown` only exist if this step
+      # runs on a good week and on a broken one.
+      - name: Route the regeneration tracking issue (open / update / close)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GUARD_ALERT: ${{ steps.guard.outputs.alert }}
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+        run: |
+          python scripts/drift_issue.py \
+            --marker redteam-regen-stale \
+            --label redteam \
+            --label-color b60205 \
+            --title "[redteam-regen] The committed adversarial set is no longer being regenerated" \
+            --body-file redteam-regen-report.md \
+            --probe "redteam-regen:${GUARD_OUTCOME}:${GUARD_ALERT}:redteam-regen-report.md"
+
+      # Deliberately no final "exit 1 if there was a finding" step, unlike the
+      # equivalent guard in mcp-audit-skill. That one also runs on `push` to main,
+      # where a red run is at least visible to whoever merged; this one runs on
+      # `schedule` only, so a red job is the exact non-event the issue exists to
+      # replace. Same convention as `live-probe.yml.template`.
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redteam-regen-report
+          path: redteam-regen-report.md
+          if-no-files-found: ignore

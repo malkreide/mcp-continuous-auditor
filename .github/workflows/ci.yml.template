@@ -55,17 +55,52 @@ jobs:
             exit 1
           fi
           uv run ruff --version
+      # Both gates run over the root AND over every subproject that carries its
+      # own pyproject.toml.
+      #
+      # The reason is narrower than it looks, and worth stating exactly, because
+      # the obvious reason is wrong. Ruff resolves configuration hierarchically:
+      # for `ruff format --check .` at the root it already applies each file's
+      # NEAREST pyproject.toml, so a subproject's own `line-length` is honoured
+      # without any loop. Measured on this repo — a 95-character line under
+      # `examples/worker-tdd-demo/` (line-length 100) passes the root-level run
+      # and fails at the root's own width. A loop justified by differing widths
+      # would therefore catch nothing at all.
+      #
+      # What the loop does catch is a root config whose `exclude` covers the
+      # subproject: the directory run then skips it silently, while a path passed
+      # explicitly is checked anyway (ruff does not apply `exclude` to explicit
+      # arguments without `--force-exclude`) and still resolves that directory's
+      # own settings. That is the one measured gap, so that is the one this
+      # closes.
+      #
+      # Paths rather than `cd`: a subproject with its own pyproject.toml is its
+      # own uv project, and `uv run` inside it would resolve a different
+      # environment than the one `uv sync` above prepared.
       - name: Lint
-        run: uv run ruff check .
+        run: |
+          uv run ruff check .
+          for sub in $(find . -mindepth 2 -name pyproject.toml -not -path "./.venv/*" -not -path "./node_modules/*"); do
+            echo "→ lint $(dirname "$sub")"
+            uv run ruff check "$(dirname "$sub")"
+          done
       # `ruff check` establishes nothing about formatting: a green linter beside a
       # red `ruff format --check` is an ordinary state, not a contradiction. Own
-      # step so the log names which of the two failed.
+      # step so the log names which of the two failed — and the two are not
+      # redundant, which is a claim this repo tests rather than asserts
+      # (tests/test_format_gate.py formats lint-clean code badly and requires
+      # `ruff check` to stay green while this gate goes red).
       #
       # Deliberately no `--line-length`: the width is the TARGET repo's decision,
       # read from its own ruff.toml / pyproject.toml. This template assumes none,
       # and must not — the portfolio runs 88, 100, 110 and 120 side by side.
       - name: Format
-        run: uv run ruff format --check .
+        run: |
+          uv run ruff format --check .
+          for sub in $(find . -mindepth 2 -name pyproject.toml -not -path "./.venv/*" -not -path "./node_modules/*"); do
+            echo "→ format $(dirname "$sub")"
+            uv run ruff format --check "$(dirname "$sub")"
+          done
       - name: Type-check
         run: uv run mypy .
       - name: Test

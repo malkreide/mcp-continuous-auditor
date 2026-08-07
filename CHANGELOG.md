@@ -104,6 +104,82 @@ than the two declared types), `swiss-statistics-mcp` (the callback above) and
 `seco-labor-mcp` (the cross-module mapping). None of them is new; they were
 drowned out by a verdict that pointed at everything.
 
+### Behoben — der zweite Guard ohne Adressat, und was der Formatter wirklich zusaetzlich faengt
+
+`redteam-regen.yml.template` lief auf `schedule` und sonst nichts, ohne
+`issues: write` und ohne jede Weiterleitung. Das ist die reine Form des Guards
+ohne Adressaten: ein roter Wochenlauf taucht in keinem Pull Request auf, und die
+Job-Summary sieht nur, wer den Lauf oeffnet — bei einem Cron also niemand.
+`live-probe.yml.template` hat diese Behandlung in #66 bekommen, dieses Template
+blieb zurueck.
+
+Der stille Fall wiegt hier schwerer als der rote. Bleibt die Regeneration aus,
+bewertet der graded-CI-Job weiter die bereits committeten Faelle und bleibt
+gruen; der adversariale Satz hoert einfach auf zu wachsen. Es gibt keinen roten
+Lauf zu uebersehen — das Issue ist das einzige Signal, das es gibt.
+
+`scripts/regen_guard.py` klassifiziert einen Lauf als **finding** / **clear** /
+**unknown**, `scripts/drift_issue.py` leitet weiter wie gehabt. `unknown` traegt
+in einer *Vorlage* mehr Gewicht als anderswo: die meisten Repos, die die Datei
+kopieren, haben am ersten Tag keinen Attacker-Key konfiguriert. Als `finding`
+gebucht bekommt jedes davon ein Ticket fuer einen Workflow, den niemand
+eingeschaltet hat; als `clear` gebucht schliesst ein Lauf, der nichts erzeugt
+hat, ein echtes offenes Ticket. Beide Wege enden damit, dass der Guard
+abgeschaltet wird. Beide Haelften muessen sich einig sein: bei `unknown`
+schreibt der Klassifikator weder `alert=` noch seinen Report, und
+`drift_issue.py` liest ein fehlendes Verdikt nach seiner eigenen getesteten
+Regel als «lief nicht» — keine zweite Kopie dieser Regel im YAML.
+
+**Die Auslagerung hat sich erneut bezahlt gemacht.** 22 Mutationen, ein
+Ueberlebender. Der Ueberlebende war der Befund: ein Zweig fuer einen
+abgebrochenen Auslieferungsschritt gab `FINDING` zurueck — direkt vor einem
+identischen `FINDING`, das ihn ohnehin abdeckte. Der Zweig war tot, sein
+Entfernen aenderte nichts, und genau deshalb ueberlebte die Mutation. Ein
+abgebrochener Schritt hat ueber die Auslieferung *nichts beobachtet*, also ist
+er `unknown`. In einem Heredoc waere das unsichtbar geblieben — nicht weil es
+subtil ist, sondern weil dort ueberhaupt nichts mutiert werden kann (`OPS-008`).
+
+Der eine verbleibende Ueberlebende ist als **aequivalente Mutation** in
+`tests/test_regen_guard.py` festgehalten statt mit einem Test zugedeckt, der ihn
+nur scheinbar abdeckt: die Reihenfolge von Key-Pruefung und
+`attempted(generate)` ist im Ergebnis nicht beobachtbar, weil beide `UNKNOWN`
+liefern.
+
+### Gemessen — die Begruendung fuer die Subprojekt-Schleife war die falsche
+
+`ci.yml.template` liefert `ruff check` und `ruff format --check` seit #66 als
+zwei eigene Schritte aus. Neu ist, dass beide auch ueber jedes Subprojekt mit
+eigener `pyproject.toml` laufen — aber **nicht** aus dem naheliegenden Grund.
+
+Gemessen, nicht angenommen: ruff loest die Konfiguration hierarchisch auf. Ein
+schlichtes `ruff format --check .` an der Wurzel wendet auf jede Datei bereits
+die *naechstgelegene* `pyproject.toml` an. Eine 95-Zeichen-Zeile unter
+`examples/worker-tdd-demo/` (`line-length = 100`) passiert den Wurzel-Lauf und
+faellt an der Breite der Wurzel. Eine Schleife, die mit abweichenden Breiten
+begruendet wird, faengt also **nichts**.
+
+Was sie faengt, ist ein `exclude` in der Wurzelkonfiguration, das das Subprojekt
+abdeckt: der Verzeichnislauf ueberspringt es dann stillschweigend, ein explizit
+uebergebener Pfad wird trotzdem geprueft — und weiterhin mit den Einstellungen
+jenes Verzeichnisses. Deshalb Pfade statt `cd`: ein Subprojekt mit eigener
+`pyproject.toml` ist ein eigenes uv-Projekt, und `uv run` darin wuerde eine
+andere Umgebung aufloesen als die, die `uv sync` vorbereitet hat.
+
+**Gegenprobe als Test, nicht als Behauptung.** `tests/test_format_gate.py` baut
+lint-sauberen, absichtlich falsch formatierten Code und verlangt, dass
+`ruff check` gruen bleibt (exit 0), waehrend `ruff format --check` anschlaegt
+(exit 1). Erst das belegt, dass der zweite Schritt eine Luecke schliesst statt
+den Linter zu verdoppeln — und der Test faellt, falls eine kuenftige
+ruff-Version den Abstand schliesst. Das negative Ergebnis zur
+Subprojekt-Schleife steht bewusst als eigener Test daneben, damit sichtbar
+bleibt, welche der beiden Annahmen sich bewegt, falls ruff sein Verhalten
+aendert.
+
+`tests.yml` installiert dafuer ruff — dieses Repo duldet keinen Test, der wegen
+einer fehlenden Abhaengigkeit stillschweigend uebersprungen wird. Der dritte Pin
+ist damit eine dritte Gelegenheit zur Drift, also haelt `check_ruff_pin.py` jetzt
+alle drei Orte zusammen statt zwei.
+
 ### Documented — the second reading, and one branch that still has not fired
 
 `docs/probes/coverage.md` promised a second reading once the four remediation

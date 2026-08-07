@@ -31,11 +31,29 @@ jobs:
       - name: Install pinned Ruff
         run: pip install ruff==0.15.8
 
+      # Root plus every subproject with its own pyproject.toml — `ci.yml.template`
+      # ships exactly this, so it runs here too. The rationale is written out in
+      # the template; the short form is that ruff already resolves each file's
+      # nearest config on a plain `.` run (measured: a 95-character line under
+      # `examples/worker-tdd-demo/`, line-length 100, passes the root run), so
+      # this loop is not about differing widths. It is about a root `exclude`
+      # that would make the directory run skip a subproject in silence — an
+      # explicitly passed path is checked regardless.
       - name: Lint
-        run: ruff check .
+        run: |
+          ruff check .
+          for sub in $(find . -mindepth 2 -name pyproject.toml -not -path "./.venv/*" -not -path "./node_modules/*"); do
+            echo "→ lint $(dirname "$sub")"
+            ruff check "$(dirname "$sub")"
+          done
 
       - name: Format
-        run: ruff format --check .
+        run: |
+          ruff format --check .
+          for sub in $(find . -mindepth 2 -name pyproject.toml -not -path "./.venv/*" -not -path "./node_modules/*"); do
+            echo "→ format $(dirname "$sub")"
+            ruff format --check "$(dirname "$sub")"
+          done
 
       # The Ruff pin sits in two places: above, and as `rev` in
       # .pre-commit-config.yaml. Let them drift and the hook formats to one
