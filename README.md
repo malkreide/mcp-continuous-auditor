@@ -48,6 +48,9 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 - **Live-schedule probe** — the live tests are marked `@pytest.mark.live` and excluded from CI with `-m "not live"`. That is doctrine, and `-m "not live"` is not a place where tests run — it is the absence of one. `meteoswiss-mcp`'s first live run in months put three of six tests on the floor; the endpoint had been retired two days earlier and nobody had started the suite before that either.
   `scripts/live_schedule_probe.py` asks whether a `cron:` workflow runs a pytest call that *selects* the marker and whether a failure would be seen; the `-m` expression is evaluated, not grepped, because `not live` contains the word and excludes while `not slow` does not and selects.
   Five of ten portfolio servers violate this already-`enforced` catalogue check, `zh-education` among them — the server whose live suite would have contradicted a schema drift that stayed invisible for months — [docs/probes/live-schedule.md](docs/probes/live-schedule.md).
+- **Schema-field probe** — the code read `r["Schulgemeinde"]`; the source delivered `schulgemeinde`. What came out was not an error but an empty hit list and «Schulgemeinde nicht gefunden» — a failure wearing the costume of an answer, and one a caller cannot tell apart from a real absence. Four of six datasets, eight tools, every unit test green, because the fixtures pin the old header.
+  `scripts/schema_field_probe.py` compares the field names the *code* reads against the ones the source sends right now — `live_probe` compares live against a fixture, and a fixture can agree with the source while the code reads a name neither ever contained.
+  The mapping is declared in [schema-fields.example.toml](schema-fields.example.toml), never guessed, and a key is only `FIELD_MISSING` when another key at the same site does resolve — a site that matches nothing is a wrong mapping, not five findings — [docs/probes/schema-field.md](docs/probes/schema-field.md).
 - **Coverage against the manifest** — a portfolio sweep reported "33 of 33 ok" while `portfolio.json` listed 43 active servers. The sentence was true and the set was wrong: the numerator came out of the same list as the denominator, so nothing downstream could disagree with it.
   `scripts/coverage.py` is the single reader of the portfolio's coverage manifest, and `scripts/coverage_run.py` runs any single-target probe over every entry in it.
   A target with no result counts against the total and is **not** coverage, so incomplete coverage exits `1` and outranks a finding — [docs/probes/README.md](docs/probes/README.md).
@@ -143,7 +146,8 @@ openclaw/cron/    nightly-audit cron job spec + installer (daily 03:00 → Teleg
 skills/           python-auditor, fastmcp-testing, promptfoo-eval,
                   identity-probe, published-probe, shipped-probe, yank-probe,
                   lockfile-probe, doc-claim-probe, parity-probe,
-                  reference-drift-probe, live-schedule-probe
+                  reference-drift-probe, live-schedule-probe,
+                  schema-field-probe
                   (shipped-probe absorbed the former release-gap skill)
 schemas/          generated tool-output JSON-Schemas = the drift detector
 promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures
