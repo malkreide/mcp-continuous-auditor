@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Vendored-copy probe (`scripts/vendored_copy_probe.py`).** Asks whether the
+  files that declare byte identity across repositories still match — and
+  whether anything says so when they stop.
+
+  **The case.** `sparql_client.py` is held in `swiss-environment-mcp` and
+  `fedlex-mcp`, and both copies carry a header saying they are kept
+  byte-identical. On 2026-08-07 they were 250 and 140 lines: the retry policy
+  (`ARCH-014`) had been repaired in one and never reached the other. **And the
+  marker read `v1.1.0` on both sides** — which is why it survived. In each
+  repository only one half is visible, and both halves declared the same
+  version, so no artefact anywhere disagreed with anything.
+
+  **Why not `reference_drift_probe.py`.** That probe compares a template
+  against its adopters by AST *property*, and refuses a text diff on purpose:
+  an adopter that renames `MAX_DELAY_S` to `RETRY_MAX_DELAY` has adopted
+  correctly. A vendored copy is not adopted, it is duplicated, and it declares
+  byte identity about itself. Where that is the contract, comparing bytes *is*
+  the contract.
+
+  Findings: `COPY_DRIFT` (`medium` when the difference is trailing whitespace
+  only — still drift, but a different job), `MARKER_STALE` (`high`, the
+  incident: copies differ under one marker), `MARKER_SPLIT` (`low`, drift that
+  announces itself), `MARKER_MISSING`. Never a pass: `SITE_MISSING`,
+  `SITE_UNREADABLE`, `GROUP_UNMEASURED` — a group compared against one file is
+  unmeasured, not clean, and exits `3`.
+
+  The mapping is declared in `vendored.toml` and nowhere else; there is no
+  name-similarity fallback, for the reason the sister probe gives in the same
+  words. Nothing is fetched.
+
+  Verified against the real repositories in both states: green on today's
+  `main`, and both findings on the pre-repair state that produced the incident.
+
+- **`vendored.example.toml`** — the format's committed reference, and what the
+  tests parse.
+
+- **`docs/probes/vendored-copy.md`**, listed in `docs/probes/README.md`. A test
+  holds the index row: a probe nobody can find is a probe nobody runs, and
+  nothing else in this repository enforces that table.
+
 ### Fixed — the two readers of `adoption.toml` meant different things by `symbol`
 
 `reference/adoption.toml` says at the top that it is read from two sides: by
