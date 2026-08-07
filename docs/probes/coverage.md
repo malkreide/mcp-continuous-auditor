@@ -1,6 +1,7 @@
 # What has actually been measured — and against what
 
-> The auditor is not deployed. Nothing here has ever spoken to a live MCP server.
+> The auditor is not deployed. Nothing here has ever spoken to a live MCP **server**
+> — though as of 2026-08-07 two probes have spoken to a live **data source**.
 
 This page applies the repository's own rule to the repository itself.
 
@@ -49,8 +50,8 @@ page exists for, and it is empty on purpose.
 | parity | ✅ | ✅ this repo | — | n/a |
 | reference-drift | ✅ | ✅ 19 sites in 18 repos — see below | — | n/a |
 | live-schedule | ✅ | ⚠️ this repo only (`NO_LIVE_TESTS`) — see below | — | n/a |
-| schema-field | ✅ | ❌ no manifest exists yet — see below | — | ❌ — a data source, and it has never been called |
-| value-domain | ✅ | ❌ no manifest exists yet — same row, same reason | — | ❌ — a data source, and it has never been called |
+| schema-field | ✅ | ✅ `zh-education-mcp`, 6/6 datasets (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
+| value-domain | ✅ | ✅ `zh-education-mcp`, 6/6 datasets, 122 379 rows (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
 | spec | ✅ | ✅ this repo | — | ❌ **never** |
 | transport boot | ✅ | ✅ locally launched checkouts | — | ❌ — it starts the server itself |
@@ -59,6 +60,12 @@ page exists for, and it is empty on purpose.
 
 `n/a` means the probe reads source or a catalogue and has no wire to speak to.
 `❌` means there is a wire and nobody has ever put a request on it.
+
+The last column holds two different wires, and the distinction matters. Most rows
+point at a deployed **MCP server**, and that column is still empty because there
+is no deployment. The two bottom rows point at a **data source** — the cantonal
+endpoint a server reads — and those were reached for real on 2026-08-07. A live
+run against `www.bista.zh.ch` says nothing about whether any MCP server boots.
 
 ## The full run, and what it found: `reference_drift_probe`
 
@@ -100,79 +107,87 @@ written implementations is a high bar and none of the differences cleared it —
 declared properties are doing the work, and the layer that needs no declaration
 has still never produced a finding against real code.
 
-## Never run against anything: `schema_field_probe` and `value_domain_probe`
+## The full run, and what it found: `schema_field_probe` + `value_domain_probe`
 
-The newest row and the emptiest. The probe compares the field names a server's
-code reads against the names its **data source** delivers, which makes it the
-first check here whose wire goes to a cantonal open-data endpoint rather than to
-an MCP server or a package index. That wire has never carried a request.
+**2026-08-07, `zh-education-mcp` against `www.bista.zh.ch`.** The first time
+anything in this repository put a request on a data source rather than on a
+package index or a server it started itself. Both probes read the same committed
+`schema_fields.toml`; coverage was 6 of 6 declared datasets for both, with no
+`UNVERIFIED` dataset in either run, so nothing below rests on something that was
+not read.
 
-Two separate gaps, and they close in order:
+### What the manifest cost, and what writing it taught
 
-1. **No `schema_fields.toml` exists in any target.** The mapping is declared and
-   never guessed, so until a server ships one, the probe correctly reports
-   `MANIFEST_MISSING` — including against this repository, which has no datasets
-   at all. Everything green about it so far is green against a manifest a test
-   wrote.
-2. **`www.bista.zh.ch` has never been fetched by this code.** The incident that
-   produced the probe (`r["Schulgemeinde"]` against a `schulgemeinde` header,
-   four of six datasets, eight tools) was found by hand. The probe has not
-   re-derived it, and the case history in
-   [`schema-field.md`](schema-field.md) is a report of that hand investigation,
-   not of a run.
+Two things the probes could not express turned up while the manifest was being
+written, and both were fixed in the probes rather than worked around in the
+manifest:
 
-`value_domain_probe` shares the manifest and the fetch, so it shares the gap
-exactly: it has never classified a value that came off a wire. The three shares
-in its case history — 18.6 % of 13 902 rows, 18.1 % of 62 684, 1.0 % of 35 903 —
-were counted by hand on downloaded extracts, and no run of this code has
-reproduced them.
+* **`normalised`.** `zh-education-mcp` lowercases every key once at fetch time
+  (`_normalise_keys`), so the code does not read the header the wire sent.
+  Against the raw header the schema-field probe reported **six** findings — one
+  real, five invented by the comparison. Declared, it reports one.
+* **`[[dataset.coercer]]`.** The same repository wraps every numeric conversion
+  in `_parse_count`, so no `int()` remains at any call site. The value-domain
+  probe reported `NO_COERCION` for four of six datasets and never saw `anzahl`
+  — the column the entire case history is about. Declared by name, all six are
+  measured.
 
-To close both, in `zh-education-mcp`:
+Both are the same shape of gap: a repository that *fixed* the incident properly
+became unreadable to the probe written from the incident. Neither was
+predictable from the fixtures.
 
-```bash
-cp schema-fields.example.toml ../zh-education-mcp/schema_fields.toml
-# fill in the six datasets and the sites that read them, then
-python scripts/schema_field_probe.py --target ../zh-education-mcp --format json
+### schema-field: one finding
+
+```
+FIELD_CASE_DRIFT  tools.py::zh_edu_maturitaetsquote:608:
+  code reads 'Total_19_Jahre_alt', source sends 'total_19_jahre_alt'
+  — .get(), so the miss is silent and the caller sees an empty result
 ```
 
-```bash
-python scripts/value_domain_probe.py --target ../zh-education-mcp --format json
-```
+The incident's own residue. The 2026-08-03 fix normalised every key; this one
+call site kept the old spelling. It raises nothing and logs nothing, and the
+"19-Jährige" column of the rendered table has been a dash for every row of every
+response since. Five other datasets: `SCHEMA_OK`. Two `MIXED_CASE_HEADER` notes
+confirmed the case history against the live header
+(`staatsangehoerigkeit_ISO2_Code`; `gebietstyp_Code` / `gebiet_Code` /
+`gebiet_Bezeichnung`).
 
-The result to record is the count of `FIELD_CASE_DRIFT` against the four
-datasets already known to drift, and — for the value-domain run — the three
-shares against the hand-counted ones. A share that comes back lower than the
-hand count is not good news: check the `truncated` flag first, because a capped
-read that under-counts looks exactly like an improved source. Anything less than four means either the
-manifest is incomplete or the corroboration rule is refusing a site — both are
-visible in the `UNVERIFIED` lines, and neither is a reason to loosen the rule.
+### value-domain: the hand counts reproduced, plus one that was not recorded
 
-## The finding that has not been reproduced here: `live_schedule_probe`
+122 379 rows, full reads throughout — no truncation, so a 0.0 % is a measured
+zero rather than a budget that ran out.
 
-The probe was written from a hand sweep of ten portfolio servers on 2026-08-03,
-which found five with a scheduled live run (`srgssr`, `lindas`, `termdat`,
-`swisstopo`, `parlament`) and five without (`zh-education`, `swiss-transport`,
-`register`, `fedlex`, `swiss-snb`). **That sweep was done by hand, before the
-probe existed, and the probe has not re-derived it.** Ten numbers read off ten
-repositories by a person are the reason this file was written; they are not a
-result this tool has produced, and the table above says `⚠️` rather than `✅`
-for that reason.
+| dataset | rows | share | bucket | hand count, 2026-08-03 |
+|---|---:|---:|---|---|
+| `sek1_anforderungstyp` | 13 902 | **18.6 %** | `non_numeric` | 18.6 %, 13 902 rows |
+| `staatsangehoerigkeit_regional` | 62 684 | **18.1 %** | `non_numeric` | 18.1 %, 62 684 rows |
+| `wohnort` | 35 903 | **1.0 %** | `null_literal` | 1.0 %, 35 903 rows |
+| `maturitaetsquote` | 1 981 | **16.3 %** | `empty` | *not recorded* |
+| `uebersicht_alle_lernende` | 3 192 | 0.0 % | — | — |
+| `mittelschulen` | 4 717 | 0.0 % | — | — |
 
-Against this repository it reports `NO_LIVE_TESTS` — correctly, since the
-auditor's own suite is stdlib `unittest` with no `live` marker anywhere. That
-exercises one branch and settles nothing about the other five.
+The row counts match the hand counts exactly; the affected counts differ by a few
+dozen, which is four days of the source moving rather than the two methods
+disagreeing. The fourth row was in nobody's notes: `maturitaetsquote_gymnasial`
+is empty for 323 of 1 981 municipalities.
 
-To close it, over the real portfolio:
+Verdict `VALUE_DOMAIN_HANDLED`, exit 0 — every coercion of every one of those
+columns is guarded. That is the repository having fixed the incident, and the
+probe saying so **with the number** instead of with silence. The `HANDLED` status
+exists because of this run: the previous code would have gone red on four
+correctly handled datasets, which is how a gate gets switched off.
 
-```bash
-python scripts/coverage_run.py --probe live-schedule \
-    --manifest manifest.json --repos-root ~/portfolio --format json
-```
+### What is still not covered
 
-The number to record is not «how many findings» but the split between exit 2 and
-exit 3: a portfolio that comes back mostly `NO_LIVE_TESTS` has a different
-problem from one that comes back `LIVE_UNSCHEDULED`, and only the second is the
-one `DRIFT-005` describes.
+* **Only one target.** Six datasets in one repository. No other server in the
+  portfolio ships a `schema_fields.toml`, so the manifest-writing cost above has
+  been paid exactly once and the two gaps it exposed may not be the last two.
+* **No JSON source has been read live.** Both probes support it; every dataset
+  measured so far is CSV.
+* **`FIXTURE_PINS_OLD_HEADER` has still never fired against a real fixture.**
+  `zh-education-mcp` has no recorded CSV to declare — its fixtures are
+  hand-written rows inside the tests — so the branch that explains a green
+  suite is fixture-tested only.
 
 ## The named gap: `spec_probe --url`
 

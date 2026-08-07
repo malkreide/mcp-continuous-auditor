@@ -68,7 +68,8 @@ what *clean* is allowed to mean:
 
 | Found | Read | Verdict |
 |---|---|---|
-| values outside the domain | capped or full | **finding** — a share over 50 000 rows is a measurement, and the report says how many rows it is over |
+| values outside the domain, at least one coercion unguarded | capped or full | **finding** — a share over 50 000 rows is a measurement, and the report says how many rows it is over |
+| values outside the domain, every coercion guarded | capped or full | `VALUE_DOMAIN_HANDLED` — exit 0, share reported |
 | nothing | full | clean |
 | nothing | **capped** | `UNVERIFIED` — the tail was not read |
 
@@ -80,18 +81,42 @@ A partial final line is dropped before parsing. A row cut in half by the byte ca
 would otherwise be classified as a domain violation the source never committed —
 the probe inventing its own finding out of its own budget.
 
+## The coercer may be the target's own helper
+
+`int` and `float` are always coercers. A project that wraps the coercion in one
+place — which is the *good* pattern, and was this portfolio's own fix for the
+`"1 bis 5"` incident — has no `int()` at any call site left, and becomes
+invisible to a probe that only knows the builtins.
+
+So the helper is declared, by name, beside the sites:
+
+```toml
+[[dataset.coercer]]
+name = "_parse_count"
+tolerant = true      # returns a sentinel instead of raising
+```
+
+Measured against `zh-education-mcp` on 2026-08-07: without this block the probe
+reports `NO_COERCION` for four of six datasets and never sees `anzahl`, the
+column the whole case history is about. With it, all six are measured.
+
 ## What it does not claim
 
-**A guarded coercion is a note.** Where the call sits inside a `try` whose
-handler catches `ValueError` / `TypeError` / `Exception` (or is bare), the report
-says `COERCION_GUARDED`. A `try` catching `KeyError` or an HTTP error is not a
-guard for this and is not counted as one — that would silence exactly the call
-sites that crash.
+**A column whose every coercion is guarded is not a finding.** Where the call
+sits inside a `try` that catches the failure, or goes through a helper declared
+`tolerant`, the code has answered the question this probe asks. The status is
+**`VALUE_DOMAIN_HANDLED`** — exit 0, with the share still measured and printed,
+because 18.6 % is a fact about the source either way.
 
-The share is still printed, and the dataset is still a finding. The guard
-answers "does this raise"; it does not answer "is one row in five silently
-dropped from the total the tool reports". That second question is real and this
-probe is not the one to absolve it.
+A gate that reddens on correctly handled code is switched off within a week, and
+takes the unguarded columns with it. **One** unguarded call site is enough to
+make the column a finding again.
+
+A `try` catching `KeyError` or an HTTP error is not a guard for this and is not
+counted as one — that would silence exactly the call sites that crash.
+
+Whether the absorbed rows are visible in what the tool finally reports is a real
+question and a different one. This probe does not answer it.
 
 **Whether the column name is right** is [`schema-field`](schema-field.md)'s
 question. When a coerced column does not resolve against the live response at
@@ -116,6 +141,35 @@ The remedies differ per bucket, which is why the buckets are separate:
   answer that keeps the tool's output true.
 * `fractional` under `int()` is usually a wrong coercer, not a wrong source.
 
+## What it found, run for real
+
+`zh-education-mcp` against `www.bista.zh.ch`, **2026-08-07**, six datasets,
+122 379 rows, full reads throughout. The hand counts of 2026-08-03 are
+reproduced:
+
+| dataset | rows | share outside the domain | bucket |
+|---|---:|---:|---|
+| `sek1_anforderungstyp` | 13 902 | **18.6 %** | `non_numeric` — `"1 bis 5"` |
+| `staatsangehoerigkeit_regional` | 62 684 | **18.1 %** | `non_numeric` |
+| `wohnort` | 35 903 | **1.0 %** | `null_literal` |
+| `maturitaetsquote` | 1 981 | **16.3 %** | `empty` |
+| `uebersicht_alle_lernende` | 3 192 | 0.0 % | — |
+| `mittelschulen` | 4 717 | 0.0 % | — |
+
+The first three are the shares the case history records, measured four days
+later by this code rather than by hand; the row counts match exactly and the
+affected counts differ by a few dozen, which is the source moving, not the
+method disagreeing.
+
+The fourth was not in the case history at all. `maturitaetsquote_gymnasial` is
+empty for 323 of 1 981 municipalities, and the sort key maps those to `-1.0`,
+so they land at the bottom of every ranked table — correct behaviour, and
+nowhere written down before this run.
+
+Verdict `VALUE_DOMAIN_HANDLED`, exit 0: every coercion of every one of those
+columns is guarded. That is the repository having fixed the incident, and the
+probe saying so with the number rather than with silence.
+
 ## Running it
 
 ```bash
@@ -129,6 +183,7 @@ python scripts/coverage_run.py --probe value-domain --manifest manifest.json \
 | Exit | Meaning |
 |---|---|
 | 0 | `VALUE_DOMAIN_OK` — every coerced column is numeric throughout a full read |
+| 0 | `VALUE_DOMAIN_HANDLED` — values outside the domain, every coercion guarded |
 | 2 | finding — `VALUE_DOMAIN_DRIFT` |
 | 3 | not measured — no manifest, `NO_COERCION`, source unreadable, a capped read with nothing found, or a column that does not resolve |
 | 4 | `MOVED_DURING_RUN` — see [provenance.md](provenance.md) |

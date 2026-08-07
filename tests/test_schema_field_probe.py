@@ -232,6 +232,91 @@ class VerdictTest(unittest.TestCase):
         self.assertIn(sfp.NOTE_MIXED_CASE, notes)
 
 
+class NormalisationTest(unittest.TestCase):
+    """A transformation between the fetch and the read, declared not inferred."""
+
+    TITLE_CASE_HEADER = b"Gemeinde;BFS_Nr;Anzahl\nZuerich;261;1234\n"
+    LOWER_SOURCE = (
+        "def search_schulgemeinde(r):\n"
+        '    return r["gemeinde"], r["bfs_nr"], r["anzahl"]\n'
+    )
+
+    def _probe(self, source: str, manifest: str, body: bytes):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_target(Path(tmp), source=source, manifest=manifest)
+            return sfp.probe(root, root / sfp.DEFAULT_MANIFEST, fetch=fetch(body))
+
+    def test_an_undeclared_normalisation_still_produces_the_finding(self):
+        """The safe direction: a spurious pass is not argued with."""
+        report = self._probe(self.LOWER_SOURCE, MANIFEST, self.TITLE_CASE_HEADER)
+        self.assertEqual(report.status, sfp.FIELD_CASE_DRIFT)
+        self.assertEqual(len(report.hits), 3)
+
+    def test_a_declared_lowercasing_makes_the_comparison_right(self):
+        manifest = MANIFEST.replace(
+            'delimiter = ";"', 'delimiter = ";"\nnormalised = "lower"'
+        )
+        report = self._probe(self.LOWER_SOURCE, manifest, self.TITLE_CASE_HEADER)
+        self.assertEqual(report.status, sfp.OK)
+        self.assertEqual(report.hits, [])
+
+    def test_the_raw_header_survives_the_transformation(self):
+        """A report showing only transformed names cannot be checked by hand."""
+        manifest = MANIFEST.replace(
+            'delimiter = ";"', 'delimiter = ";"\nnormalised = "lower"'
+        )
+        report = self._probe(self.LOWER_SOURCE, manifest, self.TITLE_CASE_HEADER)
+        result = report.results[0]
+        self.assertEqual(result.raw_fields, ["Gemeinde", "BFS_Nr", "Anzahl"])
+        self.assertEqual(result.live_fields, ["gemeinde", "bfs_nr", "anzahl"])
+        self.assertIn("lower()", sfp.render(report))
+
+    def test_a_read_that_missed_the_normalisation_is_still_a_finding(self):
+        """The real case: one call site kept the old spelling after the fix.
+
+        `zh-education-mcp` lowercases every key at fetch time and then does
+        `r.get("Total_19_Jahre_alt")`, which returns the default for every row,
+        forever. Declaring the normalisation is what lets this be seen.
+        """
+        source = (
+            "def search_schulgemeinde(r):\n"
+            '    return r["gemeinde"], r.get("BFS_Nr", "—"), r["anzahl"]\n'
+        )
+        manifest = MANIFEST.replace(
+            'delimiter = ";"', 'delimiter = ";"\nnormalised = "lower"'
+        )
+        report = self._probe(source, manifest, self.TITLE_CASE_HEADER)
+        self.assertEqual(report.status, sfp.FIELD_CASE_DRIFT)
+        self.assertEqual([h.read for h in report.hits], ["BFS_Nr"])
+        self.assertEqual(report.hits[0].live, "bfs_nr")
+        self.assertEqual(report.hits[0].form, "get")
+
+    def test_the_mixed_case_note_reads_the_raw_header(self):
+        """Normalising it away would hide the very mixing worth printing."""
+        manifest = MANIFEST.replace(
+            'delimiter = ";"', 'delimiter = ";"\nnormalised = "lower"'
+        )
+        body = b"gemeinde;gebiet_Bezeichnung;anzahl\nZuerich;x;1\n"
+        source = (
+            "def search_schulgemeinde(r):\n"
+            '    return r["gemeinde"], r["gebiet_bezeichnung"], r["anzahl"]\n'
+        )
+        report = self._probe(source, manifest, body)
+        self.assertEqual(report.status, sfp.OK)
+        self.assertIn(sfp.NOTE_MIXED_CASE, " ".join(report.results[0].notes))
+
+    def test_an_unknown_normalisation_is_refused(self):
+        manifest = MANIFEST.replace(
+            'delimiter = ";"', 'delimiter = ";"\nnormalised = "snake_case"'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "schema_fields.toml"
+            path.write_text(manifest, encoding="utf-8")
+            with self.assertRaises(sfp.ManifestError) as ctx:
+                sfp.load_manifest(path)
+        self.assertIn("snake_case", str(ctx.exception))
+
+
 class FixtureNoteTest(unittest.TestCase):
     """Why the test suite stayed green — a note, never the standard."""
 

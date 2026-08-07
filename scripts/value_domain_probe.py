@@ -72,12 +72,17 @@ committed.
 
 WHAT IS DELIBERATELY NOT CLAIMED
 --------------------------------
-1. **A guarded coercion is a note, not a finding.** Where the call sits inside a
-   ``try`` whose handler catches ``ValueError``/``TypeError``/``Exception``, the
-   code has already answered this question and the report says
-   ``COERCION_GUARDED`` with the share still printed. The share stays visible
-   because a guard that turns one row in five into a silent zero is a different
-   defect, and this probe is not the one to judge it.
+1. **A column whose every coercion is guarded is not a finding.** Where the
+   call sits inside a ``try`` that catches the failure, or goes through a
+   helper the manifest declares ``tolerant``, the code has answered the
+   question this probe asks. The status is ``VALUE_DOMAIN_HANDLED`` — exit 0,
+   with the share still measured and printed, because 18.6 % is a fact about
+   the source either way. A gate that reddens on correctly handled code is
+   switched off within a week, and takes the unguarded columns with it.
+
+   **One** unguarded call site is enough to make the column a finding again.
+   Whether the absorbed rows are visible in what the tool finally reports is a
+   real question and a different one; this probe does not answer it.
 2. **Whether the column NAME is right** belongs to ``schema_field_probe``. When
    a coerced column does not resolve against the live header, this run reports
    that it could not measure the domain and points at the other probe, rather
@@ -88,6 +93,7 @@ WHAT IS DELIBERATELY NOT CLAIMED
 
 EXIT CODES
   0    VALUE_DOMAIN_OK — every coerced column is numeric throughout a full read
+  0    VALUE_DOMAIN_HANDLED — values outside the domain, every coercion guarded
   2    FINDING — VALUE_DOMAIN_DRIFT
   3    NOT MEASURED — no manifest, no coercion found, source unreadable, a
        capped read with nothing found, or a column that does not resolve
@@ -122,6 +128,11 @@ import probe_provenance  # noqa: E402
 import schema_field_probe as sfp  # noqa: E402
 
 OK = "VALUE_DOMAIN_OK"
+# Measured, values outside the domain present, and EVERY coercion of that column
+# is guarded. Not a finding — the code answered the question this probe asks —
+# and not `OK` either, because something is there and the share belongs in the
+# report. Exit 0. See `DatasetResult.status`.
+HANDLED = "VALUE_DOMAIN_HANDLED"
 DRIFT = "VALUE_DOMAIN_DRIFT"
 UNVERIFIED = "UNVERIFIED"
 MANIFEST_MISSING = sfp.MANIFEST_MISSING
@@ -270,8 +281,20 @@ def _guarded_spans(root: ast.AST) -> list[tuple[int, int]]:
     return spans
 
 
-def find_coercions(target: Path, site: sfp.Site) -> tuple[list[Coercion], str | None]:
-    """Columns handed to ``int()``/``float()`` inside the declared symbol."""
+def find_coercions(
+    target: Path, site: sfp.Site, declared: tuple[sfp.Coercer, ...] = ()
+) -> tuple[list[Coercion], str | None]:
+    """Columns handed to a coercer inside the declared symbol.
+
+    ``int`` and ``float`` are always coercers. ``declared`` adds the target's
+    own helpers by name — a project that wraps the coercion in one place, which
+    is the good pattern and was this portfolio's own fix for the ``"1 bis 5"``
+    incident, is otherwise invisible to this probe. A helper marked
+    ``tolerant`` returns a sentinel instead of raising, so its call sites count
+    as guarded exactly like a ``try`` around them.
+    """
+    tolerant = {c.name for c in declared if c.tolerant}
+    coercers = set(COERCERS) | {c.name for c in declared}
     path = target / site.file
     if not path.is_file():
         return [], f"{site.file} does not exist in the checkout"
@@ -306,7 +329,7 @@ def find_coercions(target: Path, site: sfp.Site) -> tuple[list[Coercion], str | 
         if (
             not isinstance(child, ast.Call)
             or not isinstance(child.func, ast.Name)
-            or child.func.id not in COERCERS
+            or child.func.id not in coercers
             or not child.args
         ):
             continue
@@ -325,7 +348,7 @@ def find_coercions(target: Path, site: sfp.Site) -> tuple[list[Coercion], str | 
             if (
                 isinstance(arg, ast.Call)
                 and isinstance(arg.func, ast.Name)
-                and arg.func.id in COERCERS
+                and arg.func.id in coercers
             ):
                 continue
             # `int(row["a"] or 0)`, `int(x.strip())` — walk in, and accept it
@@ -337,7 +360,9 @@ def find_coercions(target: Path, site: sfp.Site) -> tuple[list[Coercion], str | 
                 shape = "wrapped"
         if column is None or column in ignore:
             continue
-        guarded = any(start <= child.lineno <= end for start, end in spans)
+        guarded = child.func.id in tolerant or any(
+            start <= child.lineno <= end for start, end in spans
+        )
         key = (column, child.func.id, child.lineno)
         found.setdefault(
             key,
@@ -364,6 +389,9 @@ class ColumnReading:
     column: str
     live_name: str
     coercers: tuple[str, ...] = ()
+    # False when every coercion of this column is guarded — by a `try` that
+    # catches the failure, or by a declared tolerant helper.
+    exposed: bool = True
     counts: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -405,6 +433,7 @@ class ColumnReading:
             "column": self.column,
             "live_name": self.live_name,
             "coercers": list(self.coercers),
+            "exposed": self.exposed,
             "counts": self.counts,
             "rows": self.total,
             "offending": self.offending,
@@ -478,13 +507,20 @@ class DatasetResult:
 
     @property
     def status(self) -> str:
-        if self.offenders:
+        # A column whose every coercion is guarded is not a finding. The code
+        # has answered the question this probe asks, and a gate that goes red
+        # on correctly handled code is switched off within a week — taking the
+        # unguarded ones with it. The share is still reported, under its own
+        # status, because 18.6 % is a fact about the source either way.
+        if any(r.exposed for r in self.offenders):
             return DRIFT
         if not self.readings:
             return UNVERIFIED
-        # Nothing found. That is only clean if the whole response was read —
-        # the suppressed rows cluster exactly where nobody looked.
-        return UNVERIFIED if self.truncated else OK
+        if self.truncated:
+            # Nothing exposed found. That is only clean if the whole response
+            # was read — the suppressed rows cluster where nobody looked.
+            return UNVERIFIED if not self.offenders else HANDLED
+        return HANDLED if self.offenders else OK
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -552,7 +588,7 @@ def probe(
         report.results.append(result)
 
         for site in dataset.sites:
-            coercions, why = find_coercions(target, site)
+            coercions, why = find_coercions(target, site, dataset.coercers)
             if why:
                 result.unverified.append(f"{site.file}::{site.symbol}: {why}")
                 continue
@@ -573,6 +609,17 @@ def probe(
         except (sfp.SourceError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             result.unverified.append(f"{dataset.id}: {exc}")
             continue
+        # The same declared transformation `schema_field_probe` applies: a
+        # server that lowercases every key at fetch time does not read the
+        # header the wire sent, and comparing against the raw one would
+        # attach a COLUMN_NAME_DRIFT note to every column of every
+        # Title-Case dataset — noise that means nothing about the values.
+        if dataset.normalised:
+            header = sfp.apply_normalisation(header, dataset.normalised)
+            transform = sfp.NORMALISATIONS[dataset.normalised]
+            records = [
+                {transform(str(k)): v for k, v in record.items()} for record in records
+            ]
         result.rows_read = len(records)
         result.truncated = truncated or row_capped
 
@@ -603,29 +650,48 @@ def probe(
                 coercers=tuple(
                     sorted({c.func for c in result.coercions if c.column == column})
                 ),
+                exposed=any(
+                    not c.guarded for c in result.coercions if c.column == column
+                ),
             )
             for record in records:
                 kind = classify(record.get(live_name))
                 reading.counts[kind] = reading.counts.get(kind, 0) + 1
             result.readings.append(reading)
 
-        for coercion in result.coercions:
-            if coercion.guarded:
-                result.notes.append(
-                    f"{NOTE_GUARDED}: {coercion.func}() on {coercion.column!r} at line "
-                    f"{coercion.line} sits inside a try that catches the failure — the "
-                    "code has answered this; the share is printed anyway, because a "
-                    "guard that turns one row in five into a silent default is its own "
-                    "question"
-                )
+        # One note per (column, coercer), not per call site: four identical
+        # sentences about `_parse_count` on `anzahl` push the line that matters
+        # off the screen, and a report nobody finishes reading is the same as a
+        # report nobody runs.
+        for column, func in sorted(
+            {(c.column, c.func) for c in result.coercions if c.guarded}
+        ):
+            lines = sorted(
+                c.line
+                for c in result.coercions
+                if c.guarded and c.column == column and c.func == func
+            )
+            reading = next((r for r in result.readings if r.column == column), None)
+            share = f" — {reading.share:.1%} of the column" if reading else ""
+            result.notes.append(
+                f"{NOTE_GUARDED}: {func}() on {column!r} at line(s) "
+                f"{', '.join(str(n) for n in lines)} cannot raise here"
+                f"{share} is outside the numeric domain and is absorbed rather than "
+                "reaching the caller. Not a finding; whether the absorbed rows are "
+                "visible in what the tool reports is a different question, and not "
+                "this probe's"
+            )
 
     statuses = {r.status for r in report.results}
     if DRIFT in statuses:
         report.status = DRIFT
-    elif statuses == {OK}:
-        report.status = OK
-    else:
+    elif UNVERIFIED in statuses:
+        # A partial run outranks a clean one: it did not look everywhere.
         report.status = UNVERIFIED
+    elif HANDLED in statuses:
+        report.status = HANDLED
+    else:
+        report.status = OK
 
     offending = sum(len(r.offenders) for r in report.results)
     report.reason = (
@@ -655,7 +721,10 @@ def render(report: Report) -> str:
         )
         out.append(f"  {result.id} [{result.status}] {scope}")
         for reading in result.readings:
-            marker = DRIFT if reading.offending else "ok"
+            if not reading.offending:
+                marker = "ok"
+            else:
+                marker = DRIFT if reading.exposed else HANDLED
             out.append(
                 f"    {marker:<19} {reading.live_name!r}: "
                 f"{reading.offending}/{reading.total} = {reading.share:.1%} outside the "
@@ -728,7 +797,7 @@ def main(argv: list[str] | None = None) -> int:
         return probe_provenance.EXIT_MOVED
     if report.status in _FINDINGS:
         return 2
-    if report.status == OK:
+    if report.status in (OK, HANDLED):
         return 0
     return 3
 

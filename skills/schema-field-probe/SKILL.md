@@ -46,6 +46,18 @@ sites (`file` + `symbol`) that read it. Format reference:
 `MANIFEST_MISSING`, exit 3 — a server that has not declared its datasets has not
 been checked, which is a different sentence from one with no drift.
 
+## A normalisation between fetch and read is declared
+
+A server that lowercases every key at fetch time no longer reads the header the
+wire sent. Against the raw header every read then looks like drift —
+five false findings on `zh-education-mcp`, burying the one real one
+(`r.get("Total_19_Jahre_alt")` against a lowercased row, returning the default
+forever).
+
+`normalised = "lower" | "upper" | "casefold"` states it; the comparison uses the
+transformed header and the raw one is still printed. Undeclared is the safe
+direction: the finding still fires.
+
 ## The corroboration rule
 
 A key is `FIELD_MISSING` only when at least one **other** key at the same site
