@@ -1,0 +1,65 @@
+# Vendored-copy manifest — example. Copy to `vendored.toml` and edit.
+#
+# Run it:
+#   scripts/vendored_copy_probe.py --manifest vendored.toml --repos-root ~/src
+#
+# WHAT THIS DECLARES, AND WHY IT IS DECLARED AT ALL
+# -------------------------------------------------
+# Some files in the portfolio are held in more than one repository and say so
+# about themselves — "VENDORED COPY, kept byte-identical in …". That sentence
+# is a contract with no enforcer: in each repository only one half is visible,
+# and nothing in either repository can see the other.
+#
+# This file is the only place the halves are named together. The probe refuses
+# to guess them, for the same reason `reference/adoption.toml` refuses: a copy
+# found by name similarity produces findings nobody can retrace, and a finding
+# nobody can retrace is how a gate gets switched off.
+#
+# WHY BYTES AND NOT PROPERTIES
+# ----------------------------
+# `reference_drift_probe.py` compares a template against its adopters by
+# PROPERTY, because an adopter is allowed to rename the constants and rewrap
+# the lines. A vendored copy is not adopted, it is duplicated, and it declares
+# byte identity. Where that is the contract, comparing bytes IS the contract.
+#
+# THE INCIDENT THIS COMES FROM
+# ----------------------------
+# `sparql_client.py` is held in `swiss-environment-mcp` and `fedlex-mcp`. On
+# 2026-08-07 they were 250 and 140 lines: the retry policy (ARCH-014) had been
+# repaired in one and never reached the other, so one server honoured
+# `Retry-After` and jittered its backoff while its twin did neither.
+#
+# The marker read `v1.1.0` on both sides. That is the part worth mechanising —
+# the drift itself is ordinary, but both copies *declared* the same version, so
+# no artefact anywhere disagreed with anything.
+
+[[group]]
+name = "swiss-mcp-commons/sparql_client"
+says = """
+Shared SPARQL/JSON client with retry. Declares itself byte-identical across the
+servers below until an installable `swiss-mcp-commons` package exists, at which
+point the copies are replaced by an import and this group goes away.
+"""
+
+# Optional. The regex must have exactly one capture group: the version string.
+# Default is the portfolio convention `VENDORED COPY (vX.Y.Z)`.
+marker = 'VENDORED COPY \(([^)]+)\)'
+
+[[group.site]]
+repo = "malkreide/swiss-environment-mcp"
+file = "src/swiss_environment_mcp/sparql_client.py"
+
+[[group.site]]
+repo = "malkreide/fedlex-mcp"
+file = "src/fedlex_mcp/sparql_client.py"
+
+# --- Adding a group -----------------------------------------------------------
+#
+# Two rules, both learned the hard way:
+#
+# 1. At least two sites. A group with one site is always green and measures
+#    nothing; the probe rejects it rather than reporting it clean.
+#
+# 2. Name the file, not the directory. The probe reads exactly what is
+#    declared. A path that has moved becomes SITE_UNREADABLE — a loud finding
+#    about a stale mapping — and never a silent pass.
