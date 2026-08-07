@@ -51,6 +51,9 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 - **Schema-field probe** — the code read `r["Schulgemeinde"]`; the source delivered `schulgemeinde`. What came out was not an error but an empty hit list and «Schulgemeinde nicht gefunden» — a failure wearing the costume of an answer, and one a caller cannot tell apart from a real absence. Four of six datasets, eight tools, every unit test green, because the fixtures pin the old header.
   `scripts/schema_field_probe.py` compares the field names the *code* reads against the ones the source sends right now — `live_probe` compares live against a fixture, and a fixture can agree with the source while the code reads a name neither ever contained.
   The mapping is declared in [schema-fields.example.toml](schema-fields.example.toml), never guessed, and a key is only `FIELD_MISSING` when another key at the same site does resolve — a site that matches nothing is a wrong mapping, not five findings — [docs/probes/schema-field.md](docs/probes/schema-field.md).
+- **Value-domain probe** — the code called `int()` on the column `anzahl`, and for small case counts the source publishes `"1 bis 5"` instead of a number, to protect the individuals behind them. `int("1 bis 5")` raises; the caller saw only "unexpected internal error". Measured shares: 18.6 % of 13 902 rows, 18.1 % of 62 684, 1.0 % of 35 903 — a one-in-five chance of a crash is the endpoint's normal behaviour, and no fixture can show it, because a fixture carries the rows somebody chose.
+  `scripts/value_domain_probe.py` reuses the manifest and the fetch of the schema-field probe, finds the columns handed to `int()`/`float()`, and classifies every value the source sends into five buckets, with the measured share in the finding.
+  A capped read that found nothing is `UNVERIFIED` and not clean — the suppressed rows cluster exactly where nobody looked — and a guarded coercion is a note, because a guard answers "does this raise", not "is one row in five silently missing from the total" — [docs/probes/value-domain.md](docs/probes/value-domain.md).
 - **Coverage against the manifest** — a portfolio sweep reported "33 of 33 ok" while `portfolio.json` listed 43 active servers. The sentence was true and the set was wrong: the numerator came out of the same list as the denominator, so nothing downstream could disagree with it.
   `scripts/coverage.py` is the single reader of the portfolio's coverage manifest, and `scripts/coverage_run.py` runs any single-target probe over every entry in it.
   A target with no result counts against the total and is **not** coverage, so incomplete coverage exits `1` and outranks a finding — [docs/probes/README.md](docs/probes/README.md).
@@ -147,7 +150,7 @@ skills/           python-auditor, fastmcp-testing, promptfoo-eval,
                   identity-probe, published-probe, shipped-probe, yank-probe,
                   lockfile-probe, doc-claim-probe, parity-probe,
                   reference-drift-probe, live-schedule-probe,
-                  schema-field-probe
+                  schema-field-probe, value-domain-probe
                   (shipped-probe absorbed the former release-gap skill)
 schemas/          generated tool-output JSON-Schemas = the drift detector
 promptfoo/        deterministic asserts, schema-drift, red-team + recorded fixtures

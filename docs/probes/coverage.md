@@ -50,6 +50,7 @@ page exists for, and it is empty on purpose.
 | reference-drift | ✅ | ✅ 19 sites in 18 repos — see below | — | n/a |
 | live-schedule | ✅ | ⚠️ this repo only (`NO_LIVE_TESTS`) — see below | — | n/a |
 | schema-field | ✅ | ❌ no manifest exists yet — see below | — | ❌ — a data source, and it has never been called |
+| value-domain | ✅ | ❌ no manifest exists yet — same row, same reason | — | ❌ — a data source, and it has never been called |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
 | spec | ✅ | ✅ this repo | — | ❌ **never** |
 | transport boot | ✅ | ✅ locally launched checkouts | — | ❌ — it starts the server itself |
@@ -99,7 +100,7 @@ written implementations is a high bar and none of the differences cleared it —
 declared properties are doing the work, and the layer that needs no declaration
 has still never produced a finding against real code.
 
-## Never run against anything: `schema_field_probe`
+## Never run against anything: `schema_field_probe` and `value_domain_probe`
 
 The newest row and the emptiest. The probe compares the field names a server's
 code reads against the names its **data source** delivers, which makes it the
@@ -120,6 +121,12 @@ Two separate gaps, and they close in order:
    [`schema-field.md`](schema-field.md) is a report of that hand investigation,
    not of a run.
 
+`value_domain_probe` shares the manifest and the fetch, so it shares the gap
+exactly: it has never classified a value that came off a wire. The three shares
+in its case history — 18.6 % of 13 902 rows, 18.1 % of 62 684, 1.0 % of 35 903 —
+were counted by hand on downloaded extracts, and no run of this code has
+reproduced them.
+
 To close both, in `zh-education-mcp`:
 
 ```bash
@@ -128,8 +135,15 @@ cp schema-fields.example.toml ../zh-education-mcp/schema_fields.toml
 python scripts/schema_field_probe.py --target ../zh-education-mcp --format json
 ```
 
+```bash
+python scripts/value_domain_probe.py --target ../zh-education-mcp --format json
+```
+
 The result to record is the count of `FIELD_CASE_DRIFT` against the four
-datasets already known to drift. Anything less than four means either the
+datasets already known to drift, and — for the value-domain run — the three
+shares against the hand-counted ones. A share that comes back lower than the
+hand count is not good news: check the `truncated` flag first, because a capped
+read that under-counts looks exactly like an improved source. Anything less than four means either the
 manifest is incomplete or the corroboration rule is refusing a site — both are
 visible in the `UNVERIFIED` lines, and neither is a reason to loosen the rule.
 

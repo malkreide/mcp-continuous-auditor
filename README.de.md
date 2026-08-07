@@ -51,6 +51,9 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 - **Schema-Feld-Probe** — der Code las `r["Schulgemeinde"]`, die Quelle lieferte `schulgemeinde`. Das Ergebnis war kein Fehler, sondern eine leere Trefferliste mit der Meldung «Schulgemeinde nicht gefunden» — ein Ausfall, der wie eine Antwort aussieht und den ein Aufrufer nicht von echter Abwesenheit unterscheiden kann. Vier von sechs Datensätzen, acht Tools, alle Unit-Tests grün, denn die Fixtures pinnen die alte Kopfzeile.
   `scripts/schema_field_probe.py` vergleicht die Feldnamen, die der *Code* liest, mit denen, die die Quelle gerade liefert — `live_probe` vergleicht live gegen eine Fixture, und eine Fixture kann mit der Quelle übereinstimmen, während der Code einen Namen liest, den keine von beiden je enthielt.
   Die Zuordnung ist in [schema-fields.example.toml](schema-fields.example.toml) deklariert, nie geraten, und ein Name ist nur dann `FIELD_MISSING`, wenn ein anderer an derselben Fundstelle auflöst — eine Fundstelle ohne jeden Treffer ist eine falsche Zuordnung, kein Befund — [docs/probes/schema-field.md](docs/probes/schema-field.md).
+- **Wertebereichs-Probe** — der Code rief `int()` auf der Spalte `anzahl` auf, und bei kleinen Fallzahlen liefert die Quelle aus Datenschutzgründen den Text `"1 bis 5"` statt einer Zahl. `int("1 bis 5")` wirft; der Aufrufer sah nur «unerwarteter interner Fehler». Gemessene Anteile: 18.6 % von 13 902 Zeilen, 18.1 % von 62 684, 1.0 % von 35 903 — eine Absturzchance von eins zu fünf ist das Normalverhalten des Endpunkts, und keine Fixture kann es zeigen, denn eine Fixture trägt die Zeilen, die jemand ausgesucht hat.
+  `scripts/value_domain_probe.py` nutzt Manifest und Abruf der Schema-Feld-Probe mit, findet die an `int()`/`float()` übergebenen Spalten und ordnet jeden gelieferten Wert einem von fünf Kübeln zu — mit dem gemessenen Anteil im Befund.
+  Ein gedeckelter Lauf ohne Fund ist `UNVERIFIED` und nicht sauber — die unterdrückten Zeilen häufen sich genau dort, wo niemand hingesehen hat — und eine abgesicherte Umwandlung ist eine Notiz, denn ein `try` beantwortet «wirft das», nicht «fehlt jede fünfte Zeile still in der Summe» — [docs/probes/value-domain.md](docs/probes/value-domain.md).
 - **Deckung gegen das Manifest** — ein Portfolio-Lauf meldete «33 von 33 ok», während `portfolio.json` 43 aktive Server listete. Der Satz war wahr und die Menge falsch: Zähler und Nenner kamen aus derselben Liste, also konnte nichts ihm widersprechen.
   `scripts/coverage.py` ist der einzige Leser des Deckungs-Manifests des Portfolios, und `scripts/coverage_run.py` führt jede Ein-Ziel-Sonde über jeden Eintrag darin.
   Ein Ziel ohne Ergebnis zählt gegen den Nenner und ist **keine** Deckung, deshalb liefert unvollständige Deckung Exit `1` und steht vor einem Befund — [docs/probes/README.md](docs/probes/README.md).
@@ -152,7 +155,7 @@ skills/           python-auditor, fastmcp-testing, promptfoo-eval,
                   identity-probe, published-probe, shipped-probe, yank-probe,
                   lockfile-probe, doc-claim-probe, parity-probe,
                   reference-drift-probe, live-schedule-probe,
-                  schema-field-probe
+                  schema-field-probe, value-domain-probe
                   (shipped-probe hat den früheren release-gap-Skill aufgenommen)
 schemas/          generierte Tool-Output-JSON-Schemas = der Drift-Detektor
 promptfoo/        deterministische Asserts, Schema-Drift, Red-Team + Fixtures
