@@ -34,7 +34,12 @@ target-version = "py311"
 #
 # Sie zu uebernehmen ist deshalb eine eigene, messbare Aenderung: diese Zeile
 # entfernen, `ruff format .` laufen lassen, Diff lesen.
-exclude = ["*.md"]
+#
+# `extend-exclude`, nicht `exclude`: `exclude` ERSETZT ruffs Vorgabeliste, und
+# damit waeren `.venv/`, `node_modules/` und Konsorten wieder im Gate.
+# Gemessen: zwei Dateien unter `.venv/` und `node_modules/` werden mit
+# `exclude` beanstandet, mit `extend-exclude` nicht.
+extend-exclude = ["*.md"]
 
 [lint]
 # Expliziter Regelsatz, gleichgezogen mit dem uebrigen Portfolio. Ein `select`
