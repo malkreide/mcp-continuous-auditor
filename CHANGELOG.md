@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `schema_field_probe.py`: the code's field names against the live source
+
+`zh-education-mcp` against `www.bista.zh.ch`, 2026-08-03. The code read
+`r["Schulgemeinde"]`. The source delivered `schulgemeinde`.
+
+What came out was not an error. It was an empty hit list and the sentence
+«Schulgemeinde nicht gefunden» — **a failure wearing the costume of an answer**.
+A caller cannot tell that apart from a real absence, and neither can a model
+summarising the result: the tool reported, successfully, that the thing does not
+exist. Four of six datasets, eight tools. Two of them mix the spelling inside one
+header row (`gebiet_Bezeichnung`, `staatsangehoerigkeit_ISO2_Code`), so
+lowercasing on read is a second wrong name rather than a fix.
+
+Every unit test stayed green, and had to: the fixtures pin the old header, so the
+suite compared the code's assumption against a recording of the same assumption.
+
+**Why this is not `live_probe.py`.** That one compares live against a **fixture**
+and catches the source moving under a recording. It cannot catch this: the
+fixture and the live response can agree perfectly while the code reads a name
+neither ever contained. The recording is not what runs. This probe compares live
+against the **code** — the only pair whose disagreement reaches a user. Where a
+fixture is declared it is read too, but only to report *why the tests stayed
+green* (`FIXTURE_PINS_OLD_HEADER`, a note), never as the standard.
+
+The mapping is declared in `schema_fields.toml` in the target and never guessed
+— same rule as `reference_drift_probe`, format reference in the new
+`schema-fields.example.toml`. No manifest is `MANIFEST_MISSING` at exit 3: a
+server that has not declared its datasets has not been checked, which is a
+different sentence from one with no drift.
+
+Findings: `FIELD_CASE_DRIFT` (the column exists under another spelling; compared
+on a casefolded, separator-free form, so `gebiet_Bezeichnung` and
+`gebiet_bezeichnung` are one name) and `FIELD_MISSING` (gone in every spelling).
+Each names the **form** of the read, because they fail differently: `r["x"]`
+raises and the caller sees an internal error; `r.get("x")` returns `None`, the
+filter matches nothing, and the caller is told politely that nothing exists.
+
+**The corroboration rule** is what keeps the extraction honest. Collecting every
+subscript key inside a declared symbol over-collects — a function also indexes
+dicts that are not records — so a key is `FIELD_MISSING` only when at least one
+*other* key at the same site does resolve. Zero of five resolving means the site
+is not reading that dataset; the probe measures nothing there rather than booking
+its own mismatched mapping as five defects of the target. An over-broad symbol
+costs coverage, not correctness.
+
+Every non-conclusion is `UNVERIFIED` with what was seen: source unreachable or
+unparseable, **zero records** in the response (a field list cannot be read from
+an empty list — and an empty list is also what the incident looked like from
+outside), a truncated body, a header longer than the byte window, a declared file
+or symbol that is not there. Only the first 64 KiB of a CSV are read: the header
+is the whole question, and downloading a 60 MB extract to look at line one makes
+the check expensive enough that somebody switches it off. The delimiter is
+reported whether declared or sniffed — reading a semicolon-separated header as
+one comma-separated column produces a single enormous "field name" that matches
+nothing, which would look exactly like total drift.
+
+Registered in `coverage_run.py` as `--probe schema-field`.
+[`docs/probes/schema-field.md`](docs/probes/schema-field.md),
+`skills/schema-field-probe/`, `tests/test_schema_field_probe.py`,
+`schema-fields.example.toml`. `docs/probes/coverage.md` records the row as
+**never run against anything**: no target ships a manifest yet, and this code has
+never fetched `www.bista.zh.ch`. The case history is a hand investigation, not a
+run.
+
 ### Added — `live_schedule_probe.py`: `-m "not live"` is not a place where tests run
 
 `DRIFT-005` has been `enforced` in the audit catalogue since the `meteoswiss-mcp`

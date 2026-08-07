@@ -49,6 +49,7 @@ page exists for, and it is empty on purpose.
 | parity | ✅ | ✅ this repo | — | n/a |
 | reference-drift | ✅ | ✅ 19 sites in 18 repos — see below | — | n/a |
 | live-schedule | ✅ | ⚠️ this repo only (`NO_LIVE_TESTS`) — see below | — | n/a |
+| schema-field | ✅ | ❌ no manifest exists yet — see below | — | ❌ — a data source, and it has never been called |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
 | spec | ✅ | ✅ this repo | — | ❌ **never** |
 | transport boot | ✅ | ✅ locally launched checkouts | — | ❌ — it starts the server itself |
@@ -97,6 +98,40 @@ written implementations is a high bar and none of the differences cleared it —
 15 of 18 removed the bare `RuntimeError`, not 18 of 18. On this portfolio the
 declared properties are doing the work, and the layer that needs no declaration
 has still never produced a finding against real code.
+
+## Never run against anything: `schema_field_probe`
+
+The newest row and the emptiest. The probe compares the field names a server's
+code reads against the names its **data source** delivers, which makes it the
+first check here whose wire goes to a cantonal open-data endpoint rather than to
+an MCP server or a package index. That wire has never carried a request.
+
+Two separate gaps, and they close in order:
+
+1. **No `schema_fields.toml` exists in any target.** The mapping is declared and
+   never guessed, so until a server ships one, the probe correctly reports
+   `MANIFEST_MISSING` — including against this repository, which has no datasets
+   at all. Everything green about it so far is green against a manifest a test
+   wrote.
+2. **`www.bista.zh.ch` has never been fetched by this code.** The incident that
+   produced the probe (`r["Schulgemeinde"]` against a `schulgemeinde` header,
+   four of six datasets, eight tools) was found by hand. The probe has not
+   re-derived it, and the case history in
+   [`schema-field.md`](schema-field.md) is a report of that hand investigation,
+   not of a run.
+
+To close both, in `zh-education-mcp`:
+
+```bash
+cp schema-fields.example.toml ../zh-education-mcp/schema_fields.toml
+# fill in the six datasets and the sites that read them, then
+python scripts/schema_field_probe.py --target ../zh-education-mcp --format json
+```
+
+The result to record is the count of `FIELD_CASE_DRIFT` against the four
+datasets already known to drift. Anything less than four means either the
+manifest is incomplete or the corroboration rule is refusing a site — both are
+visible in the `UNVERIFIED` lines, and neither is a reason to loosen the rule.
 
 ## The finding that has not been reproduced here: `live_schedule_probe`
 

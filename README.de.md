@@ -48,6 +48,9 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 - **Live-Zeitplan-Probe** — die Live-Tests tragen `@pytest.mark.live` und sind mit `-m "not live"` aus der CI ausgeschlossen. Das ist die Doktrin, und `-m "not live"` ist kein Ort, an dem Tests laufen — es ist die Abwesenheit eines solchen. Der erste Live-Lauf von `meteoswiss-mcp` seit Monaten legte drei von sechs Tests um; der Endpunkt war zwei Tage zuvor abgeschafft worden, und davor hatte die Suite ebenfalls niemand gestartet.
   `scripts/live_schedule_probe.py` fragt, ob ein `cron:`-Workflow einen pytest-Aufruf fährt, der die Marke *auswählt*, und ob ein Fehlschlag gesehen würde; der `-m`-Ausdruck wird ausgewertet, nicht gegreppt, denn `not live` enthält das Wort und schliesst aus, `not slow` enthält es nicht und wählt aus.
   Fünf von zehn Portfolio-Servern verletzen diesen bereits `enforced` gesetzten Katalog-Check, `zh-education` darunter — der Server, dessen Live-Suite einer monatelang unsichtbaren Schema-Drift widersprochen hätte — [docs/probes/live-schedule.md](docs/probes/live-schedule.md).
+- **Schema-Feld-Probe** — der Code las `r["Schulgemeinde"]`, die Quelle lieferte `schulgemeinde`. Das Ergebnis war kein Fehler, sondern eine leere Trefferliste mit der Meldung «Schulgemeinde nicht gefunden» — ein Ausfall, der wie eine Antwort aussieht und den ein Aufrufer nicht von echter Abwesenheit unterscheiden kann. Vier von sechs Datensätzen, acht Tools, alle Unit-Tests grün, denn die Fixtures pinnen die alte Kopfzeile.
+  `scripts/schema_field_probe.py` vergleicht die Feldnamen, die der *Code* liest, mit denen, die die Quelle gerade liefert — `live_probe` vergleicht live gegen eine Fixture, und eine Fixture kann mit der Quelle übereinstimmen, während der Code einen Namen liest, den keine von beiden je enthielt.
+  Die Zuordnung ist in [schema-fields.example.toml](schema-fields.example.toml) deklariert, nie geraten, und ein Name ist nur dann `FIELD_MISSING`, wenn ein anderer an derselben Fundstelle auflöst — eine Fundstelle ohne jeden Treffer ist eine falsche Zuordnung, kein Befund — [docs/probes/schema-field.md](docs/probes/schema-field.md).
 - **Deckung gegen das Manifest** — ein Portfolio-Lauf meldete «33 von 33 ok», während `portfolio.json` 43 aktive Server listete. Der Satz war wahr und die Menge falsch: Zähler und Nenner kamen aus derselben Liste, also konnte nichts ihm widersprechen.
   `scripts/coverage.py` ist der einzige Leser des Deckungs-Manifests des Portfolios, und `scripts/coverage_run.py` führt jede Ein-Ziel-Sonde über jeden Eintrag darin.
   Ein Ziel ohne Ergebnis zählt gegen den Nenner und ist **keine** Deckung, deshalb liefert unvollständige Deckung Exit `1` und steht vor einem Befund — [docs/probes/README.md](docs/probes/README.md).
@@ -148,7 +151,8 @@ openclaw/cron/    nightly-audit Cron-Job-Spec + Installer (täglich 03:00 → Te
 skills/           python-auditor, fastmcp-testing, promptfoo-eval,
                   identity-probe, published-probe, shipped-probe, yank-probe,
                   lockfile-probe, doc-claim-probe, parity-probe,
-                  reference-drift-probe, live-schedule-probe
+                  reference-drift-probe, live-schedule-probe,
+                  schema-field-probe
                   (shipped-probe hat den früheren release-gap-Skill aufgenommen)
 schemas/          generierte Tool-Output-JSON-Schemas = der Drift-Detektor
 promptfoo/        deterministische Asserts, Schema-Drift, Red-Team + Fixtures

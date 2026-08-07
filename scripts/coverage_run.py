@@ -245,6 +245,20 @@ PROBES: dict[str, ProbeSpec] = {
         argv_of=_dist_argv("yank_probe.py"),
         null_reason="kein Paket auf dem Index",
     ),
+    "schema-field": ProbeSpec(
+        name="schema-field",
+        script="schema_field_probe.py",
+        shape="checkout",
+        section=coverage.REPOSITORIES,
+        field="repository",
+        argv_of=_target_argv("schema_field_probe.py"),
+        # Der Standardvertrag. Diese Sonde spricht als einzige hier mit der
+        # DATENQUELLE des Ziels, nicht mit einem Index — eine unerreichbare
+        # Quelle ist deshalb haeufig und immer eine 3. Sie ist kein Mangel des
+        # Servers und darf nicht wie einer gezaehlt werden.
+        note="3 = kein schema_fields.toml, Quelle nicht lesbar oder eine "
+        "Fundstelle ohne Treffer — gemessen wurde nichts",
+    ),
     "live-schedule": ProbeSpec(
         name="live-schedule",
         script="live_schedule_probe.py",

@@ -1,0 +1,110 @@
+# schema_fields.toml — the mapping `scripts/schema_field_probe.py` reads.
+#
+# It answers one question the code cannot answer about itself: are the field
+# names this repository reads out of a response the names the source is
+# delivering right now?
+#
+# WHY A MANIFEST AND NOT A SCAN
+# -----------------------------
+# Which function reads which dataset is not derivable from the code. A scan
+# that guessed it would produce findings nobody can retrace, and a finding
+# nobody can retrace is how a gate gets switched off. Same rule as
+# `adoption.example.toml`: the mapping is declared, or the probe says it did
+# not measure.
+#
+# Copy this file to the target repository as `schema_fields.toml`.
+#
+# THE CASE IT IS WRITTEN FROM
+# ---------------------------
+# `zh-education-mcp` against www.bista.zh.ch, 2026-08-03. The code read
+# `r["Schulgemeinde"]`; the source delivered `schulgemeinde`. The result was
+# not an error — it was an empty hit list and the sentence «Schulgemeinde nicht
+# gefunden», which a caller cannot tell apart from a real absence. Four of six
+# datasets, eight tools. Every unit test stayed green, because the fixtures pin
+# the old header.
+
+# ---------------------------------------------------------------------------
+# A CSV extract.
+# ---------------------------------------------------------------------------
+[[dataset]]
+# Free-form, stable, and what `--dataset` selects. It appears in every finding,
+# so make it the name a maintainer would use in a sentence.
+id = "schulgemeinden"
+
+# The URL the probe GETs. For a CSV only the first 64 KiB are read — the header
+# is the whole question, and downloading a 60 MB extract to look at line one
+# makes the check expensive enough that somebody switches it off.
+url = "https://www.bista.zh.ch/export/SCHULGEMEINDEN.csv"
+
+# "csv" or "json".
+format = "csv"
+
+# Optional. Omitted, the delimiter is sniffed from the header line and the
+# report says which one was used — reading a semicolon-separated header as one
+# comma-separated column produces a single enormous "field name" that matches
+# nothing, which looks exactly like total drift.
+delimiter = ";"
+
+# Optional, default "utf-8-sig" (which also handles a plain UTF-8 file; the BOM
+# is what turns the first column name into "﻿Schulgemeinde").
+encoding = "utf-8-sig"
+
+# Optional. Read ONLY to explain why the test suite stayed green — never as the
+# standard. The fixture is not what runs; the live source and the code are the
+# pair whose disagreement reaches a user. A fixture that pins a header the
+# source no longer sends is reported as a NOTE (`FIXTURE_PINS_OLD_HEADER`).
+fixture = "tests/fixtures/schulgemeinden.csv"
+
+# Every place that reads this dataset. `file` + `symbol`, never a glob: the
+# probe collects the string literals used as subscript keys and `.get()` /
+# `.pop()` arguments INSIDE that symbol.
+#
+# `symbol` may name a method as well as a module-level function — the whole
+# syntax tree is walked, so `search` inside `class Client` resolves.
+[[dataset.site]]
+file = "src/zh_education_mcp/datasets/schulgemeinden.py"
+symbol = "search_schulgemeinde"
+# Optional. Keys read inside the symbol that are NOT response fields — a
+# config lookup, a parameter dict. The corroboration rule below already
+# disarms most of these; `ignore` is for the ones that would still be noisy.
+# Keep it short: an exemption nobody reads is a blind spot.
+ignore = ["limit", "offset"]
+
+[[dataset.site]]
+file = "src/zh_education_mcp/tools/gemeinde_tools.py"
+symbol = "gemeinde_profile"
+
+# ---------------------------------------------------------------------------
+# A JSON API. Same shape, two extra knobs.
+# ---------------------------------------------------------------------------
+[[dataset]]
+id = "lernende_nach_gebiet"
+url = "https://www.bista.zh.ch/api/3/action/datastore_search?resource_id=abc&limit=1"
+format = "json"
+
+# Optional dot path to the list of records. Omitted, the probe tries the
+# well-known collection keys (`result.records`, `features`, `results`,
+# `records`, `entries`, `data`, `items`) and then a top-level list. The field
+# names are the keys of the FIRST record.
+#
+# A response with zero records is UNVERIFIED, not clean: a field list cannot be
+# read from an empty list — and an empty list is also what the incident looked
+# like from the outside.
+record_path = "result.records"
+
+[[dataset.site]]
+file = "src/zh_education_mcp/datasets/lernende.py"
+symbol = "query_lernende"
+
+# ---------------------------------------------------------------------------
+# THE CORROBORATION RULE — worth knowing before you write a site
+# ---------------------------------------------------------------------------
+# A key read at a site is reported as `FIELD_MISSING` only when at least one
+# OTHER key read at the same site does resolve against the live header. Five
+# keys read, four in the header, the fifth absent: that is drift. Zero of five:
+# the site is not reading this dataset — the manifest is wrong or the code
+# moved — and the probe reports `SITE_UNMATCHED` and measures nothing there.
+#
+# So an over-broad symbol costs coverage, not correctness. It will not invent
+# findings; it will report that it could not conclude, which is the answer this
+# repository insists on when it did not look.
