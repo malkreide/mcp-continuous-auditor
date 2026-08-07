@@ -17,8 +17,9 @@ python scripts/coverage_run.py --probe value-domain --manifest manifest.json \
     --repos-root ~/portfolio
 ```
 
-Exit `0` numeric throughout a full read, `2` **finding**, `3` NOT MEASURED, `4`
-the checkout moved, `127` the harness could not run.
+Exit `0` numeric throughout a full read *or* every coercion guarded, `2`
+**finding**, `3` NOT MEASURED, `4` the checkout moved, `127` the harness could
+not run.
 
 ## Why
 
@@ -52,18 +53,41 @@ an `int()` column and not against a `float()` one.
 
 | Found | Read | Verdict |
 |---|---|---|
-| something | capped or full | **finding** — the share is reported with the row count it is over |
+| something, any coercion unguarded | capped or full | **finding** — the share is reported with the row count it is over |
+| something, every coercion guarded | capped or full | `VALUE_DOMAIN_HANDLED` — exit 0, share reported |
 | nothing | full | clean |
 | nothing | **capped** | `UNVERIFIED` — the tail was not read, and the suppressed rows cluster where nobody looked |
 
 A partial final line is dropped before parsing: a row cut in half by the cap is
 not a violation the source committed.
 
+## The coercer may be the target's own helper
+
+`int` and `float` are always coercers. A project that wraps the conversion in
+one place — the good pattern, and this portfolio's own fix for `"1 bis 5"` — has
+no `int()` left at any call site. Declare the helper by name:
+
+```toml
+[[dataset.coercer]]
+name = "_parse_count"
+tolerant = true      # returns a sentinel instead of raising
+```
+
+Without it, `zh-education-mcp` came back `NO_COERCION` for four of six datasets
+and `anzahl` — the column the case history is about — was never measured.
+
+## A guarded column is reported, not flagged
+
+`VALUE_DOMAIN_HANDLED` (exit 0): every coercion of the column is inside a `try`
+that catches the failure, or goes through a `tolerant` helper. The share still
+prints — 18.6 % is a fact about the source either way — but a gate that reddens
+on correctly handled code is switched off within a week. **One** unguarded call
+site makes it a finding again.
+
 ## Notes, never the verdict
 
-`COERCION_GUARDED` — the call is inside a `try` that catches the failure. The
-share still prints and the dataset is still a finding: the guard answers "does
-this raise", not "is one row in five silently missing from the total".
+`COERCION_GUARDED` — one line per column and coercer, naming the call sites and
+the share they absorb.
 
 `COLUMN_NAME_DRIFT` — the column resolves only under normalisation. The domain is
 measured against the live spelling; the name itself is `schema-field-probe`'s

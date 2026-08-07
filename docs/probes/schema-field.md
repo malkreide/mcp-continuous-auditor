@@ -72,6 +72,39 @@ a maintainer is looking for different things:
 * `r.get("x")` — the miss returns `None`, the filter matches nothing, and the
   caller gets an empty list with a polite sentence. **That is the incident.**
 
+## A normalisation between the fetch and the read is declared, not inferred
+
+A server may lowercase every key once at fetch time, so the rest of the module
+is indifferent to which spelling the source is using this month. That is the
+*right* fix — and it moves the goalposts for this probe, because the code no
+longer reads the header the wire sent.
+
+Compared against the raw header, every read in such a repository looks like
+drift. Measured against `zh-education-mcp` on 2026-08-07 that is **five false
+findings**, and the one real finding buried underneath them:
+
+```python
+rows = [_normalise_keys(row) for row in reader]   # every key lowercased
+...
+pop = r.get("Total_19_Jahre_alt", "—")            # never matches. Ever.
+```
+
+That call site kept the old spelling when the normalisation went in. It raises
+nothing and logs nothing; the "19-Jährige" column of the rendered table is a dash
+for every row of every response. It is the incident's own residue, one layer
+further in, and it is exactly what a false-positive-heavy report loses.
+
+So `normalised = "lower"` (or `"upper"`, `"casefold"`) states the
+transformation, the comparison is made against the transformed header, and the
+report names which transformation it applied. The raw header is kept and printed
+beside it — a report that shows only the transformed names cannot be checked
+against the source by hand. `MIXED_CASE_HEADER` and `FIXTURE_PINS_OLD_HEADER`
+both keep reading the raw header, because both are statements about the source.
+
+**What is not declared is not assumed.** An undeclared normalisation still
+produces the finding. That is the safe direction: a spurious finding gets argued
+with, a spurious pass does not.
+
 ## The corroboration rule
 
 Extracting keys from a symbol over-collects by design: a function also indexes
@@ -142,6 +175,32 @@ sniffed when not declared and **reported either way** — reading a
 semicolon-separated header as one comma-separated column produces a single
 enormous "field name" that matches nothing, which would look exactly like total
 drift.
+
+## What it found, run for real
+
+`zh-education-mcp` against `www.bista.zh.ch`, **2026-08-07**. Six of six declared
+datasets measured, 29 read names resolved, **one finding**:
+
+```
+maturitaetsquote [FIELD_CASE_DRIFT] 8 live field(s) via ,,
+  compared after the declared lower() the code applies to every key
+  FIELD_CASE_DRIFT  tools.py::zh_edu_maturitaetsquote:608:
+    code reads 'Total_19_Jahre_alt', source sends 'total_19_jahre_alt'
+    — .get(), so the miss is silent and the caller sees an empty result
+```
+
+That is the 2026-08-03 incident's own residue, one layer further in. The fix
+normalised every key at fetch time; this one call site kept the old spelling.
+It raises nothing and logs nothing — the "19-Jährige" column of the rendered
+table has been a dash for every row of every response ever since.
+
+Two `MIXED_CASE_HEADER` notes came with it, both confirming the case history
+against the live source: `staatsangehoerigkeit_ISO2_Code` beside six lowercase
+columns, and `gebietstyp_Code` / `gebiet_Code` / `gebiet_Bezeichnung` beside four.
+
+Without `normalised = "lower"` the same run reports **six** findings — the one
+above plus five that are not there, because the code reads a header the wire did
+not send. That ratio is the argument for the knob.
 
 ## Running it
 

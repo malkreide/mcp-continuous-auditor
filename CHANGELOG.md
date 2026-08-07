@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the first live run of the two data-source probes, and what it cost
+
+**2026-08-07, `zh-education-mcp` against `www.bista.zh.ch`.** The first time
+anything in this repository put a request on a *data source* rather than on a
+package index or a server it started itself. Six datasets, 122 379 rows, 6/6
+coverage for both probes, no `UNVERIFIED` dataset in either run.
+
+Writing the manifest exposed two things the probes could not express, and both
+turned out to be the same shape of gap: **a repository that fixed the incident
+properly had become unreadable to the probe written from the incident.** Neither
+was predictable from a fixture.
+
+**`normalised` (`schema_field_probe`).** `zh-education-mcp` lowercases every key
+once at fetch time (`_normalise_keys`) — the right fix, and it means the code no
+longer reads the header the wire sent. Against the raw header the probe reported
+**six** findings: one real, five invented by the comparison. `normalised =
+"lower" | "upper" | "casefold"` states the transformation, the comparison uses
+the transformed header, and the raw one is still printed so a report can be
+checked against the source by hand. `MIXED_CASE_HEADER` and
+`FIXTURE_PINS_OLD_HEADER` keep reading the raw header — both are statements
+about the source. **Not declaring it is the safe direction**: an undeclared
+normalisation still produces the finding. `value_domain_probe` honours the same
+declaration, otherwise every column of every Title-Case dataset collects a
+spurious `COLUMN_NAME_DRIFT` note.
+
+**`[[dataset.coercer]]` (`value_domain_probe`).** The same repository wraps every
+numeric conversion in `_parse_count`, so no `int()` survives at any call site.
+The probe reported `NO_COERCION` for four of six datasets and never saw
+`anzahl` — the column the entire case history is about. The helper is now
+declarable by name, with `tolerant = true` for one that returns a sentinel
+instead of raising, and its call sites count as guarded exactly like a `try`.
+
+**`VALUE_DOMAIN_HANDLED`, and a contradiction resolved.** The module docstring
+said a guarded coercion is «a note, not a finding»; the docs page said «still a
+finding»; the code did the second. The run settled it: four correctly handled
+datasets would have gone red, which is how a gate gets switched off and takes
+the unguarded columns with it. A column whose **every** coercion is guarded is
+now `VALUE_DOMAIN_HANDLED` at exit 0, with the share still measured and printed
+— 18.6 % is a fact about the source either way. One unguarded call site makes it
+a finding again. The `COERCION_GUARDED` note is now one line per column and
+coercer rather than one per call site.
+
+#### What the run found
+
+`schema_field_probe` — one finding, and it is the incident's own residue:
+
+```
+tools.py::zh_edu_maturitaetsquote:608:
+  code reads 'Total_19_Jahre_alt', source sends 'total_19_jahre_alt'
+  — .get(), so the miss is silent and the caller sees an empty result
+```
+
+The 2026-08-03 fix normalised every key; this one call site kept the old
+spelling. It raises nothing and logs nothing, and the «19-Jährige» column of the
+rendered table has been a dash for every row of every response since.
+
+`value_domain_probe` — the hand counts reproduced, four days later, by code:
+
+| dataset | rows | share | hand count, 2026-08-03 |
+|---|---:|---:|---|
+| `sek1_anforderungstyp` | 13 902 | **18.6 %** | 18.6 %, 13 902 rows |
+| `staatsangehoerigkeit_regional` | 62 684 | **18.1 %** | 18.1 %, 62 684 rows |
+| `wohnort` | 35 903 | **1.0 %** | 1.0 %, 35 903 rows |
+| `maturitaetsquote` | 1 981 | **16.3 %** | *not recorded* |
+
+Row counts match exactly; affected counts differ by a few dozen, which is the
+source moving rather than the methods disagreeing. The fourth row was in nobody's
+notes — `maturitaetsquote_gymnasial` is empty for 323 of 1 981 municipalities.
+
+`docs/probes/coverage.md` now records both rows as run, and names what is still
+not covered: one target, no live JSON source, and `FIXTURE_PINS_OLD_HEADER` still
+never fired against a real fixture.
+
 ### Added — `value_domain_probe.py`: `int("1 bis 5")` and the 18.6 % nobody measured
 
 `zh-education-mcp` against `www.bista.zh.ch`, 2026-08-03. The code called `int()`

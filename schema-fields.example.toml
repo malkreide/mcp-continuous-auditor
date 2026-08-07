@@ -49,6 +49,21 @@ delimiter = ";"
 # is what turns the first column name into "﻿Schulgemeinde").
 encoding = "utf-8-sig"
 
+# Optional: a transformation the code applies to every key BETWEEN the fetch
+# and the read. "lower", "upper" or "casefold".
+#
+# `zh-education-mcp` lowercases the whole header once at fetch time, so the rest
+# of the module is indifferent to which spelling BISTA uses this month. Without
+# this line the probe compares lowercase reads against a `Stand,Kanton,Jahr,…`
+# header and reports five findings that are not there — and buries the one that
+# is. Declared, the comparison is made against the transformed header, and the
+# raw one is still printed so the report can be checked against the source.
+#
+# Not declaring it is the SAFE direction: an undeclared normalisation still
+# produces the finding. A spurious finding gets argued with; a spurious pass
+# does not.
+normalised = "lower"
+
 # Optional. Read ONLY to explain why the test suite stayed green — never as the
 # standard. The fixture is not what runs; the live source and the code are the
 # pair whose disagreement reaches a user. A fixture that pins a header the

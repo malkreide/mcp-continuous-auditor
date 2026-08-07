@@ -223,13 +223,28 @@ class VerdictTest(unittest.TestCase):
         as_float = SOURCE_DIRECT.replace("int(", "float(")
         self.assertEqual(self._probe(as_float, body=body).status, vdp.OK)
 
-    def test_a_guarded_coercion_is_a_note_and_still_a_finding_about_the_source(self):
+    def test_a_fully_guarded_column_is_reported_but_is_not_a_finding(self):
+        """The code answered this. A gate that reddens on handled code is switched off."""
         report = self._probe(SOURCE_GUARDED)
-        # The share stays a finding: a guard turning one row in five into a
-        # skipped record is a different defect, not this probe's to absolve.
+        self.assertEqual(report.status, vdp.HANDLED)
+        self.assertFalse(report.finding)
+        reading = report.results[0].readings[0]
+        # Still measured, still printed: 18.6 % is a fact about the source
+        # whether or not the caller crashes on it.
+        self.assertEqual(reading.offending, 3)
+        self.assertFalse(reading.exposed)
+        self.assertIn(vdp.NOTE_GUARDED, " ".join(report.results[0].notes))
+
+    def test_one_unguarded_call_site_is_enough_to_make_it_a_finding(self):
+        source = SOURCE_GUARDED + '\n\ndef also(r):\n    return int(r["anzahl"])\n'
+        manifest = MANIFEST + (
+            '\n[[dataset.site]]\nfile = "src/pkg/datasets.py"\nsymbol = "also"\n'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_target(Path(tmp), source=source, manifest=manifest)
+            report = vdp.probe(root, root / sfp.DEFAULT_MANIFEST, fetch=fetch(LIVE_CSV))
         self.assertEqual(report.status, vdp.DRIFT)
-        notes = " ".join(report.results[0].notes)
-        self.assertIn(vdp.NOTE_GUARDED, notes)
+        self.assertTrue(report.results[0].readings[0].exposed)
 
     def test_a_column_name_that_drifted_is_measured_and_handed_on(self):
         body = b"gemeinde;Anzahl\nZuerich;1 bis 5\n"
@@ -238,6 +253,66 @@ class VerdictTest(unittest.TestCase):
         notes = " ".join(report.results[0].notes)
         self.assertIn(vdp.NOTE_NAME_DRIFT, notes)
         self.assertIn("schema_field_probe", notes)
+
+
+class DeclaredCoercerTest(unittest.TestCase):
+    """A project that wraps its coercion in one helper — the good pattern.
+
+    `zh-education-mcp` fixed the `"1 bis 5"` incident with `_parse_count`, so
+    `int()` no longer appears at any call site and the column that produced the
+    incident became invisible to this probe. The helper is declared by name.
+    """
+
+    SOURCE = """\
+def _parse_count(value):
+    raw = str(value or "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def aggregate(rows):
+    return [_parse_count(r.get("anzahl")) for r in rows]
+"""
+
+    def _probe(self, manifest: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_target(Path(tmp), source=self.SOURCE, manifest=manifest)
+            return vdp.probe(root, root / sfp.DEFAULT_MANIFEST, fetch=fetch(LIVE_CSV))
+
+    def test_undeclared_the_column_is_not_measured_at_all(self):
+        report = self._probe(MANIFEST)
+        self.assertEqual(report.status, vdp.UNVERIFIED)
+        self.assertIn(vdp.NO_COERCION, " ".join(report.results[0].unverified))
+
+    def test_declared_the_share_is_measured(self):
+        manifest = MANIFEST + (
+            '\n[[dataset.coercer]]\nname = "_parse_count"\ntolerant = true\n'
+        )
+        report = self._probe(manifest)
+        reading = report.results[0].readings[0]
+        self.assertEqual(reading.column, "anzahl")
+        self.assertEqual(reading.offending, 3)
+        self.assertAlmostEqual(reading.share, 0.375)
+
+    def test_a_tolerant_helper_guards_its_call_sites(self):
+        manifest = MANIFEST + (
+            '\n[[dataset.coercer]]\nname = "_parse_count"\ntolerant = true\n'
+        )
+        report = self._probe(manifest)
+        self.assertEqual(report.status, vdp.HANDLED)
+        self.assertFalse(report.finding)
+
+    def test_a_helper_not_declared_tolerant_still_exposes_the_caller(self):
+        manifest = MANIFEST + '\n[[dataset.coercer]]\nname = "_parse_count"\n'
+        report = self._probe(manifest)
+        self.assertEqual(report.status, vdp.DRIFT)
+
+    def test_a_coercer_without_a_name_is_refused(self):
+        manifest = MANIFEST + "\n[[dataset.coercer]]\ntolerant = true\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "schema_fields.toml"
+            path.write_text(manifest, encoding="utf-8")
+            with self.assertRaises(sfp.ManifestError):
+                sfp.load_manifest(path)
 
 
 class TruncationRuleTest(unittest.TestCase):
@@ -274,6 +349,37 @@ class TruncationRuleTest(unittest.TestCase):
         self.assertEqual(report.results[0].rows_read, 1)
         # And the surviving row is the whole one, not `80`.
         self.assertEqual(report.results[0].readings[0].counts, {vdp.INTEGER: 1})
+
+
+class NormalisationTest(unittest.TestCase):
+    """The declared key transformation, shared with schema_field_probe."""
+
+    TITLE_CASE = b"Gemeinde;Anzahl\nZuerich;1 bis 5\nBuch;42\n"
+    NORMALISED_MANIFEST = MANIFEST.replace(
+        'delimiter = ";"', 'delimiter = ";"\nnormalised = "lower"'
+    )
+
+    def _probe(self, manifest: str, body: bytes = TITLE_CASE):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_target(Path(tmp), source=SOURCE_DIRECT, manifest=manifest)
+            return vdp.probe(root, root / sfp.DEFAULT_MANIFEST, fetch=fetch(body))
+
+    def test_the_values_are_measured_through_the_transformation(self):
+        report = self._probe(self.NORMALISED_MANIFEST)
+        self.assertEqual(report.status, vdp.DRIFT)
+        reading = report.results[0].readings[0]
+        self.assertEqual(reading.live_name, "anzahl")
+        self.assertEqual(reading.counts[vdp.NON_NUMERIC], 1)
+
+    def test_no_spurious_name_drift_note_when_it_is_declared(self):
+        """Without this, every column of every Title-Case dataset gets a note."""
+        report = self._probe(self.NORMALISED_MANIFEST)
+        self.assertNotIn(vdp.NOTE_NAME_DRIFT, " ".join(report.results[0].notes))
+
+    def test_undeclared_it_still_measures_and_still_says_so(self):
+        report = self._probe(MANIFEST)
+        self.assertEqual(report.status, vdp.DRIFT)
+        self.assertIn(vdp.NOTE_NAME_DRIFT, " ".join(report.results[0].notes))
 
 
 class NotAFindingTest(unittest.TestCase):

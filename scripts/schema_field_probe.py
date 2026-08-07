@@ -51,6 +51,29 @@ the over-collection is disarmed by the corroboration rule below rather than by
 trying to track which dict is which. Guessing that would be the same guess the
 manifest exists to avoid.
 
+A NORMALISATION BETWEEN THE FETCH AND THE READ IS DECLARED, NOT INFERRED
+------------------------------------------------------------------------
+A server may lowercase every key at fetch time — one place, so the rest of the
+module is indifferent to which spelling the source is using this month. That is
+the *right* fix, and it moves the goalposts for this probe: the code no longer
+reads the header the wire sent, it reads the transformed one.
+
+Compared against the raw header, every read in such a repository looks like
+drift. Against ``zh-education-mcp`` that is five false findings — and the one
+real finding buried underneath them, which is what a false positive costs:
+``r.get("Total_19_Jahre_alt")`` against a row whose keys were lowercased,
+silently returning the default for every row, forever.
+
+So ``normalised = "lower"`` in the manifest states the transformation, the
+comparison is made against the transformed header, and the report says which
+transformation it applied. The raw header is kept and printed beside it, because
+a report that shows only the transformed names cannot be checked against the
+source by hand.
+
+What is not declared is not assumed. An undeclared normalisation still produces
+the finding, which is the safe direction: a spurious finding gets argued with, a
+spurious pass does not.
+
 THE CORROBORATION RULE
 ----------------------
 A key read at a site is only reported as ``FIELD_MISSING`` when **at least one
@@ -190,6 +213,38 @@ def normalise(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
+# A key transformation the code applies between the fetch and the read. Only
+# what a server can actually be observed doing — this is not a place to invent
+# transformations nobody wrote.
+NORMALISATIONS: dict[str, Any] = {
+    "lower": str.lower,
+    "upper": str.upper,
+    "casefold": str.casefold,
+}
+
+
+def apply_normalisation(fields: list[str], normalised: str | None) -> list[str]:
+    """The header as the CODE sees it, not as the wire sent it.
+
+    ``zh-education-mcp`` lowercases every key at fetch time — one place, so the
+    rest of the module is indifferent to which spelling BISTA is using this
+    month. Against the raw header, every lowercase read in that repository then
+    looks like drift: five false findings, and the one real one
+    (``r.get("Total_19_Jahre_alt")`` against a lowercased row, silently
+    returning the default forever) buried underneath them.
+
+    A probe that reports five wrong things to say one right one is not read
+    twice. So the transformation is DECLARED in the manifest, applied here, and
+    named in the report — the same discipline as the mapping itself. What is
+    not declared is not assumed: an undeclared normalisation still produces the
+    finding, which is the safe direction.
+    """
+    if normalised is None:
+        return fields
+    transform = NORMALISATIONS[normalised]
+    return [transform(f) for f in fields]
+
+
 # ---------------------------------------------------------------------------
 # The manifest
 # ---------------------------------------------------------------------------
@@ -203,6 +258,22 @@ class Site:
 
 
 @dataclass(frozen=True)
+class Coercer:
+    """A function in the TARGET that turns a cell into a number.
+
+    ``value_domain_probe`` knows ``int`` and ``float``. A project that wraps
+    the coercion in one helper — which is the *good* pattern, and was this
+    portfolio's own fix for the ``"1 bis 5"`` incident — becomes invisible to
+    it otherwise. So the helper is declared here, by name, and never guessed.
+
+    ``tolerant`` says the helper returns a sentinel instead of raising.
+    """
+
+    name: str
+    tolerant: bool = False
+
+
+@dataclass(frozen=True)
 class Dataset:
     id: str
     url: str
@@ -212,6 +283,10 @@ class Dataset:
     encoding: str = "utf-8-sig"
     record_path: str | None = None
     fixture: str | None = None
+    # A transformation the code applies to every key BETWEEN the fetch and the
+    # read. See `apply_normalisation` for why this has to be declarable.
+    normalised: str | None = None
+    coercers: tuple[Coercer, ...] = ()
 
 
 def load_manifest(path: Path) -> list[Dataset]:
@@ -239,6 +314,15 @@ def load_manifest(path: Path) -> list[Dataset]:
             raise ManifestError(
                 f"{path}: [[dataset]] #{index + 1} is missing {', '.join(missing)}"
             )
+        normalised = entry.get("normalised")
+        if normalised is not None:
+            normalised = str(normalised).lower()
+            if normalised not in NORMALISATIONS:
+                raise ManifestError(
+                    f"{path}: dataset {entry['id']!r} declares normalised="
+                    f"{normalised!r}; known values are "
+                    f"{', '.join(sorted(NORMALISATIONS))}"
+                )
         fmt = str(entry["format"]).lower()
         if fmt not in ("csv", "json"):
             raise ManifestError(
@@ -268,6 +352,18 @@ def load_manifest(path: Path) -> list[Dataset]:
                     ignore=tuple(str(i) for i in site.get("ignore", [])),
                 )
             )
+        coercers: list[Coercer] = []
+        for raw_coercer in entry.get("coercer", []) or []:
+            if not isinstance(raw_coercer, dict) or not raw_coercer.get("name"):
+                raise ManifestError(
+                    f"{path}: a coercer of dataset {entry['id']!r} lacks a name"
+                )
+            coercers.append(
+                Coercer(
+                    name=str(raw_coercer["name"]),
+                    tolerant=bool(raw_coercer.get("tolerant", False)),
+                )
+            )
         datasets.append(
             Dataset(
                 id=str(entry["id"]),
@@ -278,6 +374,8 @@ def load_manifest(path: Path) -> list[Dataset]:
                 encoding=str(entry.get("encoding", "utf-8-sig")),
                 record_path=entry.get("record_path"),
                 fixture=entry.get("fixture"),
+                normalised=normalised,
+                coercers=tuple(coercers),
             )
         )
     return datasets
@@ -504,6 +602,11 @@ class DatasetResult:
     id: str
     url: str
     live_fields: list[str] = field(default_factory=list)
+    # What the wire sent, before any declared normalisation. Kept because a
+    # report that only shows the transformed header cannot be checked against
+    # the source by hand.
+    raw_fields: list[str] = field(default_factory=list)
+    normalised: str | None = None
     delimiter: str = ""
     hits: list[Hit] = field(default_factory=list)
     matched: int = 0
@@ -526,6 +629,8 @@ class DatasetResult:
             "url": self.url,
             "status": self.status,
             "live_fields": self.live_fields,
+            "raw_fields": self.raw_fields,
+            "normalised": self.normalised,
             "delimiter": self.delimiter,
             "hits": [h.as_dict() for h in self.hits],
             "matched": self.matched,
@@ -705,6 +810,9 @@ def probe(
         except SourceError as exc:
             result.unverified.append(f"{dataset.id}: {exc}")
             continue
+        result.raw_fields = live_fields
+        result.normalised = dataset.normalised
+        live_fields = apply_normalisation(live_fields, dataset.normalised)
         result.live_fields = live_fields
         result.delimiter = delimiter
 
@@ -720,10 +828,13 @@ def probe(
             result.hits.extend(hits)
             result.matched += resolved
 
-        note = mixed_case_note(live_fields)
+        # Both notes are about what the SOURCE sends, so they read the raw
+        # header. A normalised view would hide the very mixing that makes
+        # `MIXED_CASE_HEADER` worth printing.
+        note = mixed_case_note(result.raw_fields)
         if note:
             result.notes.append(note)
-        note = fixture_note(target, dataset, live_fields)
+        note = fixture_note(target, dataset, result.raw_fields)
         if note:
             result.notes.append(note)
 
@@ -754,8 +865,14 @@ def render(report: Report) -> str:
     for result in report.results:
         out.append(
             f"  {result.id} [{result.status}] {len(result.live_fields)} live "
-            f"field(s) via {result.delimiter or 'n/a'}, {result.matched} read "
-            "name(s) resolved"
+            f"field(s) via {result.delimiter or 'n/a'}"
+            + (
+                f", compared after the declared {result.normalised}() the code "
+                "applies to every key"
+                if result.normalised
+                else ""
+            )
+            + f", {result.matched} read name(s) resolved"
         )
         for hit in result.hits:
             if hit.status == FIELD_CASE_DRIFT:
