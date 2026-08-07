@@ -73,6 +73,27 @@ A pytest call with no ``-m`` at all admits live tests. That is not an oversight
 in the target: ``pytest tests/`` runs the live suite, and the question here is
 whether the live suite runs.
 
+A TEST FILE RUN AS A SCRIPT IS RESOLVED, NOT DISMISSED
+-------------------------------------------------------
+``swiss-snb-mcp`` runs its live suite nightly with two steps that read
+``python tests/test_live_scenarios.py`` — no pytest on the line at all. The
+files carry ``pytestmark = pytest.mark.live`` and an ``if __name__ ==
+"__main__":`` block that runs every scenario and exits non-zero on failure.
+
+Read as «not a pytest call», that repository came back ``LIVE_UNSCHEDULED``: a
+false finding against a server that runs its live tests every single night.
+
+So ``python <file>.py`` is recorded and then resolved against the checkout,
+which is the only place the answer is:
+
+* the file carries the marker **and** has a ``__main__`` block ⇒ it runs, and
+  the schedule counts;
+* the file carries the marker and has **no** ``__main__`` block ⇒ a finding with
+  its own sentence. Run as a script it imports and exits 0 without executing a
+  single test — a green cron that answers the question falsely, which is worse
+  than no cron at all;
+* anything else ⇒ opaque, and therefore ``UNVERIFIED``.
+
 WHAT A FINDING IS NOT ALLOWED TO CLAIM
 --------------------------------------
 The dangerous direction for this probe is a false ``LIVE_UNSCHEDULED``: the
@@ -282,7 +303,25 @@ class PytestCall:
         }
 
 
-def parse_pytest_calls(script: str) -> tuple[list[PytestCall], list[str]]:
+@dataclass
+class ScriptCall:
+    """A workflow step that runs a Python FILE, not pytest.
+
+    ``python tests/test_live_scenarios.py``. Whether that executes any test
+    depends on the file, so this is recorded and resolved later against the
+    checkout rather than judged here.
+    """
+
+    path: str
+    command: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"path": self.path, "command": self.command}
+
+
+def parse_pytest_calls(
+    script: str,
+) -> tuple[list[PytestCall], list[str], list[ScriptCall]]:
     """Every pytest invocation in a ``run:`` block, plus the opaque commands.
 
     Returns ``(calls, opaque)``. ``opaque`` names commands that could be a test
@@ -291,6 +330,7 @@ def parse_pytest_calls(script: str) -> tuple[list[PytestCall], list[str]]:
     """
     calls: list[PytestCall] = []
     opaque: list[str] = []
+    scripts: list[ScriptCall] = []
     for raw in script.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -317,9 +357,13 @@ def parse_pytest_calls(script: str) -> tuple[list[PytestCall], list[str]]:
             call = _pytest_call(tokens, part)
             if call is not None:
                 calls.append(call)
+                continue
+            module = _script_call(tokens, part)
+            if module is not None:
+                scripts.append(module)
             elif _is_opaque(tokens):
                 opaque.append(part)
-    return calls, opaque
+    return calls, opaque, scripts
 
 
 def _pytest_call(tokens: list[str], original: str) -> PytestCall | None:
@@ -399,6 +443,70 @@ def _command_index(tokens: list[str]) -> int | None:
     return None
 
 
+def _script_call(tokens: list[str], original: str) -> ScriptCall | None:
+    """``python <file>.py`` — an interpreter invoked on a file, not on pytest.
+
+    ``swiss-snb-mcp`` runs its live suite this way: two nightly steps calling
+    ``python tests/test_live_scenarios.py``, where the file carries
+    ``pytestmark = pytest.mark.live`` AND an ``if __name__ == "__main__":``
+    block that runs every scenario and exits non-zero on failure. Read as
+    «not a pytest call», that repository came back LIVE_UNSCHEDULED — a false
+    finding against a server that runs its live tests every single night.
+
+    Recording it here lets the verdict resolve the file against the checkout,
+    which is the only place the answer actually is.
+    """
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        base = token.rsplit("/", 1)[-1]
+        if "=" in token and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token):
+            i += 1
+            continue
+        if base in ("sudo", "env", "xvfb-run", "time", "timeout"):
+            i += 1
+            continue
+        if base in ("python", "python3", "py") or re.fullmatch(r"python3\.\d+", base):
+            for arg in tokens[i + 1 :]:
+                if arg.startswith("-"):
+                    return None  # `-m`, `-c`: not a file invocation
+                if arg.endswith(".py"):
+                    return ScriptCall(path=arg, command=original)
+                return None
+            return None
+        return None
+    return None
+
+
+def has_main_guard(text: str) -> bool:
+    """Does this module execute anything when run as a script?
+
+    The whole question for a ``python tests/test_x.py`` step. A live test file
+    without the guard runs its imports and exits 0 — a scheduled job that
+    reports success while executing no test, which is the DRIFT-005 failure
+    one level further in and worth its own sentence.
+    """
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "__name__"
+            and any(
+                isinstance(c, ast.Constant) and c.value == "__main__"
+                for c in test.comparators
+            )
+        ):
+            return True
+    return False
+
+
 def _is_opaque(tokens: list[str]) -> bool:
     head = tokens[0].rsplit("/", 1)[-1]
     if head in _OPAQUE_COMMANDS:
@@ -468,13 +576,19 @@ class ScheduledRun:
     crons: list[str]
     calls: list[PytestCall] = field(default_factory=list)
     opaque: list[str] = field(default_factory=list)
+    scripts: list[ScriptCall] = field(default_factory=list)
+    # Filled in by the verdict, which is where the checkout is available:
+    # script calls that resolve to a live test file with a `__main__` block.
+    resolved_scripts: list[str] = field(default_factory=list)
+    # …and those that resolve to a live test file WITHOUT one.
+    hollow_scripts: list[str] = field(default_factory=list)
     has_dispatch: bool = False
     failure_visible: bool = False
     visibility_evidence: str = ""
 
     @property
     def runs_live(self) -> bool:
-        return any(c.admits is True for c in self.calls)
+        return any(c.admits is True for c in self.calls) or bool(self.resolved_scripts)
 
     @property
     def undecidable(self) -> list[str]:
@@ -486,6 +600,9 @@ class ScheduledRun:
             "job": self.job,
             "crons": self.crons,
             "calls": [c.as_dict() for c in self.calls],
+            "scripts": [s.as_dict() for s in self.scripts],
+            "resolved_scripts": self.resolved_scripts,
+            "hollow_scripts": self.hollow_scripts,
             "opaque": self.opaque,
             "workflow_dispatch": self.has_dispatch,
             "failure_visible": self.failure_visible,
@@ -716,9 +833,10 @@ def read_workflows(root: Path) -> tuple[list[ScheduledRun], list[str]]:
                 script = step.get("run")
                 if not isinstance(script, str):
                     continue
-                calls, opaque = parse_pytest_calls(script)
+                calls, opaque, scripts = parse_pytest_calls(script)
                 run.calls.extend(calls)
                 run.opaque.extend(opaque)
+                run.scripts.extend(scripts)
             run.failure_visible, run.visibility_evidence = _visible_on_failure(
                 job, data
             )
@@ -775,7 +893,40 @@ def probe(target: Path) -> Report:
         )
         return report
 
+    # Resolve every `python <file>.py` step against the checkout. This is the
+    # step that turns «not a pytest call» into an answer instead of a guess.
+    applied_set = set(applied)
+    for run in runs:
+        for call in run.scripts:
+            rel = call.path.lstrip("./")
+            if rel not in applied_set:
+                # Some other script. What it runs is not readable from here,
+                # so it is opaque — never evidence of absence.
+                run.opaque.append(call.command)
+                continue
+            try:
+                text = (target / rel).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                run.opaque.append(call.command)
+                continue
+            if has_main_guard(text):
+                run.resolved_scripts.append(rel)
+            else:
+                run.hollow_scripts.append(rel)
+
     live_runs = [r for r in runs if r.runs_live]
+
+    hollow = [(r.workflow, f) for r in runs for f in r.hollow_scripts]
+    if hollow and not live_runs:
+        workflow, rel = hollow[0]
+        report.status = UNSCHEDULED
+        report.reason = (
+            f"{workflow} runs `python {rel}` on a schedule, but that file carries the "
+            '`live` marker and has no `if __name__ == "__main__":` block — run as a '
+            "script it imports and exits 0 without executing a single test. A green "
+            "cron that runs nothing is worse than no cron: it answers the question"
+        )
+        return report
 
     if live_runs:
         visible = [r for r in live_runs if r.failure_visible]
@@ -874,7 +1025,9 @@ def render(report: Report) -> str:
     out = [f"{report.status:<24} {report.reason}"]
     for run in report.scheduled:
         marks = ", ".join(
-            f"-m {c.marker_expr!r}" if c.marker_expr else "no -m" for c in run.calls
+            [f"-m {c.marker_expr!r}" if c.marker_expr else "no -m" for c in run.calls]
+            + [f"python {s} (runs as a script)" for s in run.resolved_scripts]
+            + [f"python {s} (NO __main__ block)" for s in run.hollow_scripts]
         )
         out.append(
             f"  cron  {run.workflow} → {run.job}: "
