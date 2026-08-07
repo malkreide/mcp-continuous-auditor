@@ -63,6 +63,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LINT_WORKFLOW = Path(".github") / "workflows" / "lint.yml"
+# `tests.yml` installs Ruff too, because tests/test_format_gate.py runs the two
+# gates against fixtures and this repo does not tolerate a test that skips for a
+# missing dependency. A third pin is a third chance to drift, so it is held to
+# the same version as the other two rather than left to a comment.
+TESTS_WORKFLOW = Path(".github") / "workflows" / "tests.yml"
+PINNED_WORKFLOWS = (LINT_WORKFLOW, TESTS_WORKFLOW)
 PRECOMMIT_CONFIG = Path(".pre-commit-config.yaml")
 
 # `pip install ruff==0.15.8` — tolerates spaces around `==` and other packages
@@ -108,7 +114,7 @@ def compare(workflow_text: str, precommit_text: str) -> tuple[bool, str]:
     pins = workflow_pins(workflow_text)
     hook = precommit_pin(precommit_text)
 
-    workflow = LINT_WORKFLOW.as_posix()
+    workflow = " / ".join(p.as_posix() for p in PINNED_WORKFLOWS)
     config = PRECOMMIT_CONFIG.as_posix()
 
     if not pins:
@@ -127,28 +133,29 @@ def compare(workflow_text: str, precommit_text: str) -> tuple[bool, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    workflow = REPO_ROOT / LINT_WORKFLOW
+    workflows = [REPO_ROOT / p for p in PINNED_WORKFLOWS]
     precommit = REPO_ROOT / PRECOMMIT_CONFIG
 
-    for path in (workflow, precommit):
+    for path in (*workflows, precommit):
         if not path.is_file():
             print(f"Unreadable: {path}", file=sys.stderr)
             return 2
 
-    ok, message = compare(
-        workflow.read_text(encoding="utf-8"),
-        precommit.read_text(encoding="utf-8"),
-    )
+    # Concatenated rather than compared pairwise: `compare()` already reports
+    # every version that differs from the hook's, so a third file needs no third
+    # code path — only its text.
+    joined = "\n".join(p.read_text(encoding="utf-8") for p in workflows)
+    ok, message = compare(joined, precommit.read_text(encoding="utf-8"))
     if ok:
         print(message)
         return 0
 
     print(message, file=sys.stderr)
     print(
-        "\nBump both in the same commit: `rev:` in "
+        "\nBump them in the same commit: `rev:` in "
         f"{PRECOMMIT_CONFIG.as_posix()} and `pip install ruff==…` in "
-        f"{LINT_WORKFLOW.as_posix()}. Otherwise the hook formats to one "
-        "version and CI checks against the other.",
+        f"{' and '.join(p.as_posix() for p in PINNED_WORKFLOWS)}. Otherwise the "
+        "hook formats to one version and CI checks against the other.",
         file=sys.stderr,
     )
     return 1

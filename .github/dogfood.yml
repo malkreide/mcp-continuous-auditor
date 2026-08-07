@@ -148,6 +148,31 @@ steps:
     note: >-
       Regenerates red-team cases against the target server. No server here.
 
+  "redteam-regen.yml.template::regen::Classify the regeneration run":
+    status: mirrored
+    by: "tests.yml::unittest::Unit tests, with no dependency-driven skips tolerated"
+    note: >-
+      The step itself is target-only — there is no regeneration here to classify.
+      What it decides is not, and that is the whole reason it exists as a step
+      rather than as an `if` in the YAML: `scripts/regen_guard.py` holds the
+      finding/clear/unknown classification, and `tests/test_regen_guard.py` drives
+      it here without a network or a token. Twenty-two mutations, one surviving
+      equivalent, recorded in the test file. Classified `mirrored` on the
+      judgement, not on the plumbing around it — the same reading as the routing
+      step below.
+
+  "redteam-regen.yml.template::regen::Route the regeneration tracking issue (open / update / close)":
+    status: target-only
+    note: >-
+      Opens, updates or closes an issue in the TARGET repo from the regeneration
+      verdict. Same shape and same reasoning as the live-probe routing step: the
+      job cannot run here, but the classification it depends on lives in
+      scripts/drift_issue.py under tests/test_drift_issue.py, which the auditor
+      does run on its own code.
+
+  "redteam-regen.yml.template::regen::Upload the report":
+    status: setup
+
   # ------------------------------------------------ uses-basierte Schritte
   # Reine Plumbing-Schritte. Sie stehen hier, damit die Liste vollstaendig ist,
   # nicht weil sie etwas auferlegen.
@@ -189,6 +214,9 @@ steps:
     status: setup
 
   "redteam-regen.yml.template::regen::actions/setup-node@v4":
+    status: setup
+
+  "redteam-regen.yml.template::regen::actions/setup-python@v5":
     status: setup
 
   "live-probe.yml.template::probe::Route the drift tracking issue (open / update / close)":

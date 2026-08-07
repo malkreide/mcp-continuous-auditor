@@ -200,3 +200,50 @@ have happened. `scripts/drift_issue.py` is that step done under the same rule �
 **finding**, **clear**, **unknown**, where unknown opens nothing and closes
 nothing. It is a script and not a heredoc for the same reason: the collapse sat
 in inline YAML for the life of the file because nothing there can be tested.
+
+### The rule also applies to a pipeline, not only to a data source
+
+`redteam-regen.yml.template` is the third place this rule landed, and the first
+where the thing being watched is not an upstream API but one of the repo's own
+pipelines: the weekly regeneration of the committed adversarial set. It ran on
+`schedule` with no `issues: write` and no routing at all — the pure form of a
+guard without an addressee. A red weekly run appears in no pull request, and the
+job summary is seen by whoever opens the run, which for a cron is nobody.
+
+What makes it worth stating separately is that the *quiet* failure is the
+dangerous one. When regeneration stops, the graded CI job keeps evaluating the
+cases already committed and stays green. Nothing turns a colour; the set simply
+stops growing. There is no red run to miss, so the addressee is the only signal
+there is.
+
+The three answers map onto a pipeline as cleanly as onto a probe, and
+`scripts/regen_guard.py` states them for one run:
+
+| state | meaning here |
+|---|---|
+| **finding** | the regeneration was attempted and did not deliver — failed, or exited 0 with no artifact on disk |
+| **clear** | it ran, the artifact is present, and the change reached review |
+| **unknown** | it never got far enough to say — no attacker key configured, step skipped, run cancelled |
+
+`unknown` carries more weight in a template than anywhere else. Most
+repositories that copy the file will not have configured an attacker key on day
+one. Fold that into **finding** and every one of them gets a ticket for a
+workflow nobody switched on; fold it into **clear** and a real, open ticket is
+closed by a run that generated nothing. Both end with the guard switched off,
+which is the failure this whole section is about.
+
+The two halves are kept honest by having to agree: on `unknown` the classifier
+writes neither its `alert=` verdict nor its report, and `drift_issue.py` reads
+an absent verdict as "did not run" by its own tested rule rather than by a second
+copy of that rule in the workflow.
+
+**And the split earned its keep again.** `OPS-008` says check logic belongs in a
+script because inline YAML cannot be mutation-tested. Mutation testing
+`regen_guard.py` found a branch that had been written with the wrong state: a
+delivery step that was cancelled or never started was classified **finding**,
+sitting behind an identical `FINDING` return that already covered it. The branch
+was dead, so removing it changed no behaviour and the mutation survived — and
+the surviving mutant was the signal. A cancelled delivery step observed nothing
+about delivery, so it is **unknown**. That defect is invisible in a heredoc, not
+because it is subtle, but because nothing there can be mutated in the first
+place.
