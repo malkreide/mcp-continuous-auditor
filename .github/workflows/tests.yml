@@ -105,21 +105,4 @@ jobs:
       # catch a broken one — it would fail first in whichever target repo copied
       # it. Parsing is not validation, but it catches the class that hurts.
       - name: Workflow templates are well-formed YAML
-        run: |
-          python - <<'PY'
-          import pathlib, sys
-          import yaml
-
-          bad = []
-          templates = sorted(pathlib.Path(".github/workflows").glob("*.yml.template"))
-          if not templates:
-              sys.exit("no .yml.template files found — did they move?")
-          for path in templates:
-              try:
-                  yaml.safe_load(path.read_text(encoding="utf-8"))
-                  print(f"ok  {path}")
-              except yaml.YAMLError as exc:
-                  bad.append(f"{path}: {exc}")
-          if bad:
-              sys.exit("\n".join(bad))
-          PY
+        run: python scripts/check_workflow_templates.py
