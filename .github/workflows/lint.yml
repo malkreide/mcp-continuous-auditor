@@ -31,6 +31,18 @@ jobs:
       - name: Install pinned Ruff
         run: pip install ruff==0.16.1
 
+      # BEFORE the gates, not after. The pin sync at the end of this job
+      # compares two TEXTS; whether the Ruff that is about to run `ruff check`
+      # carries that version, it never says. If a different one sits earlier on
+      # PATH, both gates below produce findings on a version nobody pinned —
+      # and nobody hears about it.
+      #
+      # `ci.yml.template` already runs `uv run ruff --version`, but that only
+      # PRINTS the version. This repository shipped the idea to others without
+      # running it on itself.
+      - name: Ruff version (pin vs. running program)
+        run: python scripts/check_ruff_version.py
+
       # Root plus every subproject with its own pyproject.toml — `ci.yml.template`
       # ships exactly this, so it runs here too. The rationale is written out in
       # the template; the short form is that ruff already resolves each file's
