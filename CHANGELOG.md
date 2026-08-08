@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-08 — the first live source, and the repairs the probes could not read
+
+Three entries below were missing when this release was cut and are written
+here from the commits, not from memory: the numbered check registry, the Ruff
+version gate and the workflow-template guard all landed after the last
+CHANGELOG pass. A release that quietly omits them would make this file the
+wrong place to ask what changed.
+
+### Added — `scripts/checks/`: a numbered registry, matching the chain
+
+Seven gates that used to be seven workflow steps across two jobs:
+
+```
+1  ruff pin sync                      5  portfolio scripts format at every width
+2  the ruff on PATH                   6  shipped workflow templates parse
+3  ruff check (root + subprojects)    7  every shipped Python file parses
+4  ruff format (same)
+```
+
+`scripts/validate.sh` runs them as `python -m scripts.checks`. Under
+`scripts/`, not `tools/` — this repository keeps its tooling there; the chain
+shares the construction, not the directory names.
+
+What the registry buys: **one run names all findings** (the first red step used
+to abort its job), the order lives in the number rather than in the order of
+`run:` lines, and a crash inside a check is reported as a defect in
+`scripts/checks` rather than as a finding about the repository.
+
+**The repo's own dogfood gate caught the change.** `ci.yml.template` declares
+*by step name* which of its gates are mirrored here; folding three steps into
+one made three declarations point at nothing. `dogfood.yml` was updated — the
+guarantee did not change, the step name did. A test had hardcoded that name;
+it now asserts that `by` **resolves** against the real workflows, which is the
+stronger claim: a typo satisfied the old assertion by accident and satisfies
+this one never.
+
+Suite 1207 → 1223 tests. No test needs Ruff on `PATH` and none writes a shell
+shim — both learned the hard way in `mcp-audit-skill`.
+
+### Added — the Ruff version gate: the pin against the running program
+
+`scripts/check_ruff_pin.py` compares two **texts**, `lint.yml` and
+`.pre-commit-config.yaml`. Whether the Ruff that then runs `ruff check` and
+`ruff format --check` carries that version, it never measured — and reported
+«both places agree» regardless. `scripts/check_ruff_version.py` closes that,
+and it runs **before** the gates: afterwards their findings have already landed
+before anyone knows which version produced them.
+
+Not hypothetical. Up to `0.15.8` `ruff format --check .` left Markdown alone;
+since `0.16.1` the formatting of Python blocks inside Markdown is stable and on
+by default — exactly the difference the pin exists to prevent. Measured twice:
+in `mcp-data-source-probe-skill`, and again while writing this, where a Ruff
+`0.15.8` under `/root/.local/bin` masked the freshly installed `0.16.1`.
+
+Worth stating plainly: `ci.yml.template` already ran `uv run ruff --version`,
+but that only **prints** the version. This repository shipped the idea to
+others without running it on itself.
+
+Three anchors fail with their own message instead of silently: the pin in
+`lint.yml`, the presence of Ruff on `PATH`, and the output shape
+`ruff <version>`.
+
+### Fixed — a new test module used pytest, and this suite has none
+
+The version-gate tests were written with `pytest` and were green locally,
+because the throwaway venv used to run them happened to have it. `tests.yml`
+runs `unittest.defaultTestLoader.discover("tests")`, and pytest is not
+installed — so CI failed at **discovery**, before a single assertion:
+
+```
+ImportError: Failed to import test module: test_ruff_version
+ModuleNotFoundError: No module named 'pytest'
+```
+
+Rewritten in stdlib `unittest` like the rest of the suite and re-verified with
+an interpreter that has no pytest. The lesson is not «use unittest» but
+**verify with the runner CI uses**; a green run under a different runner
+answers a question nobody asked.
+
+### Added — the workflow-template guard, out of its heredoc
+
+The last piece of real check logic living inside a heredoc here. The other
+heredocs in this repository write job summaries or are the test runner itself
+— presentation, not verdicts. This one was a verdict, and it could only be
+exercised by putting the whole repository into the state it complains about.
+So it was never established that it bites at all: the very failure it exists to
+prevent (`OPS-008` in the catalogue).
+
+Now `scripts/check_workflow_templates.py` with a pure `compare()` over a
+mapping of name to text — no filesystem, no mocks. Two properties the heredoc
+had and nobody had verified are now asserted:
+
+- **an empty glob is a finding, not a pass.** Exiting 0 because no templates
+  were found would turn a rename into a silent all-clear (`OPS-005`);
+- **every broken template is named**, not just the first — otherwise each fix
+  costs a round.
+
+Follow-up, one commit later: check 6 crashed in CI. It needs `pyyaml`, and it
+used to live in `tests.yml`, which installs it; moving it into `validate.sh`
+moved it into the lint job, which installs only Ruff. `lint.yml` now installs
+`pyyaml` too — unpinned, because it parses rather than formats and an upstream
+release moves no verdict here. And **a missing dependency is now a finding that
+names it**, not a traceback: whoever runs `validate.sh` in a fresh clone needs
+to know what to install.
+
 ### Added — `also`: an adoption may span the files it names
 
 `reference_drift_probe.py` follows a call from the declared symbol into a
