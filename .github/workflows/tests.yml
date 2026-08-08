@@ -84,10 +84,6 @@ jobs:
           sys.exit(0 if result.wasSuccessful() else 1)
           PY
 
-      # Most scripts/ modules have no test that imports them, so a syntax error
-      # would sit in main until the nightly cron tripped over it at 03:00.
-      - name: Every script parses
-        run: python -m compileall -q scripts/ tests/ schemas/ promptfoo/providers/
 
       # The auditor ships CI templates that impose gates on the repos it
       # audits. Nothing made anyone answer whether those gates also hold here —
@@ -101,8 +97,3 @@ jobs:
           PYTHONUTF8: "1"
         run: python scripts/dogfood_gate.py
 
-      # The .yml.template files are never executed here, so nothing else would
-      # catch a broken one — it would fail first in whichever target repo copied
-      # it. Parsing is not validation, but it catches the class that hurts.
-      - name: Workflow templates are well-formed YAML
-        run: python scripts/check_workflow_templates.py

@@ -38,23 +38,28 @@ steps:
 
   "ci.yml.template::verify::Ruff must be pinned by the lockfile, not resolved fresh":
     status: mirrored
-    by: "lint.yml::ruff::Ruff pin sync (lint.yml ↔ .pre-commit-config.yaml)"
+    by: "lint.yml::ruff::All gates (scripts/checks)"
     note: >-
       Same guarantee, different mechanism, because the two repos hold the pin in
       different places. The auditor pins ruff explicitly in `lint.yml` and holds
       that pin against `.pre-commit-config.yaml`; a target syncs its whole
       toolchain from `uv.lock`, so there the requirement is that the lockfile
       exists and names ruff. Both fail closed when the version is free to move.
+
+      Since the registry landed, this is check 1 inside
+      `bash scripts/validate.sh` — the step name changed, the guarantee did
+      not. Three template gates now name the same own step; that is why
+      `dogfood_gate.py` compares step names and not step counts.
   "ci.yml.template::verify::Lint":
     status: mirrored
-    by: "lint.yml::ruff::Lint"
+    by: "lint.yml::ruff::All gates (scripts/checks)"
     note: >-
       The original gap. `ruff check` shipped to every target from the start and
       ran here for the first time in #52.
 
   "ci.yml.template::verify::Format":
     status: mirrored
-    by: "lint.yml::ruff::Format"
+    by: "lint.yml::ruff::All gates (scripts/checks)"
     note: >-
       `lint.yml` has carried `ruff format --check` since #52 while the template
       demanded only `ruff check` — the auditor held itself to a gate it did not

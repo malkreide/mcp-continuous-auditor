@@ -28,68 +28,29 @@ jobs:
       #
       # NOTE: this version and the `rev` in .pre-commit-config.yaml must agree.
       # The last step of this job checks that.
+      # `pyyaml` kommt dazu, seit Check 6 (die ausgelieferten Workflow-
+      # Templates) in diesem Job laeuft statt in tests.yml. Ungepinnt wie
+      # dort: Es wird zum Parsen benutzt, nicht zum Formatieren — ein
+      # Upstream-Release verschiebt hier kein Urteil.
       - name: Install pinned Ruff
-        run: pip install ruff==0.16.1
+        run: pip install ruff==0.16.1 pyyaml
 
-      # BEFORE the gates, not after. The pin sync at the end of this job
-      # compares two TEXTS; whether the Ruff that is about to run `ruff check`
-      # carries that version, it never says. If a different one sits earlier on
-      # PATH, both gates below produce findings on a version nobody pinned —
-      # and nobody hears about it.
+      # ONE COMMAND INSTEAD OF FIVE STEPS.
       #
-      # `ci.yml.template` already runs `uv run ruff --version`, but that only
-      # PRINTS the version. This repository shipped the idea to others without
-      # running it on itself.
-      - name: Ruff version (pin vs. running program)
-        run: python scripts/check_ruff_version.py
-
-      # Root plus every subproject with its own pyproject.toml — `ci.yml.template`
-      # ships exactly this, so it runs here too. The rationale is written out in
-      # the template; the short form is that ruff already resolves each file's
-      # nearest config on a plain `.` run (measured: a 95-character line under
-      # `examples/worker-tdd-demo/`, line-length 100, passes the root run), so
-      # this loop is not about differing widths. It is about a root `exclude`
-      # that would make the directory run skip a subproject in silence — an
-      # explicitly passed path is checked regardless.
-      - name: Lint
-        run: |
-          ruff check .
-          for sub in $(find . -mindepth 2 -name pyproject.toml -not -path "./.venv/*" -not -path "./node_modules/*"); do
-            echo "→ lint $(dirname "$sub")"
-            ruff check "$(dirname "$sub")"
-          done
-
-      - name: Format
-        run: |
-          ruff format --check .
-          for sub in $(find . -mindepth 2 -name pyproject.toml -not -path "./.venv/*" -not -path "./node_modules/*"); do
-            echo "→ format $(dirname "$sub")"
-            ruff format --check "$(dirname "$sub")"
-          done
-
-      # The Ruff pin sits in two places: above, and as `rev` in
-      # .pre-commit-config.yaml. Let them drift and the hook formats to one
-      # version while this job checks against the other — the hook reports
-      # green and CI goes red. Stdlib-only, hence no install step.
-      - name: Ruff pin sync (lint.yml ↔ .pre-commit-config.yaml)
+      # The gates of this job are now numbered checks under `scripts/checks/`:
+      # 1 pin sync, 2 the running Ruff, 3 `ruff check` over root and every
+      # subproject, 4 the same for `ruff format --check`, 5 the width
+      # stability of the portfolio scripts. The order lives in the number, not
+      # in the order of `run:` lines — a lint finding produced by an unpinned
+      # Ruff is worthless.
+      #
+      # And one run names ALL findings. Before, the first red step aborted the
+      # job and the rest never ran: every failure cost a round.
+      #
+      # The pre-commit hook still calls `scripts/check_ruff_pin.py` directly —
+      # the pure comparison logic stayed there, `scripts/checks/` only hangs it
+      # in. One implementation, two entry points.
+      - name: All gates (scripts/checks)
         env:
           PYTHONUTF8: "1"
-        run: python scripts/check_ruff_pin.py
-
-      # scripts/check_ruff_pin.py is meant to be copied between the portfolio
-      # repos, where line-length 88, 100, 110 and 120 sit side by side. The
-      # step above only checks this repo's width; `ruff format` joins an
-      # expression as soon as it fits, so a line wrapped for 88 passes here and
-      # would be joined in any 100-width repo. Hence the loop over every width
-      # in use rather than just our own. A further shared script belongs in
-      # this list.
-      - name: Format stability of the portfolio scripts
-        run: |
-          for f in scripts/check_ruff_pin.py; do
-            for ll in 88 100 110 120; do
-              if ! ruff format --check --line-length "$ll" "$f"; then
-                echo "::error file=$f::Not correctly formatted at line-length $ll. This file is copied portfolio-wide and must format identically at every width in use — rationale in the module docstring."
-                exit 1
-              fi
-            done
-          done
+        run: bash scripts/validate.sh
