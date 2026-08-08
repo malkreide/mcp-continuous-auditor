@@ -28,8 +28,12 @@ jobs:
       #
       # NOTE: this version and the `rev` in .pre-commit-config.yaml must agree.
       # The last step of this job checks that.
+      # `pyyaml` kommt dazu, seit Check 6 (die ausgelieferten Workflow-
+      # Templates) in diesem Job laeuft statt in tests.yml. Ungepinnt wie
+      # dort: Es wird zum Parsen benutzt, nicht zum Formatieren — ein
+      # Upstream-Release verschiebt hier kein Urteil.
       - name: Install pinned Ruff
-        run: pip install ruff==0.16.1
+        run: pip install ruff==0.16.1 pyyaml
 
       # ONE COMMAND INSTEAD OF FIVE STEPS.
       #

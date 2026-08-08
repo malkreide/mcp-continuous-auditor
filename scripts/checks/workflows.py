@@ -18,7 +18,16 @@ def workflow_templates(root: Path) -> str:
     An empty glob is a FINDING, not a pass — a rename must not read as an
     all-clear.
     """
-    from .. import check_workflow_templates as cwt
+    try:
+        from .. import check_workflow_templates as cwt
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on the env
+        # Naming the dependency beats a traceback: whoever runs `validate.sh`
+        # in a fresh clone needs to know what to install, not where it broke.
+        raise CheckFailed(
+            f"this check needs {exc.name!r}, which is not installed — "
+            "`pip install pyyaml`. FAIL rather than skip: a check that cannot "
+            "run must not report 'passed'."
+        ) from exc
 
     ok, message = cwt.compare(cwt.read_templates(root))
     if not ok:
