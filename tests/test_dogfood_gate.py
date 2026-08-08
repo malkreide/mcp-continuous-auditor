@@ -222,13 +222,28 @@ class RealRepoTest(unittest.TestCase):
 
     def test_the_original_gap_is_recorded_as_mirrored(self):
         """`ruff check` is why this guard exists — it must not silently drift
-        back to unclassified or target-only."""
+        back to unclassified or target-only.
+
+        The `by` value is asserted to RESOLVE, not to equal a fixed string.
+        It named `lint.yml::ruff::Lint` until the gates moved into
+        `scripts/checks/` and became one step; pinning the name made this test
+        fail on a rename that changed nothing about the guarantee. Resolving
+        is also the stronger claim: a typo in `by` would have satisfied the
+        old assertion only by accident, and satisfies this one never.
+        """
         table = yaml.safe_load(
             (REPO_ROOT / ".github" / "dogfood.yml").read_text(encoding="utf-8")
         )
         entry = table["steps"]["ci.yml.template::verify::Lint"]
         self.assertEqual(entry["status"], "mirrored")
-        self.assertEqual(entry["by"], "lint.yml::ruff::Lint")
+
+        _, own_steps, _ = dg.collect(REPO_ROOT)
+        self.assertIn(
+            entry["by"],
+            set(own_steps),
+            f"dogfood.yml says this gate is mirrored by {entry['by']!r}, but no "
+            "own workflow has a step by that name.",
+        )
 
 
 if __name__ == "__main__":

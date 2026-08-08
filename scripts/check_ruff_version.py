@@ -40,8 +40,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Same import shape as `tests/test_ruff_pin.py` uses: this directory is on
-# sys.path both when the script is run directly and when a test puts it there.
+# This directory goes on sys.path explicitly rather than being assumed to be
+# there. Running the file directly puts it there for free; importing it as
+# `scripts.check_ruff_version` — which `scripts/checks/toolchain.py` does —
+# does not, and the bare import below then fails. Measured: three checks
+# crashed on the first run of `validate.sh`.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from check_ruff_pin import LINT_WORKFLOW, workflow_pins  # noqa: E402
 
 # The output shape "ruff 0.16.1" is itself an anchor.
