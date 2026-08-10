@@ -291,6 +291,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--allow-skip", action="append", default=[], metavar="REPO:GRUND")
     p.add_argument("--format", choices=("text", "json"), default="text")
+    p.add_argument(
+        "--json-out",
+        type=Path,
+        metavar="PFAD",
+        help=(
+            "schreibt den JSON-Bericht zusaetzlich in eine Datei; --format steuert "
+            "weiterhin nur stdout. Damit braucht ein Lauf, der die Datei aufhebt UND "
+            "eine lesbare Zusammenfassung druckt, keinen zweiten Durchgang"
+        ),
+    )
     args = p.parse_args(argv)
 
     token = os.environ.get(args.token_env, "")
@@ -350,25 +360,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     coverage_ok = cov.complete
 
-    if args.format == "json":
-        json.dump(
-            {
-                "schema": 1,
-                "probe": "pr-health",
-                "coverage": {
-                    **cov.as_dict(),
-                    # `measured`/`ok` bleiben als Alias erhalten: sie stehen in
-                    # den Berichten, die dieser Lauf schon geschrieben hat.
-                    "measured": len(measured),
-                    "ok": coverage_ok,
-                    "errors": [{"repo": r, "detail": d} for r, d in errors],
-                },
-                "findings": [f.__dict__ for f in findings],
-            },
-            sys.stdout,
-            indent=2,
-            ensure_ascii=False,
+    doc = {
+        "schema": 1,
+        "probe": "pr-health",
+        "coverage": {
+            **cov.as_dict(),
+            # `measured`/`ok` bleiben als Alias erhalten: sie stehen in
+            # den Berichten, die dieser Lauf schon geschrieben hat.
+            "measured": len(measured),
+            "ok": coverage_ok,
+            "errors": [{"repo": r, "detail": d} for r, d in errors],
+        },
+        "findings": [f.__dict__ for f in findings],
+    }
+
+    # Die Datei kommt aus demselben Lauf wie die gedruckte Zusammenfassung.
+    # Vorher hob der Workflow `--format json` in einer Datei auf und liess ein
+    # zweites, INLINE geschriebenes Python daraus die Zusammenfassung bauen —
+    # mit Schluesselnamen, die es nie gab (`swept`, `skipped[].repo`). Das flog
+    # nicht auf: alle Laeufe davor starben schon an der Token-Gate, und als der
+    # Reporter endlich lief, riss sein KeyError den Schritt nicht mit. Ein Lauf,
+    # der nichts berichtet hat, sah aus wie ein sauberer (OPS-005).
+    if args.json_out:
+        args.json_out.write_text(
+            json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
+
+    if args.format == "json":
+        json.dump(doc, sys.stdout, indent=2, ensure_ascii=False)
         sys.stdout.write("\n")
     else:
         for f in findings:

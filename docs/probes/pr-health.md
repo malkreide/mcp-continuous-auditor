@@ -132,7 +132,24 @@ and "there was nothing there" must not share an exit code.
 ```
 python .portfolio/scripts/coverage_manifest.py --format json > manifest.json
 GITHUB_TOKEN=… python scripts/pr_health.py --manifest manifest.json
+GITHUB_TOKEN=… python scripts/pr_health.py --manifest manifest.json --json-out pr-health.json
 ```
+
+`--json-out` writes the report to a file **and** still prints the summary, from
+the one run. The workflow needs both — an artifact to keep and a log a human
+reads — and 47 repositories are around 200 API calls, so a second pass for the
+second format is not free and can disagree with the first.
+
+It is also the fix for a run that was green and had reported nothing. The
+workflow used to redirect `--format json` into the file and let a second Python,
+written inline in the YAML, build the summary out of it. That reader reached for
+`coverage.swept` and `skipped[].repo`; the report has `probed`/`measured` and
+`skipped[].name`, and never had either of the other two. Nothing caught it,
+twice over: every run before the secret existed died at the token gate, so the
+reader had never once executed — and when it finally did, the step captured only
+`pr_health.py`'s exit code, so the `KeyError` did not turn it red. **A sweep that
+printed nothing came out looking like a clean one** — this file's own subject,
+scored against the file itself.
 
 `.github/workflows/pr-health.yml` runs it daily. It needs
 `PORTFOLIO_READ_TOKEN` — a fine-grained PAT covering the portfolio repos; the

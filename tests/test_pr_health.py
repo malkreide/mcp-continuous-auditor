@@ -363,6 +363,47 @@ class ExitCodeTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("1/1 Repos geprueft", out)
 
+    def test_json_out_writes_the_file_and_still_prints_the_summary(self) -> None:
+        """One run has to do both, and the printed line is what a human reads.
+
+        The workflow used to redirect `--format json` into a file and let a
+        SECOND, inline-in-YAML Python build the summary from it. That reader
+        reached for `swept` and `skipped[].repo`, neither of which the report
+        ever had. Nothing caught it: every run before the token existed died at
+        the gate, and when the reader finally ran, its KeyError did not fail the
+        step — a run that reported nothing came out green.
+
+        So the process that measures also prints. This asserts both halves come
+        out of the one run.
+        """
+        out_path = Path(_TMPDIR) / f"out-{next(_SEQ)}.json"
+        rc, out = self._run(self._CLEAN, self._REPO, "--json-out", str(out_path))
+        self.assertEqual(rc, 0)
+        self.assertIn("1/1 Repos geprueft", out)
+
+        doc = json.loads(out_path.read_text(encoding="utf-8"))
+        self.assertEqual(doc["probe"], "pr-health")
+        self.assertEqual(doc["findings"], [])
+        self.assertEqual(doc["coverage"]["expected"], 1)
+        self.assertEqual(doc["coverage"]["measured"], 1)
+
+    def test_the_report_carries_the_keys_a_reader_reaches_for(self) -> None:
+        """Pins the key names, because guessing them wrong stayed invisible.
+
+        `expected`/`probed`/`measured` are the denominator and its two spellings,
+        `skipped[].name` and `errors[].repo` the two lists that get printed. A
+        rename here would break any reader downstream the same silent way.
+        """
+        out_path = Path(_TMPDIR) / f"keys-{next(_SEQ)}.json"
+        self._run(self._CLEAN, self._REPO, "--json-out", str(out_path))
+        cov = json.loads(out_path.read_text(encoding="utf-8"))["coverage"]
+
+        for key in ("expected", "probed", "measured", "ok", "complete"):
+            self.assertIn(key, cov, f"{key} fehlt im Bericht")
+        self.assertNotIn("swept", cov, "es gab nie einen Schluessel `swept`")
+        self.assertEqual(cov["skipped"], [])
+        self.assertEqual(cov["errors"], [])
+
     def test_findings_are_two_not_one(self) -> None:
         """A finding and an incomplete sweep are different outcomes."""
         routes = dict(self._CLEAN)

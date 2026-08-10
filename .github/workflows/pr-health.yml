@@ -85,24 +85,20 @@ jobs:
       # Ein Lauf, nicht zwei: 47 Repos sind rund 200 API-Aufrufe, und ein
       # zweiter Durchgang nur fuer das Textformat wuerde sie verdoppeln — bei
       # einem Ergebnis, das zwischen den beiden Laeufen abweichen kann.
+      #
+      # `--json-out` statt `> datei` und einem zweiten, hier hineingeschriebenen
+      # Python, das die Zusammenfassung aus der Datei baute. Das griff nach
+      # `swept` und `skipped[].repo` — Schluessel, die der Bericht nie hatte.
+      # Aufgefallen ist es erst beim ersten Lauf mit Token, und auch da nicht
+      # von selbst: `rc` faengt nur den Exit von pr_health.py, der KeyError
+      # danach riss den Schritt nicht mit. Der Lauf war gruen und hatte nichts
+      # berichtet. Jetzt druckt derselbe Prozess, der misst — kein zweiter
+      # Leser, der sich in den Namen irren kann, und der Schritt scheitert,
+      # wenn das Drucken scheitert.
       - name: Offene Pull Requests pruefen
         env:
           GITHUB_TOKEN: ${{ secrets.PORTFOLIO_READ_TOKEN }}
-        run: |
-          set +e
-          python scripts/pr_health.py --manifest manifest.json --format json > pr-health.json
-          rc=$?
-          python -c "
-          import json,sys
-          d=json.load(open('pr-health.json'))
-          c=d['coverage']
-          print(f\"{c['swept']}/{c['expected']} Repos geprueft, {len(c['skipped'])} uebersprungen\")
-          for s in c['skipped']: print('  uebersprungen:', s['repo'], '—', s['reason'])
-          for e in c['errors']:  print('  NICHT ERHOBEN:', e['repo'], '—', e['detail'])
-          for f in d['findings']:
-              print(f\"  {f['repo']}#{f['number']} [{f['status']}] {f['evidence']}\")
-          "
-          exit $rc
+        run: python scripts/pr_health.py --manifest manifest.json --json-out pr-health.json
 
       - uses: actions/upload-artifact@v4
         if: always()
