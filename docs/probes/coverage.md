@@ -201,6 +201,20 @@ Two promises were made in YAML and never observed:
 
 Both held.
 
+The third promise — **a `clear` closes the open issue** — had nothing to act on
+that morning, because the only target with an open issue was the one that was
+red. It was measured a few hours later, once the cause of the red run was fixed:
+`zh-education-mcp` run `31372884887` (2026-08-10 09:04 UTC, manual dispatch on
+`main` after the retry-test fix merged) collected 15 live tests, all passed
+against BISTA in 17.9 s, and `github-actions[bot]` closed **#44** at 09:04:52.
+One dispatch, one close, no new issue. The notification path is now observed in
+all three directions.
+
+That run also says something the probe cannot: the 2026-08-08 `502`s were the
+source being out, and it has come back. The same fifteen tests that failed
+fourteen-of-fifteen on Saturday passed fifteen-of-fifteen on Monday, against the
+same endpoints.
+
 #### The `finding` is real, and today it is not an upstream break
 
 Read the two red runs against each other, because they are different things
@@ -241,6 +255,13 @@ Neither bit today (its live tests do not skip). It is drift between siblings,
 introduced by building one before the design was finished, and it is written down
 here rather than left to be rediscovered.
 
+**Closed the same day.** `zh-education-mcp` PR #50 replaced the `case` block with
+the same `scripts/classify_live_run.py` its four siblings run, byte-identical, and
+added `--junitxml=live-report.xml` to the pytest call. All five targets now
+classify on the test report rather than on the exit code. The drift lasted from
+the first remediation to the first Monday that made it visible — which is the
+argument for reading the logs and not only the workflow files.
+
 ### What is still not covered
 
 * **No `UNVERIFIED` branch of the probe has fired against a real target.** The
@@ -252,10 +273,11 @@ here rather than left to be rediscovered.
 * **The `hollow_scripts` branch has never fired.** A live test file executed as
   a script *without* a `__main__` block is the sharpest finding this probe can
   make; `swiss-snb-mcp` had the block, so the branch is fixture-tested only.
-* **No issue has been closed by a recovering run.** The `clear` branch that
-  comments and closes has not been exercised: the three green targets never had
-  an issue to close, and `zh-education-mcp` has not gone green yet. Half the
-  notification path is still only a promise.
+* **No issue has been closed by a *scheduled* recovering run.** The `clear`
+  branch did fire and did close #44 (above) — but on a manual dispatch, with a
+  human deciding the moment. What is still unobserved is the unattended case: a
+  cron firing on a target whose issue is open, and closing it without anyone
+  watching. That is the shape the mechanism is actually for.
 * **`swiss-transport-mcp` still has no live measurement.** `TRANSPORT_API_KEY` is
   unset, so its weekly run reports `unknown` and will keep doing so. The
   mechanism is verified there; the contract with `opentransportdata.swiss` is not.
