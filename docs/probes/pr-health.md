@@ -118,3 +118,10 @@ first call and then takes a 403 mid-sweep:
 
 `Metadata: Read` comes with every fine-grained PAT and is not a separate
 choice. Nothing here writes, so no write scope belongs on this token.
+
+The same token also checks out the portfolio repository the target list comes
+from, so **`swiss-public-data-mcp` belongs in the PAT's repository list** — not
+just the repositories the sweep then queries. That checkout crosses a repository
+boundary like every other call here; left on the workflow's own `GITHUB_TOKEN`
+it takes a 404 before the sweep starts, which is the same failure as a missing
+token wearing a different error message.
