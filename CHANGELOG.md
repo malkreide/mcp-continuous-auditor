@@ -56,6 +56,30 @@ Two gaps close, two open: no issue has yet been **closed** by a recovering run
 (the `clear`-closes branch is still only a promise), and `swiss-transport-mcp`
 still has no live measurement because `TRANSPORT_API_KEY` is unset.
 
+### Documented — the same afternoon: the `clear` branch fired, and the drift closed
+
+Both of the loose ends named above moved within hours of being written down, so
+they are recorded here rather than left to next Monday.
+
+**A `clear` closed an issue.** `zh-education-mcp` run `31372884887`
+(2026-08-10 09:04 UTC, manual dispatch on `main` after the retry-test fix merged)
+collected 15 live tests, all passed against BISTA in 17.9 s, and
+`github-actions[bot]` closed **#44** at 09:04:52. One dispatch, one close, no new
+issue. The notification path is now observed in all three directions — open,
+comment, close. What remains unobserved is the *unattended* case: a cron closing
+an issue with nobody watching, which is the shape the mechanism is for.
+
+The same run also settles the 08-08 reading: the `502`s were the source being out,
+and it is back. The fifteen tests that failed fourteen-of-fifteen on Saturday
+passed fifteen-of-fifteen on Monday against the same endpoints.
+
+**The sibling drift is gone.** `zh-education-mcp` PR #50 replaced the inline
+`case` block with the same `scripts/classify_live_run.py` its four siblings run,
+byte-identical, plus `--junitxml=live-report.xml` on the pytest call. All five
+targets now classify on the test report rather than on the exit code. The drift
+lasted from the first remediation to the first Monday that made it visible — which
+is the argument for reading the logs and not only the workflow files.
+
 ## [0.3.0] - 2026-08-08 — the first live source, and the repairs the probes could not read
 
 Three entries below were missing when this release was cut and are written
