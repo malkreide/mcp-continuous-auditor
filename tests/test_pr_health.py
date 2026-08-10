@@ -57,9 +57,7 @@ def _manifest(**over: object) -> Path:
 
 class ClassifyTest(unittest.TestCase):
     def test_clean_with_checks_is_no_finding(self) -> None:
-        self.assertIsNone(
-            ph.classify(_pr(), checks=3, age_minutes=60, grace_minutes=10)
-        )
+        self.assertIsNone(ph.classify(_pr(), runs=3, age_minutes=60, grace_minutes=10))
 
     def test_dirty_is_unbuildable(self) -> None:
         """The incident: GitHub cannot build a merge ref, so no workflow starts."""
@@ -99,12 +97,12 @@ class ClassifyTest(unittest.TestCase):
 
     def test_zero_checks_past_the_grace_period(self) -> None:
         self.assertEqual(
-            ph.classify(_pr(), checks=0, age_minutes=11, grace_minutes=10), "no_checks"
+            ph.classify(_pr(), runs=0, age_minutes=11, grace_minutes=10), "no_checks"
         )
 
     def test_zero_checks_within_the_grace_period_is_silent(self) -> None:
         """Below the grace period, "no checks" and "about to start" look alike."""
-        self.assertIsNone(ph.classify(_pr(), checks=0, age_minutes=2, grace_minutes=10))
+        self.assertIsNone(ph.classify(_pr(), runs=0, age_minutes=2, grace_minutes=10))
 
     def test_unbuildable_wins_over_no_checks(self) -> None:
         """Both are true for a dirty PR; the cause is the one worth reporting."""
@@ -130,7 +128,7 @@ class WiringTest(unittest.TestCase):
     The classification is pure and tested above; what is untested without this
     is the wiring — that the state comes from the single-PR endpoint (the list
     endpoint omits `mergeable_state`, verified against a live pull request) and
-    that the head SHA reaches the check-run and commit calls.
+    that the head SHA reaches the workflow-run and commit calls.
     """
 
     def _stub(self, ph_module: object, routes: dict[str, object]) -> None:
@@ -156,7 +154,7 @@ class WiringTest(unittest.TestCase):
                     "draft": True,
                     "head": {"sha": "3b342b7d971dfe2fd3c762e403b5579b0d42d99b"},
                 },
-                "/check-runs": {"total_count": 0},
+                "/actions/runs": {"total_count": 0},
                 "/commits/3b342b7": {
                     "commit": {"committer": {"date": "2020-01-01T00:00:00Z"}}
                 },
@@ -167,7 +165,7 @@ class WiringTest(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].status, "unbuildable")
         self.assertEqual(found[0].evidence["mergeable_state"], "dirty")
-        self.assertEqual(found[0].evidence["check_runs"], 0)
+        self.assertEqual(found[0].evidence["workflow_runs"], 0)
 
     def test_clean_pr_with_checks_yields_nothing(self) -> None:
         self._stub(
@@ -180,7 +178,7 @@ class WiringTest(unittest.TestCase):
                     "mergeable_state": "clean",
                     "head": {"sha": "abc1234"},
                 },
-                "/check-runs": {"total_count": 3},
+                "/actions/runs": {"total_count": 3},
                 "/commits/abc1234": {
                     "commit": {"committer": {"date": "2020-01-01T00:00:00Z"}}
                 },
@@ -201,13 +199,62 @@ class WiringTest(unittest.TestCase):
                     "mergeable_state": "clean",
                     "head": {"sha": "def5678"},
                 },
-                "/check-runs": {"total_count": 0},
+                "/actions/runs": {"total_count": 0},
                 "/commits/def5678": {},
             },
         )
         now = dt.datetime(2020, 1, 2, tzinfo=dt.UTC)
         found = ph.inspect("o/r", "tok", grace=10, now=now)
         self.assertEqual([f.status for f in found], ["no_checks"])
+
+    def test_the_run_count_comes_from_actions_not_from_check_runs(self) -> None:
+        """`/commits/{sha}/check-runs` must not come back.
+
+        The Checks API cannot be reached by ANY fine-grained token: there is no
+        repository permission to grant, so it answers 403 however the token is
+        configured (community/discussions#129512). A sweep asking it would report
+        all 47 repositories as unreached — which is at least loud, but the probe
+        would never run.
+
+        This pins the endpoint rather than the count, because the count is the
+        part that looks the same either way. The head SHA has to reach the query
+        as `head_sha=`: without it the endpoint answers with every run the
+        repository ever had, and `no_checks` would then never fire again.
+        """
+        seen: list[str] = []
+
+        def recording_get(url: str, token: str) -> object:
+            seen.append(url)
+            if "/pulls?state=open" in url:
+                return [{"number": 4}]
+            if "/pulls/4" in url:
+                return {
+                    "number": 4,
+                    "title": "t",
+                    "mergeable_state": "clean",
+                    "head": {"sha": "cafe123"},
+                }
+            if "/actions/runs" in url:
+                return {"total_count": 0}
+            return {"commit": {"committer": {"date": "2020-01-01T00:00:00Z"}}}
+
+        orig = ph._get
+        ph._get = recording_get  # type: ignore[assignment]
+        self.addCleanup(lambda: setattr(ph, "_get", orig))
+
+        now = dt.datetime(2020, 1, 2, tzinfo=dt.UTC)
+        found = ph.inspect("o/r", "tok", grace=10, now=now)
+
+        self.assertEqual([f.status for f in found], ["no_checks"])
+        self.assertEqual(found[0].evidence["workflow_runs"], 0)
+        self.assertFalse(
+            [u for u in seen if "check-runs" in u],
+            "check-runs ist fuer fein granulierte Tokens 403 — kein Aufruf dorthin",
+        )
+        self.assertTrue(
+            [u for u in seen if "/actions/runs" in u and "head_sha=cafe123" in u],
+            f"kein /actions/runs mit head_sha in {seen}",
+        )
 
 
 class ManifestTest(unittest.TestCase):
@@ -307,7 +354,7 @@ class ExitCodeTest(unittest.TestCase):
             "mergeable_state": "clean",
             "head": {"sha": "abc"},
         },
-        "/check-runs": {"total_count": 2},
+        "/actions/runs": {"total_count": 2},
         "/commits/abc": {"commit": {"committer": {"date": "2020-01-01T00:00:00Z"}}},
     }
 
@@ -362,12 +409,12 @@ class FindingTest(unittest.TestCase):
             number=58,
             status="unbuildable",
             title="Startereignis",
-            evidence={"mergeable_state": "dirty", "check_runs": 0},
+            evidence={"mergeable_state": "dirty", "workflow_runs": 0},
         )
         line = f.line()
         self.assertIn("o/a#58", line)
         self.assertIn("dirty", line)
-        self.assertIn("check_runs=0", line)
+        self.assertIn("workflow_runs=0", line)
 
 
 if __name__ == "__main__":
