@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the first green `pr-health` run reported nothing, and looked clean doing it
+
+Run [31388191289][run] on 2026-08-10 came out **green**. Step 7 held a traceback:
+
+```
+KeyError: 'swept'
+```
+
+The workflow redirected `--format json` into `pr-health.json` and let a second
+Python — written inline in the YAML — build the human summary out of that file.
+That reader reached for `coverage.swept` and `skipped[].repo`. The report has
+`probed`/`measured` and `skipped[].name`; neither of the other two ever existed.
+
+Two things kept it invisible, and both are this repository's own subject:
+
+* **The reader had never run.** Every `pr-health` run before the secret existed
+  died at the token gate — 4 scheduled runs, all red for the documented reason.
+  The reporting path first executed the moment the token was real.
+* **Its failure did not fail the step.** `rc=$?` captured `pr_health.py`'s exit
+  code, the summary ran after it, and `exit $rc` reported that first code. A
+  sweep that printed no coverage line and no findings exited 0.
+
+The exit-code contract itself held — `exit $rc` still carried 0/1/2 faithfully,
+so an incomplete sweep would still have gone red. What was lost is the report:
+nobody could see `47/47` rather than `3/47` without downloading the artifact.
+
+**`--json-out PFAD`** now writes the report from the same run that prints the
+summary; `--format` still governs stdout alone. The inline Python is gone, and
+with it the second reader that could get the names wrong. Two tests cover it: one
+that a single run produces both halves, one that pins the key names — including
+`assertNotIn("swept", …)`, because guessing a key wrong is what stayed silent.
+
+[run]: https://github.com/malkreide/mcp-continuous-auditor/actions/runs/31388191289
+
 ### Fixed — `pr-health` asked an endpoint no token of its kind can reach
 
 `pr_health.py` counted check runs via `/repos/{owner}/{repo}/commits/{sha}/check-runs`.
