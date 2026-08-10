@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documented — the third reading: the first Monday, and what it actually showed
+
+The second reading said a cron exists and would be visible. On **2026-08-10** the
+crons fired, so the claim became checkable. All five ran.
+
+| target | classified state | issue |
+|---|---|---|
+| `zh-education-mcp` | **`finding`** | #44, third comment |
+| `swiss-transport-mcp` | **`unknown`** — «alle 7 Test(s) uebersprungen» | none, correctly |
+| `register-mcp` | `clear` | — |
+| `fedlex-mcp` | `clear` | — |
+| `swiss-snb-mcp` | `clear` ×3 (nightly) | — |
+
+**No `LIVE_SCHEDULED` was contradicted** — five for five the workflow fired,
+installed, ran the suite and reached a verdict. That gap is closed.
+
+**The notification path, fixture-tested until now, held in both directions.**
+`zh-education-mcp` has been red since 2026-08-08 and has exactly **one** issue
+(#44, label `upstream`) with **three comments**, one per red run — not four
+issues. `swiss-transport-mcp` classified `unknown` and has **zero** open issues:
+the run went red, and nothing claimed a comparison that never happened.
+
+**The `finding` is real, and today it is not an upstream break.** On 08-08 every
+BISTA endpoint returned `502` and 14 of 15 live tests were down — the source was
+out. On 08-10, 14 passed and one failed, and the twelve field-checking live tests
+were all green, so the contract holds; the failure is
+`test_live_a_dns_hiccup_costs_an_attempt_not_the_call` (`assert 3 == 2`), about
+the retry loop's own DNS behaviour on the runner. «Rot heisst nicht zwingend
+unser Fehler» earned its place twice over, in opposite directions.
+
+Two things the first Monday also measured, both written down because they change
+what to do next:
+
+* **GitHub's cron delay is over an hour** — 70 to 96 minutes on every one of the
+  five. The odd-minute choice was about not colliding at `:00` and that reasoning
+  is untouched, but anything scheduling a *check* on these runs has to allow for
+  the hour.
+* **`zh-education-mcp` runs a different classifier from its four siblings.** It
+  was remediated first, before `classify_live_run.py` existed, so its
+  classification is still a `case` block inline in YAML. Its `finding` branch
+  sets no `reason` (today's log shows `Live-Suite: finding` and an empty line),
+  and it classifies on the exit code, so it cannot see the all-skipped case — the
+  one that made the script necessary. Neither bit today; it is sibling drift,
+  named here rather than left to be rediscovered.
+
+Two gaps close, two open: no issue has yet been **closed** by a recovering run
+(the `clear`-closes branch is still only a promise), and `swiss-transport-mcp`
+still has no live measurement because `TRANSPORT_API_KEY` is unset.
+
 ## [0.3.0] - 2026-08-08 — the first live source, and the repairs the probes could not read
 
 Three entries below were missing when this release was cut and are written
