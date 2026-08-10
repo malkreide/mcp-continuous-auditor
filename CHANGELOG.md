@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the summary says how many pull requests it looked at
+
+Run [31393642387][fullrun], the first `pr-health` sweep that printed its own
+result, reported:
+
+```
+45/47 Repos geprueft, 2 uebersprungen, 0 nicht erreichbar — 0 Befunde
+47/47 abgedeckt — vollstaendig
+```
+
+Complete coverage, no findings, exit 0. And unreadable: nothing in that line
+said whether the sweep had inspected forty open pull requests or none. Zero
+findings out of forty is a healthy portfolio. Zero findings out of none is a
+sweep that examined nothing. **They printed the same thing.**
+
+Which is this probe's own subject one level below where it started — `#50` and
+`#58` were taken for green because nothing had run that could be red.
+
+`inspect()` now returns a `Sweep` (findings plus the number of pull requests it
+inspected) instead of a bare list, and the summary line carries the count before
+the findings, because it qualifies them:
+
+```
+45/47 Repos geprueft, 2 uebersprungen, 0 nicht erreichbar — 38 offene PRs geprueft, 0 Befunde
+```
+
+In the JSON it is `pulls_examined`, a sibling of `findings` rather than a member
+of `coverage` — that block counts repositories, and a pull-request number inside
+it would eventually be added to a denominator that means something else. The
+repository denominator has been wrong once already; a test asserts the key is
+*not* in `coverage`.
+
+A repository that fails partway through still contributes no count: it raises
+before returning a `Sweep`, lands in `errors`, and counts against the
+denominator without counting as coverage.
+
+[fullrun]: https://github.com/malkreide/mcp-continuous-auditor/actions/runs/31393642387
+
 ### Fixed — the first green `pr-health` run reported nothing, and looked clean doing it
 
 Run [31388191289][run] on 2026-08-10 came out **green**. Step 7 held a traceback:
