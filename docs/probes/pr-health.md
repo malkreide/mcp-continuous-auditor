@@ -82,6 +82,27 @@ changed is the measurement, so the evidence key changed with it:
 [perms]: https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens
 [disc]: https://github.com/orgs/community/discussions/129512
 
+## The summary carries its numerator
+
+```
+45/47 Repos geprueft, 2 uebersprungen, 0 nicht erreichbar — 38 offene PRs geprueft, 0 Befunde
+```
+
+The run of 2026-08-10 printed that line without `38 offene PRs geprueft`, and it
+could not be read. Zero findings out of forty inspected pull requests is a
+healthy portfolio; zero findings out of none is a sweep that examined nothing.
+Both printed `0 Befunde`.
+
+That is this file's subject one level below where it started. `#50` and `#58`
+were mistaken for green because nothing had run that could be red; a sweep with
+nothing to inspect gets mistaken for a sweep that found nothing wrong, for the
+same reason and in the same shape.
+
+The count sits next to `findings` in the JSON as `pulls_examined`, deliberately
+**not** inside `coverage`: that block counts repositories, and a pull-request
+number living there would sooner or later be added to a denominator that means
+something else. The repository denominator has been wrong once already.
+
 ## Every finding carries its observation
 
 ```

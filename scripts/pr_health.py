@@ -44,6 +44,10 @@ whose CI lives entirely outside Actions every open pull request would become a
 ``no_checks`` finding. The evidence line carries ``workflow_runs`` so that a
 reader can tell that case from a genuine one without opening the pull request.
 
+The summary line also carries how many open pull requests were inspected. Without
+it "0 findings" out of 38 and "0 findings" out of none read identically, and the
+second is not a clean portfolio — it is a sweep that examined nothing.
+
 Every finding carries what was observed — ``mergeable_state``, head SHA, number
 of workflow runs, age of the head commit. Without that a reader has to go and look
 anyway, and a report you have to verify by hand is a report nobody reads. That
@@ -239,9 +243,31 @@ def classify(
     return None
 
 
-def inspect(repo: str, token: str, grace: float, now: dt.datetime) -> list[Finding]:
+@dataclass
+class Sweep:
+    """One repository's result: the findings AND how many pull requests produced them.
+
+    Findings alone cannot say the difference between "this repository had no open
+    pull requests" and "it had nine, all healthy". Both print zero, and a reader
+    who takes the first for the second has read a probe that did not run as one
+    that found nothing — the same substitution `#50` and `#58` cost a round on,
+    one level further down.
+
+    ``pulls`` counts only pull requests actually inspected. A repository that
+    threw partway through never returns a Sweep at all: it lands in ``errors``,
+    counts against the denominator, and contributes no coverage — an HTTP 404
+    does not mean "there was nothing there".
+    """
+
+    findings: list[Finding] = field(default_factory=list)
+    pulls: int = 0
+
+
+def inspect(repo: str, token: str, grace: float, now: dt.datetime) -> Sweep:
     findings: list[Finding] = []
+    pulls = 0
     for stub in open_pulls(repo, token):
+        pulls += 1
         number = stub["number"]
         pr = pull_detail(repo, number, token)
         if pr.get("mergeable_state") == UNKNOWN:
@@ -269,7 +295,7 @@ def inspect(repo: str, token: str, grace: float, now: dt.datetime) -> list[Findi
                     },
                 )
             )
-    return findings
+    return Sweep(findings=findings, pulls=pulls)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -332,10 +358,13 @@ def main(argv: list[str] | None = None) -> int:
 
     now = dt.datetime.now(dt.UTC)
     findings: list[Finding] = []
+    pulls = 0
     errors: list[tuple[str, str]] = []
     for slug, _sid in swept:
         try:
-            findings += inspect(slug, token, args.grace_minutes, now)
+            sweep = inspect(slug, token, args.grace_minutes, now)
+            findings += sweep.findings
+            pulls += sweep.pulls
         except urllib.error.HTTPError as e:
             errors.append((slug, f"HTTP {e.code}"))
         except Exception as e:  # noqa: BLE001 - ein Repo darf den Sweep nicht abbrechen
@@ -371,6 +400,11 @@ def main(argv: list[str] | None = None) -> int:
             "ok": coverage_ok,
             "errors": [{"repo": r, "detail": d} for r, d in errors],
         },
+        # Deliberately a sibling of `findings`, not a member of `coverage`: it
+        # counts pull requests, and `coverage` counts repositories. Sitting
+        # inside that block it would sooner or later be added to a denominator
+        # that means something else.
+        "pulls_examined": pulls,
         "findings": [f.__dict__ for f in findings],
     }
 
@@ -394,9 +428,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f.line())
         for r, d in errors:
             print(f"{r}: nicht erhoben ({d})", file=sys.stderr)
+        # `pulls` steht VOR den Befunden, weil es sie qualifiziert: "0 Befunde"
+        # aus 38 geprueften Pull Requests und "0 Befunde" aus keinem einzigen
+        # sind verschiedene Aussagen, und ohne die Zahl sehen sie gleich aus.
         print(
             f"\n{len(measured)}/{total} Repos geprueft, {len(skipped)} uebersprungen, "
-            f"{len(errors)} nicht erreichbar — {len(findings)} Befunde"
+            f"{len(errors)} nicht erreichbar — {pulls} offene PRs geprueft, "
+            f"{len(findings)} Befunde"
         )
         for r, g in skipped:
             print(f"  uebersprungen: {r} ({g})")

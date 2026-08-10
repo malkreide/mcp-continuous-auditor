@@ -161,7 +161,7 @@ class WiringTest(unittest.TestCase):
             },
         )
         now = dt.datetime(2020, 1, 2, tzinfo=dt.UTC)
-        found = ph.inspect("o/r", "tok", grace=10, now=now)
+        found = ph.inspect("o/r", "tok", grace=10, now=now).findings
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].status, "unbuildable")
         self.assertEqual(found[0].evidence["mergeable_state"], "dirty")
@@ -185,7 +185,25 @@ class WiringTest(unittest.TestCase):
             },
         )
         now = dt.datetime(2020, 1, 2, tzinfo=dt.UTC)
-        self.assertEqual(ph.inspect("o/r", "tok", grace=10, now=now), [])
+        sweep = ph.inspect("o/r", "tok", grace=10, now=now)
+        self.assertEqual(sweep.findings, [])
+        # A healthy pull request was looked at. Without this the caller cannot
+        # tell this run from one that found no pull requests at all.
+        self.assertEqual(sweep.pulls, 1)
+
+    def test_a_repo_without_open_pulls_is_not_the_same_as_a_healthy_one(self) -> None:
+        """Zero findings out of zero pull requests is not a clean repository.
+
+        Both print "0 Befunde". One means every open pull request was inspected
+        and none was stuck; the other means nothing was inspected. Reading the
+        second as the first is this probe's own subject one level further down,
+        so the count is what separates them.
+        """
+        self._stub(ph, {"/pulls?state=open": []})
+        now = dt.datetime(2020, 1, 2, tzinfo=dt.UTC)
+        sweep = ph.inspect("o/r", "tok", grace=10, now=now)
+        self.assertEqual(sweep.findings, [])
+        self.assertEqual(sweep.pulls, 0)
 
     def test_a_missing_commit_date_does_not_suppress_the_finding(self) -> None:
         """No timestamp must not be read as "brand new" — that would hide it."""
@@ -204,7 +222,7 @@ class WiringTest(unittest.TestCase):
             },
         )
         now = dt.datetime(2020, 1, 2, tzinfo=dt.UTC)
-        found = ph.inspect("o/r", "tok", grace=10, now=now)
+        found = ph.inspect("o/r", "tok", grace=10, now=now).findings
         self.assertEqual([f.status for f in found], ["no_checks"])
 
     def test_the_run_count_comes_from_actions_not_from_check_runs(self) -> None:
@@ -243,7 +261,7 @@ class WiringTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(ph, "_get", orig))
 
         now = dt.datetime(2020, 1, 2, tzinfo=dt.UTC)
-        found = ph.inspect("o/r", "tok", grace=10, now=now)
+        found = ph.inspect("o/r", "tok", grace=10, now=now).findings
 
         self.assertEqual([f.status for f in found], ["no_checks"])
         self.assertEqual(found[0].evidence["workflow_runs"], 0)
@@ -403,6 +421,34 @@ class ExitCodeTest(unittest.TestCase):
         self.assertNotIn("swept", cov, "es gab nie einen Schluessel `swept`")
         self.assertEqual(cov["skipped"], [])
         self.assertEqual(cov["errors"], [])
+
+    def test_the_summary_says_how_many_pulls_it_looked_at(self) -> None:
+        """ "0 Befunde" needs its numerator, or it cannot be read.
+
+        The run of 2026-08-10 swept 45 repositories and reported zero findings.
+        Nothing in that line said whether it had inspected forty pull requests
+        or none — the distinction between a healthy portfolio and a sweep that
+        examined nothing.
+        """
+        out_path = Path(_TMPDIR) / f"pulls-{next(_SEQ)}.json"
+        rc, out = self._run(self._CLEAN, self._REPO, "--json-out", str(out_path))
+        self.assertEqual(rc, 0)
+        self.assertIn("1 offene PRs geprueft, 0 Befunde", out)
+
+        doc = json.loads(out_path.read_text(encoding="utf-8"))
+        self.assertEqual(doc["pulls_examined"], 1)
+        # A pull-request count inside `coverage` would eventually be added to a
+        # denominator that counts repositories.
+        self.assertNotIn("pulls_examined", doc["coverage"])
+
+    def test_a_repo_with_no_open_pulls_reports_zero_of_zero(self) -> None:
+        """The sweep ran, found nothing to inspect, and says so."""
+        routes = dict(self._CLEAN)
+        routes["/pulls?state=open"] = []
+        rc, out = self._run(routes, self._REPO)
+        self.assertEqual(rc, 0)
+        self.assertIn("1/1 Repos geprueft", out)
+        self.assertIn("0 offene PRs geprueft, 0 Befunde", out)
 
     def test_findings_are_two_not_one(self) -> None:
         """A finding and an incomplete sweep are different outcomes."""
