@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — `pr-health` asked an endpoint no token of its kind can reach
+
+`pr_health.py` counted check runs via `/repos/{owner}/{repo}/commits/{sha}/check-runs`.
+That endpoint is closed to fine-grained personal access tokens — not a permission
+left unticked, but one that does not exist: `Checks` appears neither in the token
+UI nor in GitHub's [permissions reference][fgperms]. GitHub support, in
+[community/discussions#129512][checksdisc] (open since 2024): *"it isn't possible
+to assign Checks permissions to a Fine-grained PAT — only GitHub Apps can access
+this API."*
+
+The sweep would have taken a 403 on every one of its 47 repositories and exited 1
+with zero coverage. Loud rather than falsely green — the exit-code split did its
+job — but the probe would never have run.
+
+The count now comes from `/actions/runs?head_sha=`, which needs `Actions: Read`.
+That permission a fine-grained token does offer, and the endpoint measures the
+incident more directly: `#50` and `#58` were pull requests for which GitHub
+started **no workflows**, which is what this now asks instead of inferring it from
+the reports workflows leave behind.
+
+* The narrowing is deliberate and documented: a check run posted by something
+  other than GitHub Actions no longer counts. A repository whose CI lives wholly
+  in an external app would turn every open pull request into a `no_checks`
+  finding.
+* The status string stays `no_checks` — it names the condition, which did not
+  change. The evidence key follows the measurement: `check_runs` → `workflow_runs`.
+* A test pins the endpoint rather than the count, because the count is the part
+  that looks identical either way — and asserts the head SHA reaches the query as
+  `head_sha=`, without which the endpoint answers with every run the repository
+  ever had and `no_checks` never fires again.
+
+The token gate in `.github/workflows/pr-health.yml` named `Checks: Read` in its
+error message. An instruction pointing at a setting that does not exist costs the
+reader the round in which they go looking for it; it now names `Actions: Read`.
+
+[fgperms]: https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens
+[checksdisc]: https://github.com/orgs/community/discussions/129512
+
 ### Documented — the third reading: the first Monday, and what it actually showed
 
 The second reading said a cron exists and would be visible. On **2026-08-10** the

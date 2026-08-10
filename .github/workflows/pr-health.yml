@@ -41,6 +41,12 @@ jobs:
       # Fehlt der Token ganz, bricht der Lauf ab statt gruen durchzulaufen: ein
       # Sweep, der nichts geprueft hat, und einer, der nichts gefunden hat,
       # duerfen sich nicht denselben Ausgang teilen (OPS-005).
+      #
+      # `Actions: Read` und nicht `Checks: Read`: die Checks-API ist fuer fein
+      # granulierte Tokens gar nicht erreichbar — es gibt kein Recht, das sie
+      # freischaltet. Diese Meldung nannte frueher eines, und eine Anleitung auf
+      # eine Einstellung, die es nicht gibt, kostet den Leser die Runde, in der
+      # er sie sucht. Details in docs/probes/pr-health.md.
       - name: Token vorhanden?
         env:
           TOKEN: ${{ secrets.PORTFOLIO_READ_TOKEN }}
@@ -48,10 +54,10 @@ jobs:
           if [ -z "${TOKEN}" ]; then
             echo "::error::Secret PORTFOLIO_READ_TOKEN fehlt. Noetig ist ein fein" \
                  "granulierter PAT auf die Portfolio-Repos mit Repository-Rechten" \
-                 "Pull requests: Read (offene PRs, mergeable_state), Checks: Read" \
-                 "(Anzahl Check-Runs) und Contents: Read (Commit-Alter) — Metadata:" \
-                 "Read setzt GitHub selbst. Ohne ihn prueft dieser Lauf nichts —" \
-                 "und das darf nicht wie ein sauberer Lauf aussehen."
+                 "Pull requests: Read (offene PRs, mergeable_state), Actions: Read" \
+                 "(Anzahl Workflow-Laeufe) und Contents: Read (Commit-Alter) —" \
+                 "Metadata: Read setzt GitHub selbst. Ohne ihn prueft dieser Lauf" \
+                 "nichts — und das darf nicht wie ein sauberer Lauf aussehen."
             exit 1
           fi
 

@@ -24,7 +24,7 @@ repository — **absence of a report gets read as absence of a problem.**
 | Status | Condition | Why it matters |
 |---|---|---|
 | `unbuildable` | `mergeable_state` is outside the buildable set | GitHub cannot build the merge ref, so CI cannot run |
-| `no_checks` | zero check runs on the head commit, and that commit is older than `--grace-minutes` (default 10) | the pipeline did not start, and by now it is not going to |
+| `no_checks` | zero workflow runs on the head commit, and that commit is older than `--grace-minutes` (default 10) | the pipeline did not start, and by now it is not going to |
 
 The buildable set is an **allow-list**: `clean`, `unstable`, `blocked`, `behind`,
 `draft`. A state GitHub adds later therefore surfaces rather than passing
@@ -47,11 +47,46 @@ workflows are about to start" are indistinguishable. Reporting inside it would
 make a finding out of every push, and a probe that fires on everything is a
 probe nobody reads.
 
+## Workflow runs, not check runs
+
+`no_checks` counted check runs until it could not. **The Checks API is closed to
+fine-grained personal access tokens.** Not a permission you forgot to tick —
+there is none to tick. `Checks` is absent from the token UI and from GitHub's own
+[permissions reference][perms]; GitHub support in
+[community/discussions#129512][disc]: *"it isn't possible to assign Checks
+permissions to a Fine-grained PAT — only GitHub Apps can access this API."* The
+thread has been open since 2024.
+
+`/commits/{sha}/check-runs` therefore answers 403 however the token is
+configured. The sweep catches that per repository, so it would have reported all
+47 as `NICHT ERHOBEN` and exited 1 — loud rather than falsely green, but a probe
+that never runs.
+
+`/actions/runs?head_sha=` needs only `Actions: Read`, which fine-grained tokens
+do offer. It also measures the incident more directly: what was observed in `#50`
+and `#58` was *GitHub started no workflows*, and this asks that question instead
+of inferring it from the reports workflows leave behind.
+
+The narrowing is real and belongs in writing: **a check run posted by something
+other than GitHub Actions no longer counts.** A repository whose CI lives
+entirely in an external app would turn every open pull request into a
+`no_checks` finding. Nothing in the portfolio does that today; if something
+starts to, the evidence line says `workflow_runs=0` and a reader can tell that
+case from a genuine one without opening the pull request.
+
+The status string stayed `no_checks`. It names the condition — no CI ran — which
+did not change, and it is what the reports written so far already carry. What
+changed is the measurement, so the evidence key changed with it:
+`check_runs` → `workflow_runs`.
+
+[perms]: https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens
+[disc]: https://github.com/orgs/community/discussions/129512
+
 ## Every finding carries its observation
 
 ```
 malkreide/mcp-continuous-auditor#58 [unbuildable] Startereignis je Ziel …
-    — mergeable_state=dirty, draft=True, head=3b342b7, check_runs=0, head_age_min=134
+    — mergeable_state=dirty, draft=True, head=3b342b7, workflow_runs=0, head_age_min=134
 ```
 
 Not decoration. A report you have to verify by hand is a report nobody reads,
@@ -113,7 +148,7 @@ first call and then takes a 403 mid-sweep:
 | Repository permission | Endpoint | Used for |
 |---|---|---|
 | Pull requests: Read | `/repos/…/pulls`, `/repos/…/pulls/{n}` | the open list, and `mergeable_state` |
-| Checks: Read | `/repos/…/commits/{sha}/check-runs` | the check-run count behind `no_checks` |
+| Actions: Read | `/repos/…/actions/runs?head_sha=` | the workflow-run count behind `no_checks` |
 | Contents: Read | `/repos/…/commits/{sha}` | commit timestamp for `--grace-minutes` |
 
 `Metadata: Read` comes with every fine-grained PAT and is not a separate

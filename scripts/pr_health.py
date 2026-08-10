@@ -18,13 +18,34 @@ WHAT THIS REPORTS
 -----------------
 ``unbuildable``   ``mergeable_state`` is outside the buildable allow-list.
                   GitHub cannot build the merge ref, so CI cannot run.
-``no_checks``     No check run at all on the head commit, and that commit is
+``no_checks``     No workflow run at all on the head commit, and that commit is
                   older than ``--grace-minutes``. Below the grace period this
                   is indistinguishable from "the workflows are about to start",
                   and reporting it would make every fresh push a finding.
 
+WHY WORKFLOW RUNS AND NOT CHECK RUNS
+------------------------------------
+This counted check runs until it could not. The Checks API is closed to
+fine-grained personal access tokens — GitHub support: "it isn't possible to
+assign Checks permissions to a Fine-grained PAT — only GitHub Apps can access
+this API" (community/discussions#129512, open since 2024). There is no
+repository permission to grant; ``/commits/{sha}/check-runs`` answers 403 no
+matter how the token is configured, and the sweep would report every repository
+as unreached.
+
+``/actions/runs?head_sha=`` needs only ``Actions: Read``, which a fine-grained
+token does offer — and it measures the incident more directly than check runs
+did. What was observed was "GitHub started no workflows"; this asks that
+question rather than inferring it from the reports workflows leave behind.
+
+The narrowing is real and worth naming: a check run posted by something other
+than GitHub Actions — an external CI app — no longer counts. In a repository
+whose CI lives entirely outside Actions every open pull request would become a
+``no_checks`` finding. The evidence line carries ``workflow_runs`` so that a
+reader can tell that case from a genuine one without opening the pull request.
+
 Every finding carries what was observed — ``mergeable_state``, head SHA, number
-of check runs, age of the head commit. Without that a reader has to go and look
+of workflow runs, age of the head commit. Without that a reader has to go and look
 anyway, and a report you have to verify by hand is a report nobody reads. That
 lesson cost a portfolio sweep a full round: 38 identically worded findings, none
 of which said what the server had actually done.
@@ -170,9 +191,17 @@ def pull_detail(repo: str, number: int, token: str) -> dict[str, Any]:
     return _get(f"{_API}/repos/{repo}/pulls/{number}", token)
 
 
-def check_run_count(repo: str, sha: str, token: str) -> int:
+def workflow_run_count(repo: str, sha: str, token: str) -> int:
+    """How many Actions runs GitHub started for this commit.
+
+    Not ``/commits/{sha}/check-runs``: that endpoint is unreachable for every
+    fine-grained token there is (see the module docstring). ``per_page=1``
+    because only ``total_count`` is read — the runs themselves are never
+    inspected, and pulling 30 of them per pull request across 47 repositories
+    would cost pages nobody looks at.
+    """
     ref = urllib.parse.quote(sha, safe="")
-    data = _get(f"{_API}/repos/{repo}/commits/{ref}/check-runs?per_page=1", token)
+    data = _get(f"{_API}/repos/{repo}/actions/runs?head_sha={ref}&per_page=1", token)
     return int(data.get("total_count", 0)) if isinstance(data, dict) else 0
 
 
@@ -191,15 +220,21 @@ def commit_age_minutes(repo: str, sha: str, token: str, now: dt.datetime) -> flo
 
 def classify(
     pr: dict[str, Any],
-    checks: int,
+    runs: int,
     age_minutes: float,
     grace_minutes: float,
 ) -> str | None:
-    """``unbuildable`` / ``no_checks`` / None. Pure — the tests drive this."""
+    """``unbuildable`` / ``no_checks`` / None. Pure — the tests drive this.
+
+    The status keeps the name ``no_checks`` although the number behind it is now
+    workflow runs: it names the condition ("no CI ran"), which did not change,
+    and it is the string the reports written so far already carry. What the
+    probe measured DID change, so the evidence key did — ``workflow_runs``.
+    """
     state = pr.get("mergeable_state")
     if state is not None and state != UNKNOWN and state not in BUILDABLE:
         return "unbuildable"
-    if checks == 0 and age_minutes >= grace_minutes:
+    if runs == 0 and age_minutes >= grace_minutes:
         return "no_checks"
     return None
 
@@ -213,9 +248,9 @@ def inspect(repo: str, token: str, grace: float, now: dt.datetime) -> list[Findi
             # Lazily computed; the first read after a push is often "unknown".
             pr = pull_detail(repo, number, token)
         sha = pr.get("head", {}).get("sha", "")
-        checks = check_run_count(repo, sha, token) if sha else 0
+        runs = workflow_run_count(repo, sha, token) if sha else 0
         age = commit_age_minutes(repo, sha, token, now) if sha else float("inf")
-        status = classify(pr, checks, age, grace)
+        status = classify(pr, runs, age, grace)
         if status:
             findings.append(
                 Finding(
@@ -227,7 +262,7 @@ def inspect(repo: str, token: str, grace: float, now: dt.datetime) -> list[Findi
                         "mergeable_state": pr.get("mergeable_state"),
                         "draft": pr.get("draft"),
                         "head": sha[:7],
-                        "check_runs": checks,
+                        "workflow_runs": runs,
                         "head_age_min": round(age)
                         if age != float("inf")
                         else "unbekannt",
