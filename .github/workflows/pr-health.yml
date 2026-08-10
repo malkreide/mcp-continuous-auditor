@@ -57,11 +57,17 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # Auch dieser Checkout greift ueber die Repo-Grenze und braucht deshalb
+      # denselben Token: ohne `token:` faellt die Action auf den eingebauten
+      # GITHUB_TOKEN zurueck, der nur fuer DIESES Repo gilt und das Portfolio-
+      # Repo mit 404 quittiert. Der PAT braucht `swiss-public-data-mcp` also in
+      # seiner Repo-Liste — nicht nur die 47 Ziele, die er danach abfragt.
       - name: Portfolio-Manifest holen
         uses: actions/checkout@v4
         with:
           repository: malkreide/swiss-public-data-mcp
           path: .portfolio
+          token: ${{ secrets.PORTFOLIO_READ_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
