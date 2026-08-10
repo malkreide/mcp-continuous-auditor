@@ -2,8 +2,9 @@
 
 > The auditor is not deployed. Nothing here has ever spoken to a live MCP **server**
 > — though as of 2026-08-07 two probes have spoken to a live **data source**, and
-> three probes have measured real portfolio repositories twice: once before a
-> remediation and once after.
+> `live_schedule_probe` has now been read three times against the same five
+> repositories: before a remediation, after it, and against the scheduled runs
+> it prescribed (2026-08-10).
 
 This page applies the repository's own rule to the repository itself.
 
@@ -51,7 +52,7 @@ page exists for, and it is empty on purpose.
 | doc-claim | ✅ | ✅ this repo | — | n/a |
 | parity | ✅ | ✅ this repo | — | n/a |
 | reference-drift | ✅ | ✅ 19 sites in 18 repos — see below | — | n/a |
-| live-schedule | ✅ | ✅ 5 portfolio servers, twice (2026-08-07) — see below | — | n/a |
+| live-schedule | ✅ | ✅ 5 portfolio servers, three readings (2026-08-07/10) — see below | — | n/a |
 | schema-field | ✅ | ✅ `zh-education-mcp`, 6/6 datasets, twice (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
 | value-domain | ✅ | ✅ `zh-education-mcp`, 6/6 datasets, 122 379 rows (2026-08-07) | — | ✅ `www.bista.zh.ch`, live — see below |
 | pr-health | ✅ | ✅ GitHub API, daily | — | n/a |
@@ -168,20 +169,96 @@ which the repository does not yet hold. That is the correct answer — a secret
 nobody set is not a green contract with the source — but it is also the reason
 this row is a mechanism and not yet a measurement.
 
+### The third reading: the first Monday
+
+The second reading said a cron exists and would be visible. **2026-08-10 is the
+day that claim became checkable**, because the crons fired for real. All five
+ran, and the two things the probe cannot see — whether a workflow does what its
+YAML says, and whether the notification path works — are now measured.
+
+| target | run | classified state | issue |
+|---|---|---|---|
+| `zh-education-mcp` | 06:46 | **`finding`** | #44, third comment |
+| `swiss-transport-mcp` | 06:41 | **`unknown`** — «alle 7 Test(s) uebersprungen» | none, correctly |
+| `register-mcp` | 06:52 | `clear` | — |
+| `fedlex-mcp` | 06:53 | `clear` | — |
+| `swiss-snb-mcp` | nightly, 08-08/09/10 | `clear` ×3 | — |
+
+**No `LIVE_SCHEDULED` was contradicted.** Five for five, the workflow fired,
+installed, ran the suite and reached a verdict. That gap is closed.
+
+#### The notification path, which was fixture-tested only
+
+Two promises were made in YAML and never observed:
+
+* **A `finding` opens one issue and then comments.** `zh-education-mcp` has been
+  red since 2026-08-08. There is exactly **one** issue — #44, label `upstream`,
+  opened by `github-actions` — with **three comments**, one per red run. Not four
+  issues. The stable-prefix lookup does what it was written for.
+* **An `unknown` opens nothing and closes nothing.** `swiss-transport-mcp`
+  classified `unknown` and has **zero** open issues. The run went red, the
+  Actions tab shows it, and no issue claims a comparison that never happened.
+
+Both held.
+
+#### The `finding` is real, and today it is not an upstream break
+
+Read the two red runs against each other, because they are different things
+under one issue thread:
+
+* **2026-08-08:** every endpoint returned `502 Bad Gateway`, 14 of 15 live tests
+  down. That is the source being out — exactly what the issue body says a red run
+  usually means.
+* **2026-08-10:** 14 passed, **1 failed**. All twelve field-checking live tests
+  passed, so the contract with BISTA holds. The failure is
+  `test_live_a_dns_hiccup_costs_an_attempt_not_the_call` — `assert 3 == 2`, a
+  test about the retry loop's own DNS behaviour on the runner.
+
+So the sentence «rot heisst nicht zwingend unser Fehler» earned its place twice
+over, in opposite directions: once the source was down, once the suite's own
+environment assumption was.
+
+#### Two things the first Monday also measured
+
+**GitHub's cron delay is over an hour.** Every one of the five started 70–96
+minutes after its scheduled minute (05:19 → 06:41, 05:23 → 06:46, 05:31 → 06:52,
+05:43 → 06:53; the nightly 03:17 → 04:27/04:36/04:53). The odd-minute choice was
+about not colliding at `:00` and that reasoning is untouched — but anything that
+schedules a *check* on one of these runs has to allow for the hour, not for the
+minute.
+
+**`zh-education-mcp` runs a different classifier from its four siblings.** It was
+the first repository remediated, before the JUnit-based
+`scripts/classify_live_run.py` existed, so its classification is still a `case`
+block inline in YAML. Two consequences visible in today's log:
+
+* its `finding` branch sets no `reason`, so the run printed `Live-Suite: finding`
+  followed by an empty line;
+* it classifies on pytest's exit code, so it cannot see the **all-skipped** case
+  — the one that made the script necessary in the first place.
+
+Neither bit today (its live tests do not skip). It is drift between siblings,
+introduced by building one before the design was finished, and it is written down
+here rather than left to be rediscovered.
+
 ### What is still not covered
 
-* **No `UNVERIFIED` branch has fired against a real target.** The
+* **No `UNVERIFIED` branch of the probe has fired against a real target.** The
   opaque-command and undecidable-marker paths are fixture-tested only — and they
   are the two that keep a false finding from being printed. (The opaque path now
   *appears* in four real reports, against the `python scripts/classify_live_run.py`
   step, but it is never the verdict there because a pytest call was found in the
   same job.)
-* **No `LIVE_SCHEDULED` has been contradicted by an actual run.** Every second
-  reading above says a cron exists and would be visible. Whether these workflows
-  do what the YAML says will be known on the first Monday, not before.
 * **The `hollow_scripts` branch has never fired.** A live test file executed as
   a script *without* a `__main__` block is the sharpest finding this probe can
   make; `swiss-snb-mcp` had the block, so the branch is fixture-tested only.
+* **No issue has been closed by a recovering run.** The `clear` branch that
+  comments and closes has not been exercised: the three green targets never had
+  an issue to close, and `zh-education-mcp` has not gone green yet. Half the
+  notification path is still only a promise.
+* **`swiss-transport-mcp` still has no live measurement.** `TRANSPORT_API_KEY` is
+  unset, so its weekly run reports `unknown` and will keep doing so. The
+  mechanism is verified there; the contract with `opentransportdata.swiss` is not.
 
 ## The full run, and what it found: `schema_field_probe` + `value_domain_probe`
 
