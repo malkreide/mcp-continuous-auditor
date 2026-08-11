@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the quality chain is four skills in two repositories, and this repository's links to it carry a tag
+
+`mcp-audit-skill v3.0.0` merged the four skills into one tree under `skills/`;
+`mcp-data-source-probe-skill`, `mcp-data-fidelity-skill` and
+`mcp-transport-hardening-skill` are archived. The chain table in both READMEs
+still linked all three — links that resolve, look intact, and point at a
+snapshot nobody maintains any more. That is the worse half of a dead link: a
+404 is at least legible.
+
+The rows now point into `skills/` — **and at the tag, not at `main`.** Every one
+of them makes a claim about what the skill *says*: "its rule 5", "its rules
+1–4", "its step 1.4 recall ground truth". Pointed at `main`, such a claim can
+stop being true without a byte changing here and without anything saying so.
+Pointed at a tag it can only go stale, which somebody can see. The trade is
+deliberate, and it is the one the merge plan recorded as `Phase 5`.
+
+`docs/probes/vendored-copy.md` cited `ARCH-014` against `blob/main` for the same
+reason and moved to the same tag.
+
+`tests/test_quality_chain_table.py` holds it: one `PIN` constant, every content
+link in `README.md`, `README.de.md` and `docs/**/*.md` checked against it, the
+three archived repositories asserted absent, and the members matched by their
+backtick-delimited names — without the delimiters `mcp-data-source-probe` also
+matches inside `mcp-data-source-probe-skill`, so the table could have gone on
+naming a grave and passing.
+
+**The anchor test came out of a mutation that stayed green.** Rewriting the
+README's URLs into a shape the scanner does not match
+(`…mcp-audit-skill@v3.0.0`) left every assertion above it passing: the repo-wide
+scan still found links elsewhere, so the list was not empty, and for that file
+nothing was being checked at all. `test_ANKER_die_kettentabelle_selbst_traegt_gepinnte_links`
+now requires each chain table to carry at least one link in the pinned form —
+the assurance can no longer lose its subject quietly.
+
+What this test cannot reach is written in its docstring rather than left to be
+discovered: it asserts **consistency, never currency**. Whether `v3.0.0` is
+still the latest release of `mcp-audit-skill`, and whether the pinned paths
+resolve, needs the network and is not checked here.
+
+Two mentions deliberately kept as they are: the prose in `scripts/checks/_core.py`,
+`scripts/check_ruff_version.py`, `scripts/reference_drift_probe.py` and
+`docs/probes/{reference-drift,coverage}.md` naming the old repositories records
+*where something was measured*. That history stays true after the archive.
+
 ### Added — the summary says how many pull requests it looked at
 
 Run [31393642387][fullrun], the first `pr-health` sweep that printed its own

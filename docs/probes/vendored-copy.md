@@ -17,7 +17,7 @@ Schwesterkopien **synchron** halten.
 ```
 
 On 2026-08-07 they were 250 lines and 140 lines. The retry policy
-([`ARCH-014`](https://github.com/malkreide/mcp-audit-skill/blob/main/checks/ARCH-014.md))
+([`ARCH-014`](https://github.com/malkreide/mcp-audit-skill/blob/v3.0.0/checks/ARCH-014.md))
 had been repaired in one copy and never reached the other: one server honoured
 `Retry-After` and jittered its backoff, its twin did neither, and the portfolio
 run that found it was looking for something else entirely.

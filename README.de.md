@@ -240,19 +240,23 @@ Phase 0 Baseline → 1 Read-only-Auditor → 2 promptfoo-CI-Gate → 3 PR-only-W
 
 ### Die MCP-Qualitätskette
 
-Fünf Repos, ein Lebenszyklus. Jedes beantwortet eine andere Frage, in der Reihenfolge, in der sie aufkommt — dieses kommt zuletzt und ist das einzige, das immer weiterfragt. Das gemeinsame GitHub-Topic ist [`mcp-quality-chain`](https://github.com/topics/mcp-quality-chain) und listet alle fünf auf einer Seite.
+Vier Skills, ein Lebenszyklus, dazu dieses Projekt im Betrieb. Jeder beantwortet eine andere Frage, in der Reihenfolge, in der sie aufkommt — dieses kommt zuletzt und ist das einzige, das immer weiterfragt. Das gemeinsame GitHub-Topic ist [`mcp-quality-chain`](https://github.com/topics/mcp-quality-chain).
 
-| Phase | Repo | Frage, die es beantwortet |
+Die vier Skills waren einmal vier Repos. Seit [`mcp-audit-skill v3.0.0`](https://github.com/malkreide/mcp-audit-skill/releases/tag/v3.0.0) liegen sie in einem Baum unter `skills/`, und die drei ehemaligen Repos sind archiviert. **Die Links unten zeigen absichtlich auf diesen Tag** — jeder von ihnen behauptet etwas darüber, was der Skill *sagt*, und eine Behauptung, die auf `main` zeigt, kann aufhören zu stimmen, ohne dass sich hier irgendetwas ändert. Ein veralteter Pin ist sichtbar; ein still verschobenes Ziel nicht.
+
+Der Tag steht an einer Stelle, in `tests/test_quality_chain_table.py`, und der hält jeden Inhalts-Verweis in der Doku dieses Repos auf diesen einen Wert — und verlangt von jeder Ketten-Tabelle mindestens einen solchen Verweis, damit die Zusage ihren Gegenstand nicht still verlieren kann.
+
+| Phase | Skill | Frage, die er beantwortet |
 |---|---|---|
-| vor dem Bau | [`mcp-data-source-probe-skill`](https://github.com/malkreide/mcp-data-source-probe-skill) | Taugt die Quelle, und was hat sie? Die Recall-Ground-Truth aus Schritt 1.4 ist das, wogegen die `min_count`-Floors hier messen |
-| im Bau | [`mcp-data-fidelity-skill`](https://github.com/malkreide/mcp-data-fidelity-skill) | Liefert er, was die Quelle hat? Seine Regel 5 — Recall in den Tests, nicht in der Beschreibung — ist der Grund, warum die Probes Floors tragen statt Schema-Assertions |
-| im Bau | [`mcp-transport-hardening-skill`](https://github.com/malkreide/mcp-transport-hardening-skill) | Kommt er hoch, weist er richtig ab, bleibt er zustandslos? Seine Regeln 1–4 sind das, wofür `transport_boot_probe.py` das Ziel hochfährt — beide Repos zitieren denselben Vorfall, `parlament-mcp#29` — und seine Stateless- und Legacy-SSE-Regeln sind das, was `spec_probe.py` als `SPEC_DRIFT` und `LEGACY_TRANSPORT` meldet |
-| nach dem Bau | [`mcp-audit-skill`](https://github.com/malkreide/mcp-audit-skill) | Hält er gegen den Katalog? Sein `OPS-005` (Pipeline-Ehrlichkeit) stammt aus diesem Repo — [#29](https://github.com/malkreide/mcp-continuous-auditor/pull/29), eine Testsuite, die kein Workflow je ausgeführt hat |
+| vor dem Bau | [`mcp-data-source-probe`](https://github.com/malkreide/mcp-audit-skill/tree/v3.0.0/skills/mcp-data-source-probe) | Taugt die Quelle, und was hat sie? Die Recall-Ground-Truth aus Schritt 1.4 ist das, wogegen die `min_count`-Floors hier messen |
+| im Bau | [`mcp-data-fidelity`](https://github.com/malkreide/mcp-audit-skill/tree/v3.0.0/skills/mcp-data-fidelity) | Liefert er, was die Quelle hat? Seine Regel 5 — Recall in den Tests, nicht in der Beschreibung — ist der Grund, warum die Probes Floors tragen statt Schema-Assertions |
+| im Bau | [`mcp-transport-hardening`](https://github.com/malkreide/mcp-audit-skill/tree/v3.0.0/skills/mcp-transport-hardening) | Kommt er hoch, weist er richtig ab, bleibt er zustandslos? Seine Regeln 1–4 sind das, wofür `transport_boot_probe.py` das Ziel hochfährt — beide Repos zitieren denselben Vorfall, `parlament-mcp#29` — und seine Stateless- und Legacy-SSE-Regeln sind das, was `spec_probe.py` als `SPEC_DRIFT` und `LEGACY_TRANSPORT` meldet |
+| nach dem Bau | [`mcp-audit`](https://github.com/malkreide/mcp-audit-skill/tree/v3.0.0) | Hält er gegen den Katalog? Sein `OPS-005` (Pipeline-Ehrlichkeit) stammt aus diesem Repo — [#29](https://github.com/malkreide/mcp-continuous-auditor/pull/29), eine Testsuite, die kein Workflow je ausgeführt hat |
 | im Betrieb | **`mcp-continuous-auditor`** | **Dieses Projekt:** hält er morgen noch? |
 
 Daneben, nicht Teil der Kette: [`mcp-builder`](https://github.com/anthropics/skills/tree/main/skills/mcp-builder) — generische Bauanleitung von Anthropic. Fremdes Repo, kann das Topic nicht tragen.
 
-Die vier Skills sagen, wie ein korrekter Server aussieht; dieses Projekt ist der Teil, der weiterprüft, wenn alle aufgehört haben hinzuschauen. Jede Probe hier existiert, weil ein Server gleichzeitig grün und falsch war — genau die Fehlerklasse, für die alle fünf geschrieben wurden.
+Die vier Skills sagen, wie ein korrekter Server aussieht; dieses Projekt ist der Teil, der weiterprüft, wenn alle aufgehört haben hinzuschauen. Jede Probe hier existiert, weil ein Server gleichzeitig grün und falsch war — genau die Fehlerklasse, für die sie alle geschrieben wurden.
 
 Die geprüften Server sind das [Swiss Public Data MCP](https://github.com/malkreide/swiss-public-data-mcp) Portfolio mit dem eigenen Topic [`swiss-public-data-mcp`](https://github.com/topics/swiss-public-data-mcp).
 
