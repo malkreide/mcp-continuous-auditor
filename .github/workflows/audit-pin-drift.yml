@@ -78,7 +78,27 @@ jobs:
           print(f"| upstream | `{r['upstream']}` |\n")
           print(r["message"])
 
-          if not r["ok"]:
+          # THE ADVICE FOLLOWS THE STATE, and that is not cosmetic. An earlier
+          # version printed the pin-raising steps for every non-ok result —
+          # including UNKNOWN, where nothing was measured, and BROKEN, where
+          # the tag does not exist. Raising the pin is wrong in both: one has
+          # no evidence behind it, the other needs a different diagnosis
+          # entirely. The script separates those three states with some care;
+          # a summary that collapses them again undoes the separation exactly
+          # where somebody reads it and acts.
+          if r["tag_exists"] is False:
+              print("\n**The pinned tag does not exist upstream.** Do NOT bump to the")
+              print("latest release — that hides the cause instead of fixing it. Check,")
+              print("in this order:\n")
+              print("1. a typo in `PIN`")
+              print("2. a tag deleted or renamed upstream")
+              print("3. whether the release it named was withdrawn")
+          elif r["latest"] is None or r["tag_exists"] is None:
+              print("\n**Nothing was compared.** The API did not answer, so this run")
+              print("is neither a pass nor a drift finding. The statuses above say")
+              print("which call failed. Re-run once the API is reachable; the pin")
+              print("itself is not implicated.")
+          else:
               print("\n**Raising the pin means, in one commit:**\n")
               print("1. `PIN` in `tests/test_quality_chain_table.py`")
               print("2. every link the test holds to it — the failure names each file")

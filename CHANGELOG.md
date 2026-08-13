@@ -61,6 +61,25 @@ Held against four mutations, all red: `UNKNOWN` folded into a pass, `BROKEN`
 reported as `DRIFT`, the report schema shifted (reproduces the `KeyError`), and
 the heredoc anchor renamed.
 
+**The summary's advice follows the state.** The first version printed the
+pin-raising steps for every non-`ok` result — so a run that measured *nothing*,
+and a run whose tag does not *exist*, both ended with "raise the pin": advice
+with no evidence behind it in the first case, the wrong diagnosis in the
+second. Collapsing the three states again at the last step is worse than never
+having separated them, because that step is where somebody reads and acts.
+`BROKEN` now says what to check instead of bumping, `UNKNOWN` says the pin is
+not implicated. Raised in review on #96 and held by three subtests.
+
+**Two things this cost, both worth recording.** The first version of the test
+file used pytest, which `tests.yml` does not install — it runs
+`unittest.defaultTestLoader.discover`. That did not fail on an assertion but on
+the IMPORT, taking the whole module out of discovery while every other file
+still reported `ok`. `TheSuiteStaysStdlibOnly` now makes that a test, and it
+parses with `ast` rather than grepping: the first attempt flagged
+`test_live_schedule_probe.py`, where `import pytest` sits inside a string
+fixture describing another repository's file — the same parse-don't-grep lesson
+`read_pin()` applies two files away.
+
 **Not verified here:** the sandbox this was written in blocks `api.github.com`,
 so the network half is only exercised in the runner. The pure functions and the
 workflow wiring are.
