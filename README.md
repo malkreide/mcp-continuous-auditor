@@ -235,6 +235,8 @@ The four skills used to be four repositories. Since [`mcp-audit-skill v3.0.0`](h
 
 The tag is written down once, in `tests/test_quality_chain_table.py`, which holds every content link in this repository's documentation to that one value — and requires each chain table to carry at least one such link, so the assurance cannot quietly lose its subject.
 
+That test asserts **consistency, never currency**: whether the pinned tag is still the latest release needs the network, and it says so rather than leaving it to be discovered. `scripts/audit_pin_drift.py` is the other half — weekly, via `.github/workflows/audit-pin-drift.yml`, it asks whether the pinned tag still exists upstream and whether it is still the latest release. A red run there is not a defect here; it is the prompt to raise the pin deliberately.
+
 | Stage | Skill | Question it answers |
 |---|---|---|
 | before the build | [`mcp-data-source-probe`](https://github.com/malkreide/mcp-audit-skill/tree/v3.0.0/skills/mcp-data-source-probe) | Is the source usable, and what does it hold? Its step 1.4 recall ground truth is what this project's `min_count` floors are measured against |

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the pin is now watched for currency, not just for consistency
+
+`tests/test_quality_chain_table.py` holds every content link in this
+repository's documentation to one `PIN` constant. It asserts **consistency**,
+and it says so in its own docstring: whether that tag is still the latest
+release of `mcp-audit-skill` needs the network, and a stdlib-only test has no
+business reaching for it.
+
+That left exactly one way for the pin to rot unseen — correct everywhere,
+pointing at a release two versions old. Smaller than a link to `main`, since a
+stale pin is at least a real, readable snapshot. But smaller is not visible,
+and invisible is the property this repository exists to remove.
+
+`scripts/audit_pin_drift.py` plus `.github/workflows/audit-pin-drift.yml`
+(Mondays 06:53 UTC) close it, in the shape of `sdk-drift.yml` next door and for
+the same reason: the pin stays pinned so the tests stay reproducible, and a
+weekly run makes the drift visible anyway. **A red run there is not a defect
+here** — it is the prompt to raise the pin deliberately.
+
+**Two questions, not one.** Does the pinned tag still exist upstream? And is it
+still the latest release? They fail differently and are reported differently: a
+tag that does not exist is broken *now* and every link points at nothing; a pin
+behind the latest release is a decision waiting to be made. `BROKEN` outranks
+`DRIFT`, so nobody fixes a typo by accident while raising a version.
+
+`compare()` keeps a third state apart from both: `None` for either input means
+**not measured**, reported as `UNKNOWN` and never as a pass. Folded into
+"differs", an unreachable API would be indistinguishable from a stale pin — and
+the fix for those two is not the same.
+
+`read_pin()` parses the constant with `ast` rather than importing the test
+module or grepping it. Grepping would match `PIN` inside that file's own prose
+and error messages; importing would pull in `pytest` for one string.
+
+**Two defects surfaced while testing it, both real:**
+
+- `read_pin(path: Path = PIN_FILE)` bound the constant at *definition* time, so
+  rebinding `PIN_FILE` changed nothing — the module attribute was a decoy. Now
+  it defaults to `None` and resolves at call time.
+- The diagnostic line `PIN_FILE.relative_to(REPO_ROOT)` raised `ValueError` for
+  any path outside the tree, taking the diagnosis down with the diagnostic.
+
+**The summary step is tested from the start**, because the identical
+construction was measured failing next door: `quality-chain.yml` in
+`mcp-audit-skill` read a report schema that had moved on and died on a
+`KeyError` before writing a line — every run, for a week, while the guard
+itself worked fine. The Python of a workflow lives in a heredoc that only the
+runner executes, so the test pulls it out of the YAML and runs it against a
+report `main()` really produced.
+
+Held against four mutations, all red: `UNKNOWN` folded into a pass, `BROKEN`
+reported as `DRIFT`, the report schema shifted (reproduces the `KeyError`), and
+the heredoc anchor renamed.
+
+**Not verified here:** the sandbox this was written in blocks `api.github.com`,
+so the network half is only exercised in the runner. The pure functions and the
+workflow wiring are.
+
 ### Changed — the quality chain is four skills in two repositories, and this repository's links to it carry a tag
 
 `mcp-audit-skill v3.0.0` merged the four skills into one tree under `skills/`;
