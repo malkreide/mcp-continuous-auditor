@@ -246,6 +246,8 @@ Die vier Skills waren einmal vier Repos. Seit [`mcp-audit-skill v3.0.0`](https:/
 
 Der Tag steht an einer Stelle, in `tests/test_quality_chain_table.py`, und der hält jeden Inhalts-Verweis in der Doku dieses Repos auf diesen einen Wert — und verlangt von jeder Ketten-Tabelle mindestens einen solchen Verweis, damit die Zusage ihren Gegenstand nicht still verlieren kann.
 
+Jener Test sichert **Konsistenz zu, nie Aktualität**: Ob der gepinnte Tag noch das neueste Release ist, braucht Netz — und er sagt das, statt es entdecken zu lassen. `scripts/audit_pin_drift.py` ist die andere Hälfte: wöchentlich über `.github/workflows/audit-pin-drift.yml`, mit zwei Fragen — gibt es den gepinnten Tag oben überhaupt noch, und ist er noch das neueste Release? Ein roter Lauf dort ist kein Defekt hier, sondern die Aufforderung, den Pin bewusst zu heben.
+
 | Phase | Skill | Frage, die er beantwortet |
 |---|---|---|
 | vor dem Bau | [`mcp-data-source-probe`](https://github.com/malkreide/mcp-audit-skill/tree/v3.0.0/skills/mcp-data-source-probe) | Taugt die Quelle, und was hat sie? Die Recall-Ground-Truth aus Schritt 1.4 ist das, wogegen die `min_count`-Floors hier messen |

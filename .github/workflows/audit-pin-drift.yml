@@ -1,0 +1,114 @@
+# Is the `mcp-audit-skill` tag this repository cites still the current one?
+#
+# WHAT THIS COMPLETES. `tests/test_quality_chain_table.py` holds every content
+# link in the documentation to one `PIN` constant — and asserts CONSISTENCY,
+# never currency. It says so itself: whether that tag is still the latest
+# release needs the network, and a stdlib-only test has no business reaching
+# for it.
+#
+# That left exactly one way for the pin to rot unseen: correct everywhere,
+# pointing at a release two versions old. This run closes it.
+#
+# WHY THIS IS NOT A PR GATE. The pin is deliberate — it is what makes a claim
+# about what a skill SAYS survive an upstream edit. A gate that reddened every
+# pull request the moment upstream released would train people to raise the pin
+# without reading what changed, which is the opposite of the point. Same
+# reasoning as `sdk-drift.yml` in `mcp-audit-skill`, and the same shape.
+#
+# A RED RESULT HERE IS NOT A DEFECT IN THIS REPOSITORY. It is the prompt to
+# raise the pin deliberately: edit `PIN`, edit the links it holds, and read
+# what changed in the skill between the two releases.
+
+name: audit-pin-drift
+
+on:
+  schedule:
+    # Weekly, Mondays. Not daily: the question changes slowly, and a run that
+    # mostly says the same thing stops being read.
+    #
+    # 06:53 — clear of `pr-health` (06:23 here) and of the three weekly runs in
+    # `mcp-audit-skill` (06:17, 06:23, 06:41), so none of them share a rate
+    # limit window.
+    - cron: "53 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Compare the pin against the latest release
+        id: drift
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
+          # Two requests per run — well inside the unauthenticated limit, but
+          # the token lifts 60/h to 1000/h and costs nothing here.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/audit_pin_drift.py --format json > pin.json \
+            || echo "failed=true" >> "$GITHUB_OUTPUT"
+          cat pin.json
+
+      - name: Write the finding into the job summary
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          p = pathlib.Path("pin.json")
+          if not p.exists() or not p.read_text().strip():
+              print("## Audit pin\n\nNo result — see the log of the previous step.")
+              raise SystemExit(0)
+          r = json.loads(p.read_text(encoding="utf-8"))
+
+          print("## Audit pin" + ("" if r["ok"] else " — action needed") + "\n")
+          print("| | |")
+          print("|---|---|")
+          print(f"| cited here | `{r['pin']}` |")
+          print(f"| latest upstream | `{r['latest'] or '— not measured'}` |")
+          print(f"| pinned tag exists | `{r['tag_exists']}` |")
+          print(f"| upstream | `{r['upstream']}` |\n")
+          print(r["message"])
+
+          # THE ADVICE FOLLOWS THE STATE, and that is not cosmetic. An earlier
+          # version printed the pin-raising steps for every non-ok result —
+          # including UNKNOWN, where nothing was measured, and BROKEN, where
+          # the tag does not exist. Raising the pin is wrong in both: one has
+          # no evidence behind it, the other needs a different diagnosis
+          # entirely. The script separates those three states with some care;
+          # a summary that collapses them again undoes the separation exactly
+          # where somebody reads it and acts.
+          if r["tag_exists"] is False:
+              print("\n**The pinned tag does not exist upstream.** Do NOT bump to the")
+              print("latest release — that hides the cause instead of fixing it. Check,")
+              print("in this order:\n")
+              print("1. a typo in `PIN`")
+              print("2. a tag deleted or renamed upstream")
+              print("3. whether the release it named was withdrawn")
+          elif r["latest"] is None or r["tag_exists"] is None:
+              print("\n**Nothing was compared.** The API did not answer, so this run")
+              print("is neither a pass nor a drift finding. The statuses above say")
+              print("which call failed. Re-run once the API is reachable; the pin")
+              print("itself is not implicated.")
+          else:
+              print("\n**Raising the pin means, in one commit:**\n")
+              print("1. `PIN` in `tests/test_quality_chain_table.py`")
+              print("2. every link the test holds to it — the failure names each file")
+              print("3. reading what changed in the skill between the two releases")
+              print("\nThe third one is the reason this is not automated.")
+          PY
+
+      - name: Red when the pin has drifted or could not be checked
+        if: steps.drift.outputs.failed == 'true'
+        run: |
+          echo "The pin is behind, points at nothing, or could not be compared."
+          echo "The job summary says which, and what to do about it."
+          exit 1
