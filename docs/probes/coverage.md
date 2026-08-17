@@ -241,6 +241,11 @@ about not colliding at `:00` and that reasoning is untouched — but anything th
 schedules a *check* on one of these runs has to allow for the hour, not for the
 minute.
 
+> **Corrected by the fourth reading.** That sentence generalised one morning into
+> a property. A week later the same five crons started 20–44 minutes late. The
+> delay is variable, not bounded below by an hour; what survives is the advice —
+> allow for it — not the number. See «The fourth reading» below.
+
 **`zh-education-mcp` runs a different classifier from its four siblings.** It was
 the first repository remediated, before the JUnit-based
 `scripts/classify_live_run.py` existed, so its classification is still a `case`
@@ -257,10 +262,90 @@ here rather than left to be rediscovered.
 
 **Closed the same day.** `zh-education-mcp` PR #50 replaced the `case` block with
 the same `scripts/classify_live_run.py` its four siblings run, byte-identical, and
-added `--junitxml=live-report.xml` to the pytest call. All five targets now
-classify on the test report rather than on the exit code. The drift lasted from
-the first remediation to the first Monday that made it visible — which is the
-argument for reading the logs and not only the workflow files.
+added `--junitxml=live-report.xml` to the pytest call. The drift lasted from the
+first remediation to the first Monday that made it visible — which is the argument
+for reading the logs and not only the workflow files.
+
+> **Precision added by the fourth reading.** «All five targets now classify on the
+> test report» was written here and is half right. `swiss-snb-mcp` never ran
+> `classify_live_run.py`: its live suite is not pytest but two scripts, so it
+> classifies with `scripts/classify_live_scenarios.py` over `scenarios.log` and
+> `warehouse.log`. Four of five share the JUnit classifier; the fifth has its own,
+> matching its own suite. The shared property is that no target classifies on an
+> exit code — that is the sentence that should have been written.
+
+### The fourth reading: the first `finding` nobody was watching
+
+**2026-08-17.** Second full Monday. Two things that had never been measured were
+measured, and one sentence from the third reading turned out to be an
+over-generalisation.
+
+| target | scheduled run | classified state | reason as printed |
+|---|---|---|---|
+| `swiss-transport-mcp` | 05:50 | `clear` | 6 von 7 Test(s) ausgefuehrt, alle gruen |
+| `zh-education-mcp` | 05:54 | `clear` | 15 von 15 Test(s) ausgefuehrt, alle gruen |
+| `register-mcp` | 06:00 | `clear` | 10 von 10 Test(s) ausgefuehrt, alle gruen |
+| `fedlex-mcp` | 06:03 | `clear` | 3 von 3 Test(s) ausgefuehrt, alle gruen |
+| `swiss-snb-mcp` | 04:01 (nightly) | **`finding`** | scenarios.log: 7 von 20 Szenarien gefallen; warehouse.log: 20 von 20 bestanden |
+
+#### `swiss-transport-mcp` has a live measurement now
+
+`TRANSPORT_API_KEY` is set. Run `31999315560` reached
+`opentransportdata.swiss` and came back `clear` — six live tests executed and
+green, one (`test_live_quay_id_is_usable_where_the_search_offers_it`) skipped by
+its own condition. The gap recorded below as «the mechanism is verified there;
+the contract is not» is closed: the contract is now verified too.
+
+Note what the classifier did with the skip. Six executed of seven collected is
+not the all-skipped case, so `clear` is correct — and it is only correct because
+the count comes from the report. On the exit code, this run and last week's
+seven-of-seven-skipped run are the same number.
+
+#### The `finding` is an outage, and this time the log says so
+
+`swiss-snb-mcp` ran nightly and clear on 08-15 and 08-16; on 08-17 seven of
+twenty scenarios failed. The failures are not a changed contract:
+
+* scenarios 01–04 — `Error: Request to data.snb.ch timed out.`
+* scenarios 05–07 — `Error: SNB API returned HTTP 503.`, with the literal 503s in
+  the log against `cube/devkua/data/json/de` (twice) and `cube/snbbipo/data/json/de`.
+
+The same host answered `200 OK` for `cube/snbbipo/data/json/de?fromDate=2026-02`
+twelve seconds after the 503, and every warehouse call in the second script
+passed. Re-running `tests/test_live_scenarios.py` from this repository's
+environment at 08:40 UTC against the same commit gave 20 of 20 green.
+
+That last run is a weaker witness than it looks and is recorded as such: it took
+a different network route than the runner. It shows the source answers correctly
+now; it does not show the runner's route was fine. The verdict «transient partial
+outage» rests on the 503s and timeouts in the runner's own log, interleaved with
+200s from the same host — not on the re-run.
+
+Issue **#48** was opened at 04:03:30 with label `upstream`, no comments, no human
+involved. `github-actions[bot]` classified a red run, decided it was a finding,
+and filed it while everyone was asleep — the first time that branch has fired
+without someone waiting for it.
+
+#### The `clear` close, checked rather than assumed
+
+Issue #44 is `closed`, `state_reason: completed`, closed by `github-actions[bot]`
+at 2026-08-10 09:04:52. The closing comment reads in full: «Die Live-Suite ist
+wieder grün. Lauf: …/runs/31372884887». It names the run. Checked, because a
+close that cites nothing would have been a mechanism doing the right thing for
+reasons nobody could audit later.
+
+#### What the second Monday says about the first
+
+**The cron delay is not a property of GitHub.** This week: 05:19 → 05:50 (31 min),
+05:23 → 05:54 (31), 05:31 → 06:00 (29), 05:43 → 06:03 (20), nightly 03:17 → 04:01
+(44). Last week it was 70–96 minutes for the same five crons. One morning is not
+a bound. The scheduling advice stands — allow for the delay — but the hour does
+not.
+
+**`zh-education-mcp`'s classifier fix is live, not merely merged.** Its run
+printed `LIVE_STATE: clear` and `LIVE_REASON: 15 von 15 Test(s) ausgefuehrt, alle
+gruen`. Both come from the script; the `case` block set no `reason` at all on the
+branch that needed one most.
 
 ### What is still not covered
 
@@ -274,13 +359,25 @@ argument for reading the logs and not only the workflow files.
   a script *without* a `__main__` block is the sharpest finding this probe can
   make; `swiss-snb-mcp` had the block, so the branch is fixture-tested only.
 * **No issue has been closed by a *scheduled* recovering run.** The `clear`
-  branch did fire and did close #44 (above) — but on a manual dispatch, with a
-  human deciding the moment. What is still unobserved is the unattended case: a
-  cron firing on a target whose issue is open, and closing it without anyone
-  watching. That is the shape the mechanism is actually for.
-* **`swiss-transport-mcp` still has no live measurement.** `TRANSPORT_API_KEY` is
-  unset, so its weekly run reports `unknown` and will keep doing so. The
-  mechanism is verified there; the contract with `opentransportdata.swiss` is not.
+  branch did fire and did close #44 — but on a manual dispatch, with a human
+  deciding the moment. What is still unobserved is the unattended case: a cron
+  firing on a target whose issue is open, and closing it without anyone watching.
+  That is the shape the mechanism is actually for, and as of the fourth reading
+  there is finally a candidate: `swiss-snb-mcp` #48 is open, and its nightly at
+  03:17 will meet it. Two of the three branches have now fired unattended (open,
+  comment); this is the third.
+* **No `unknown` has been observed since the classifiers were unified.** The one
+  real `unknown` on record — `swiss-transport-mcp`, seven of seven skipped —
+  predates the key being set. The branch that turns a green-looking run into
+  «not measured» is the whole point of reading the report, and it currently has
+  exactly one field observation.
+
+Closed since the third reading:
+
+* ~~**`swiss-transport-mcp` still has no live measurement.**~~ `TRANSPORT_API_KEY`
+  is set; run `31999315560` on 2026-08-17 executed six live tests against
+  `opentransportdata.swiss` and classified `clear`. Mechanism and contract are
+  both verified there now.
 
 ## The full run, and what it found: `schema_field_probe` + `value_domain_probe`
 

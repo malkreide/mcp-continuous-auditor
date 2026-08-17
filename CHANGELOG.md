@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documented — the fourth reading: the first `finding` nobody was watching
+
+**2026-08-17**, second full Monday of the DRIFT-005 remediation. Four `clear`,
+one `finding`, no `unknown`.
+
+| target | run | state | reason as printed |
+|---|---|---|---|
+| `swiss-transport-mcp` | 05:50 | `clear` | 6 von 7 Test(s) ausgefuehrt, alle gruen |
+| `zh-education-mcp` | 05:54 | `clear` | 15 von 15 Test(s) ausgefuehrt, alle gruen |
+| `register-mcp` | 06:00 | `clear` | 10 von 10 Test(s) ausgefuehrt, alle gruen |
+| `fedlex-mcp` | 06:03 | `clear` | 3 von 3 Test(s) ausgefuehrt, alle gruen |
+| `swiss-snb-mcp` | 04:01 (nightly) | **`finding`** | scenarios.log: 7 von 20 gefallen; warehouse.log: 20 von 20 bestanden |
+
+**`swiss-transport-mcp` has a live measurement.** `TRANSPORT_API_KEY` is set, the
+suite reached `opentransportdata.swiss`, six live tests ran green and one skipped
+by its own condition. Six-of-seven is not the all-skipped case, so `clear` is
+right — and it is only right because the count comes from the report. On the exit
+code, this run and last week's seven-of-seven-skipped run are the same number.
+
+**The `finding` is an outage, and the log says so.** Scenarios 01–04 failed with
+`Request to data.snb.ch timed out`, 05–07 with `SNB API returned HTTP 503` —
+literal 503s against `cube/devkua` (twice) and `cube/snbbipo`. The same host
+answered `200 OK` for `cube/snbbipo/data/json/de?fromDate=2026-02` twelve seconds
+later, and all twenty warehouse scenarios passed. The nightlies of 08-15 and
+08-16 were clear. Issue **#48** was opened at 04:03:30, label `upstream`, no
+comments, no human involved — the first time that branch has fired with nobody
+waiting for it.
+
+A re-run of `tests/test_live_scenarios.py` from this repository's environment at
+08:40 gave 20 of 20 green, and is recorded as the weaker witness it is: different
+network route. The verdict rests on the runner's own log, not on the re-run.
+
+**The `clear` close was checked, not assumed.** #44 is closed, `state_reason
+completed`, by `github-actions[bot]` at 2026-08-10 09:04:52, and the closing
+comment names the run: «Die Live-Suite ist wieder grün. Lauf: …/runs/31372884887».
+
+Two corrections to the third reading, both to sentences written here a week ago:
+
+* **«GitHub's cron delay is over an hour» generalised one morning into a
+  property.** This week the same five crons started 20–44 minutes late
+  (05:19 → 05:50, 05:23 → 05:54, 05:31 → 06:00, 05:43 → 06:03, 03:17 → 04:01).
+  The advice survives — allow for the delay — the number does not.
+* **«All five targets now classify on the test report» is half right.**
+  `swiss-snb-mcp` never ran `classify_live_run.py`: its live suite is two
+  scripts, not pytest, so it uses `scripts/classify_live_scenarios.py` over
+  `scenarios.log` and `warehouse.log`. The shared property is that no target
+  classifies on an exit code.
+
+One gap closes (`swiss-transport-mcp` had no live measurement), one gets a
+candidate (an issue closed by an *unattended* cron: #48 meets the 03:17 nightly),
+and one is newly named — since the classifiers were unified, `unknown` has been
+observed exactly once, before the key was set.
+
 ### Added — the pin is now watched for currency, not just for consistency
 
 `tests/test_quality_chain_table.py` holds every content link in this
