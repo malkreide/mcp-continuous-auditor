@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documented — the unattended close: the last branch of the notification path
+
+**2026-08-18, 03:57:54 UTC.** `swiss-snb-mcp`'s nightly ran on schedule (cron
+`17 3 * * *`, started 03:57:07 — 40 minutes late) and its `live` job printed
+`LIVE_STATE: clear`, `LIVE_REASON: scenarios.log: 20 von 20 Szenarien bestanden;
+warehouse.log: 20 von 20 Szenarien bestanden`.
+
+Issue **#48** is now `closed`, `state_reason completed`, `closed_by
+github-actions[bot]`, with one comment naming run `32097324930` and repeating both
+counts. Opened 08-17 04:03:30 on a `finding`, closed 08-18 03:57:54 on a `clear`,
+no human in either loop. All three branches of the notification path — open,
+comment, close — have now fired unattended.
+
+**The difference between the two nights is the source, not the code.** Red run at
+commit `8c3359c3`, green run at `99c7f7a`; `git diff --stat` between them is one
+file, `scripts/check_ruff_pin.py` (+47/−1), a lint gate the live path never
+touches. Nothing was fixed — `data.snb.ch` stopped returning 503s.
+
+Two gaps remain in `docs/probes/coverage.md`: the probe's own `UNVERIFIED` and
+`hollow_scripts` branches have still never fired against a real target, and
+`unknown` has been observed exactly once in the field.
+
+
 ### Documented — the fourth reading: the first `finding` nobody was watching
 
 **2026-08-17**, second full Monday of the DRIFT-005 remediation. Four `clear`,
