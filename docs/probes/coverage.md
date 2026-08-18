@@ -347,6 +347,37 @@ printed `LIVE_STATE: clear` and `LIVE_REASON: 15 von 15 Test(s) ausgefuehrt, all
 gruen`. Both come from the script; the `case` block set no `reason` at all on the
 branch that needed one most.
 
+### The unattended close
+
+**2026-08-18, 03:57:54 UTC.** The last branch of the notification path that had
+never been observed fired, and nobody was there.
+
+`swiss-snb-mcp`'s nightly ran on schedule (cron `17 3 * * *`, started 03:57:07 —
+40 minutes late, within the range the fourth reading found and outside the range
+the third reading claimed). The `live` job printed:
+
+```
+LIVE_STATE: clear
+LIVE_REASON: scenarios.log: 20 von 20 Szenarien bestanden; warehouse.log: 20 von 20 Szenarien bestanden
+```
+
+Issue **#48** is now `closed`, `state_reason: completed`, `closed_by:
+github-actions[bot]`, with exactly one comment: «Der Live-Lauf ist wieder gruen
+(scenarios.log: 20 von 20 Szenarien bestanden; warehouse.log: 20 von 20 Szenarien
+bestanden). Lauf: …/runs/32097324930». The comment names the run and carries both
+counts, so the close can be audited later without trusting this page.
+
+The three branches have now each fired unattended, all three on the same issue:
+opened 08-17 04:03:30 on a `finding`, closed 08-18 03:57:54 on a `clear`, with no
+human in either loop.
+
+**The difference between the two nights is the source, not the code.** The red
+run was commit `8c3359c3`, the green one `99c7f7a`, and `git diff --stat` between
+them is one file: `scripts/check_ruff_pin.py`, +47/−1, a lint gate that the live
+path never touches. Nothing was fixed; `data.snb.ch` stopped returning 503s. That
+is what the issue body promises a red run usually means, and this time both halves
+of the promise were watched from open to close.
+
 ### What is still not covered
 
 * **No `UNVERIFIED` branch of the probe has fired against a real target.** The
@@ -358,14 +389,6 @@ branch that needed one most.
 * **The `hollow_scripts` branch has never fired.** A live test file executed as
   a script *without* a `__main__` block is the sharpest finding this probe can
   make; `swiss-snb-mcp` had the block, so the branch is fixture-tested only.
-* **No issue has been closed by a *scheduled* recovering run.** The `clear`
-  branch did fire and did close #44 — but on a manual dispatch, with a human
-  deciding the moment. What is still unobserved is the unattended case: a cron
-  firing on a target whose issue is open, and closing it without anyone watching.
-  That is the shape the mechanism is actually for, and as of the fourth reading
-  there is finally a candidate: `swiss-snb-mcp` #48 is open, and its nightly at
-  03:17 will meet it. Two of the three branches have now fired unattended (open,
-  comment); this is the third.
 * **No `unknown` has been observed since the classifiers were unified.** The one
   real `unknown` on record — `swiss-transport-mcp`, seven of seven skipped —
   predates the key being set. The branch that turns a green-looking run into
@@ -378,6 +401,9 @@ Closed since the third reading:
   is set; run `31999315560` on 2026-08-17 executed six live tests against
   `opentransportdata.swiss` and classified `clear`. Mechanism and contract are
   both verified there now.
+* ~~**No issue has been closed by a *scheduled* recovering run.**~~ Closed by the
+  next night. See «The unattended close» below — every branch of the notification
+  path has now fired with nobody watching.
 
 ## The full run, and what it found: `schema_field_probe` + `value_domain_probe`
 
