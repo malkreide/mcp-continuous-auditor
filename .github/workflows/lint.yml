@@ -33,7 +33,7 @@ jobs:
       # dort: Es wird zum Parsen benutzt, nicht zum Formatieren — ein
       # Upstream-Release verschiebt hier kein Urteil.
       - name: Install pinned Ruff
-        run: pip install ruff==0.16.1 pyyaml
+        run: pip install ruff==0.16.3 pyyaml
 
       # ONE COMMAND INSTEAD OF FIVE STEPS.
       #
