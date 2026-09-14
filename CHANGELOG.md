@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — one dropped TCP connection cost a whole `pr-health` sweep
+
+Run [34755776276][run] on 2026-09-13 swept 44 of 47 repositories, inspected 45
+open pull requests, found **nothing wrong**, and exited 1:
+
+```
+malkreide/termdat-mcp: nicht erhoben (RemoteDisconnected: Remote end closed connection without response)
+44/47 Repos geprueft, 2 uebersprungen, 1 nicht erreichbar — 45 offene PRs geprueft, 0 Befunde
+Deckung unvollstaendig: 46/47 abgedeckt — UNVOLLSTAENDIG
+```
+
+The coverage gate did exactly what it is for. A repository that threw is not a
+repository that was clean, and 46/47 is the honest number. What was wrong is what
+produced the gap: `api.github.com` closed one connection without answering. That
+is a fact about a socket, not about `termdat-mcp` — and the probe asked once and
+gave up.
+
+**The repair belongs in the transport, not in the gate.** Widening the gate to
+tolerate one unreached repository would buy green runs by making "nobody looked"
+and "nothing found" indistinguishable again, which is the single substitution
+this whole script exists to prevent. Worse, it would train the reader: a red run
+that a re-run turns green teaches people to press the button rather than to look,
+and the run where the gap is real looks exactly the same.
+
+`_get` now retries up to **3 attempts** with jittered exponential backoff:
+
+* **Transport failures** — `RemoteDisconnected` and its neighbours. It arrives
+  raw rather than as a `URLError`, because `urllib` wraps only what `request()`
+  raises and this one comes out of `getresponse()`, one line later.
+* **429 and 5xx** — `Retry-After` is honoured when GitHub sends the
+  delta-seconds form; its own number beats a guessed one. The HTTP-date form is
+  not parsed (as a float it would be a wait of decades) and falls back to the
+  computed backoff, capped at 30 s.
+* **Nothing else.** A 404 or 403 answered three times is still a 404 or a 403,
+  only slower.
+
+Every request also carries a **30 s timeout**. There was none, so a half-open
+socket would have hung the sweep until the runner killed the job — with no line
+saying which repository it stalled on, which is the same failure one level worse.
+
+An endpoint that stays shut across all three attempts still counts as unreached
+and still turns the run red; the error now reads `Unreachable: RemoteDisconnected
+nach 3 Versuchen: …`, so a reader can tell one unlucky packet from an endpoint
+that is genuinely down. Seven tests cover it, including that the 404 is *not*
+retried and that the timeout reaches `urlopen`.
+
+[run]: https://github.com/malkreide/mcp-continuous-auditor/actions/runs/34755776276
+
 ### Documented — the unattended close: the last branch of the notification path
 
 **2026-08-18, 03:57:54 UTC.** `swiss-snb-mcp`'s nightly ran on schedule (cron

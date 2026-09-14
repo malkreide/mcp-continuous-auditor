@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import http.client
 import io
 import itertools
 import json
@@ -273,6 +274,105 @@ class WiringTest(unittest.TestCase):
             [u for u in seen if "/actions/runs" in u and "head_sha=cafe123" in u],
             f"kein /actions/runs mit head_sha in {seen}",
         )
+
+
+class RetryTest(unittest.TestCase):
+    """_get() retries the failures that are about the wire, and only those.
+
+    Run 34755776276 lost a whole sweep to one `RemoteDisconnected`: 45 open pull
+    requests inspected, nothing found, exit 1 because coverage read 46/47. The
+    gap was a dropped connection, not a fact about the repository — and a red run
+    that a re-run turns green teaches a reader to re-run instead of to look.
+    """
+
+    def setUp(self) -> None:
+        self.slept: list[float] = []
+        orig_sleep = ph._sleep
+        ph._sleep = self.slept.append
+        self.addCleanup(lambda: setattr(ph, "_sleep", orig_sleep))
+
+    def _urlopen(self, *outcomes: object) -> list[object]:
+        """Answer successive calls with `outcomes`; payloads are returned, errors raised."""
+        calls: list[object] = []
+        seq = iter(outcomes)
+
+        @contextlib.contextmanager
+        def fake(req: object, timeout: float | None = None):  # noqa: ANN202
+            calls.append(timeout)
+            nxt = next(seq)
+            if isinstance(nxt, Exception):
+                raise nxt
+            yield io.BytesIO(json.dumps(nxt).encode("utf-8"))
+
+        orig = ph.urllib.request.urlopen
+        ph.urllib.request.urlopen = fake  # type: ignore[assignment]
+        self.addCleanup(lambda: setattr(ph.urllib.request, "urlopen", orig))
+        return calls
+
+    def _http_error(self, code: int, headers: dict[str, str] | None = None):  # noqa: ANN202
+        return ph.urllib.error.HTTPError(
+            "https://api.github.com/x", code, "err", headers or {}, None
+        )
+
+    def test_a_dropped_connection_is_asked_again(self) -> None:
+        self._urlopen(
+            http.client.RemoteDisconnected("Remote end closed connection"),
+            {"total_count": 7},
+        )
+        self.assertEqual(ph._get("https://api.github.com/x", "tok"), {"total_count": 7})
+        self.assertEqual(len(self.slept), 1)
+
+    def test_an_endpoint_that_stays_shut_is_still_unreached(self) -> None:
+        """The repair is in the transport, not in the coverage gate.
+
+        Three refusals are evidence about the endpoint, not a dropped packet, and
+        the sweep must still count that repository as one it did not see.
+        """
+        self._urlopen(*[http.client.RemoteDisconnected("zu") for _ in range(3)])
+        with self.assertRaises(ph.Unreachable) as caught:
+            ph._get("https://api.github.com/x", "tok")
+        # The report says how hard it tried; "RemoteDisconnected" alone reads
+        # like one unlucky packet.
+        self.assertIn("RemoteDisconnected", str(caught.exception))
+        self.assertIn("3", str(caught.exception))
+        self.assertEqual(len(self.slept), 2)
+
+    def test_a_404_is_not_retried(self) -> None:
+        """A 404 answered three times is still a 404 — only slower."""
+        self._urlopen(self._http_error(404))
+        with self.assertRaises(ph.urllib.error.HTTPError) as caught:
+            ph._get("https://api.github.com/x", "tok")
+        self.assertEqual(caught.exception.code, 404)
+        self.assertEqual(self.slept, [])
+
+    def test_a_503_is_retried(self) -> None:
+        self._urlopen(self._http_error(503), {"ok": True})
+        self.assertEqual(ph._get("https://api.github.com/x", "tok"), {"ok": True})
+        self.assertEqual(len(self.slept), 1)
+
+    def test_retry_after_beats_the_computed_backoff(self) -> None:
+        """GitHub's own number is better than a guess about GitHub."""
+        self._urlopen(self._http_error(429, {"Retry-After": "5"}), {"ok": True})
+        ph._get("https://api.github.com/x", "tok")
+        self.assertEqual(self.slept, [5.0])
+
+    def test_an_unparsable_retry_after_falls_back_instead_of_waiting_forever(
+        self,
+    ) -> None:
+        """The HTTP-date form parsed as a float would be a wait of decades."""
+        self._urlopen(
+            self._http_error(429, {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}),
+            {"ok": True},
+        )
+        ph._get("https://api.github.com/x", "tok")
+        self.assertEqual(len(self.slept), 1)
+        self.assertLessEqual(self.slept[0], ph._MAX_SLEEP)
+
+    def test_every_request_carries_a_timeout(self) -> None:
+        """Without one a half-open socket hangs the sweep until the runner kills it."""
+        calls = self._urlopen({"ok": True})
+        ph._get("https://api.github.com/x", "tok")
+        self.assertEqual(calls, [ph._TIMEOUT])
 
 
 class ManifestTest(unittest.TestCase):

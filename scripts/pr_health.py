@@ -76,9 +76,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
+import random
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -174,14 +177,99 @@ def parse_allow_skip(values: list[str]) -> dict[str, str]:
 # --- thin GitHub REST layer (urllib) ----------------------------------------
 
 
-def _get(url: str, token: str) -> Any:
+class Unreachable(RuntimeError):
+    """Every attempt at one URL failed. Carries the original error's type name.
+
+    A bare ``RemoteDisconnected`` in the report reads like a single unlucky
+    packet. It matters for the reader whether that happened once or whether the
+    endpoint stayed shut across the whole backoff — the first is noise, the
+    second is a repository this sweep genuinely did not see.
+    """
+
+
+# Retried: the transport gave up (reset, closed connection, DNS, timeout) and
+# the two statuses that mean "ask again later". NOT retried: 4xx other than 429.
+# A 404 or 403 answered three times is still a 404 or 403, and repeating it only
+# buys the sweep three times the wall clock.
+_RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+_ATTEMPTS = 3
+_BACKOFF = 2.0
+_MAX_SLEEP = 30.0
+# `urlopen` without a timeout waits forever on a half-open socket. A sweep that
+# hangs is worse than one that fails: nothing reports, and the job dies on the
+# runner's own limit with no line saying which repository it stalled on.
+_TIMEOUT = 30.0
+
+# Bound at module level so a test can replace it and not actually wait. The same
+# shape the portfolio's own backoff helpers use (`_sleep = asyncio.sleep`).
+_sleep = time.sleep
+
+
+def _retry_after(e: urllib.error.HTTPError) -> float | None:
+    """GitHub's own hint, in seconds. Its own number beats a guessed one.
+
+    Only the delta-seconds form is read. The HTTP-date form is legal and GitHub
+    does not send it; parsing it wrong would produce a wait of decades, so an
+    unparsable value falls back to the computed backoff instead.
+    """
+    raw = e.headers.get("Retry-After") if e.headers else None
+    try:
+        return max(0.0, float(raw)) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _get(url: str, token: str, attempts: int = _ATTEMPTS) -> Any:
+    """One GET, retried through transient transport failures.
+
+    THE INCIDENT
+    ------------
+    Run 34755776276 swept 44 of 47 repositories, found nothing wrong in 45 open
+    pull requests, and exited 1. One repository — ``termdat-mcp`` — answered a
+    single request with ``RemoteDisconnected: Remote end closed connection
+    without response``, the sweep counted it as unreached, and coverage came out
+    at 46/47. That is the coverage gate doing exactly its job: a repository that
+    threw is not a repository that was clean. But the gap was a dropped TCP
+    connection, not a fact about ``termdat-mcp``, and a red run that a re-run
+    turns green teaches a reader to re-run rather than to look.
+
+    So the repair belongs here and not at the gate. Widening the gate to tolerate
+    one unreached repository would buy green runs by making "nobody looked" and
+    "nothing found" indistinguishable again — the one substitution this whole
+    script exists to prevent. Asking a second time costs two seconds and either
+    gets the answer or proves the endpoint really is down.
+    """
     req = urllib.request.Request(url, method="GET")
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("User-Agent", "mcp-continuous-auditor/pr-health")
-    with urllib.request.urlopen(req) as resp:  # noqa: S310 - fixed api.github.com host
-        raw = resp.read().decode("utf-8")
-    return json.loads(raw) if raw else {}
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(  # noqa: S310 - fixed api.github.com host
+                req, timeout=_TIMEOUT
+            ) as resp:
+                raw = resp.read().decode("utf-8")
+            return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            # HTTPError is a subclass of URLError, so it has to be caught first
+            # or a 404 would be retried as if it were a dropped connection.
+            if e.code not in _RETRY_STATUS or attempt == attempts:
+                raise
+            wait = _retry_after(e)
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
+            # `RemoteDisconnected` arrives raw: urllib wraps only what `request()`
+            # raises, and this one comes out of `getresponse()`, one line later.
+            if attempt == attempts:
+                raise Unreachable(
+                    f"{type(e).__name__} nach {attempts} Versuchen: {e}"
+                ) from e
+            wait = None
+        if wait is None:
+            # Jittered, so 47 repositories hitting the same rate limit do not all
+            # come back in the same second and trip it again together.
+            wait = _BACKOFF ** (attempt - 1) * (1.0 + random.random())
+        _sleep(min(wait, _MAX_SLEEP))
+    raise AssertionError("unreachable")  # pragma: no cover - loop always returns
 
 
 def open_pulls(repo: str, token: str) -> list[dict[str, Any]]:
