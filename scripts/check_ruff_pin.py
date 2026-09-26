@@ -1,38 +1,49 @@
 #!/usr/bin/env python3
-"""Holds the two Ruff pins to each other.
+"""Holds the Ruff pin to ONE source, and everything else to that source.
 
-Ruff is pinned in two places, and both must name the same version:
+The version lives in exactly one file, and every other place reads from it:
 
-  * ``.github/workflows/lint.yml`` — ``pip install ruff==X.Y.Z``
-  * ``.pre-commit-config.yaml``    — ``rev: vX.Y.Z`` on the ruff-pre-commit repo
+  * ``requirements-lint.txt``    — ``ruff==X.Y.Z``, the single source
+  * ``.pre-commit-config.yaml``  — ``rev: vX.Y.Z`` on the ruff-pre-commit repo,
+    which must name the same version (pre-commit builds its own environment
+    and cannot read a requirements file)
+  * ``.github/workflows/lint.yml`` and ``tests.yml`` — install with
+    ``pip install -r requirements-lint.txt`` and carry NO ``ruff==`` of their
+    own
+
+The workflows used to carry the number themselves: three copies held together
+by this script. A number that exists three times is two chances to drift, and
+a template that shipped one (``github-repo-skill``'s ``ci.yml`` at 0.16.1 while
+this repo was on 0.16.3) became a drift source of its own. Reading from one
+file removes the copies instead of policing them.
 
 The pre-commit hook exists to enforce locally exactly the formatting the lint
-job checks. That only holds while both name the same version. Let the pins
-drift and the hook formats to one while CI checks against the other: **the
-hook reports green and CI goes red** — the very failure the hook was
-introduced to prevent, one level up.
+job checks. That only holds while it names the same version. Let them drift
+and the hook formats to one while CI checks against the other: **the hook
+reports green and CI goes red** — the very failure the hook was introduced to
+prevent, one level up.
 
-Without this guard the only thing holding them together is a comment in both
-files asking whoever bumps one to bump the other. Asking is not a check; that
-is the rule behind ``OPS-005`` (pipeline honesty), and this repo is where that
-check came from (#29: a test suite no workflow ever ran).
+THREE DECISIONS
+---------------
+1. **A missing pin is a finding, not a silent pass.** If the source or the hook
+   rev is gone, the comparison did not happen. Then ``NO PIN`` and exit 1,
+   rather than printing "they agree" from half the evidence.
 
-TWO DECISIONS
--------------
-1. **A missing pin is a finding, not a silent pass.** If either place is gone,
-   the comparison did not happen. Then ``NO PIN`` and exit 1, rather than
-   printing "they agree" from half the evidence.
+2. **A workflow that pins by itself is a finding** (``SECOND SOURCE``), even
+   when its number happens to match today — so is one that does not install
+   from the file at all (``NOT WIRED``). Either way the single source stopped
+   being single, and nothing else would say so.
 
-2. **The comparison is a pure function.** ``compare()`` takes both file
-   contents as strings and is testable without touching the filesystem. Only
-   ``main()`` reads from disk.
+3. **The comparison is a pure function.** ``compare()`` takes the file contents
+   as strings and is testable without touching the filesystem. Every finding is
+   named, not just the first — otherwise each fix costs a round.
 
 The ``v`` prefix on the pre-commit ``rev`` belongs to the git tag, not to the
 version, and is stripped before comparing.
 
 Stdlib-only, matching the rest of the repo's tooling — hence regex rather than
-PyYAML: two fields do not justify a dependency, and the check runs in a job
-that installs nothing.
+PyYAML: a few fields do not justify a dependency, and the check runs in a job
+that installs nothing it does not need.
 
 Formatting: this file is meant to be copied between the portfolio repos, where
 ``line-length`` 88, 100, 110 and 120 sit side by side. ``ruff format`` joins an
@@ -47,9 +58,9 @@ it identical at every width:
     magic trailing comma
 
 Exit codes:
-  0  both pins name the same version
-  1  they disagree, or one of them is missing
-  2  usage error (one of the two files is unreadable)
+  0  source, hook and workflows agree
+  1  a finding: drift, a missing pin, a second source, or an unwired workflow
+  2  usage error (one of the files is unreadable)
 
 Usage:
     python scripts/check_ruff_pin.py
@@ -59,21 +70,23 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+REQUIREMENTS = Path("requirements-lint.txt")
 LINT_WORKFLOW = Path(".github") / "workflows" / "lint.yml"
 # `tests.yml` installs Ruff too, because tests/test_format_gate.py runs the two
 # gates against fixtures and this repo does not tolerate a test that skips for a
-# missing dependency. A third pin is a third chance to drift, so it is held to
-# the same version as the other two rather than left to a comment.
+# missing dependency. It reads the same file as lint.yml.
 TESTS_WORKFLOW = Path(".github") / "workflows" / "tests.yml"
 PINNED_WORKFLOWS = (LINT_WORKFLOW, TESTS_WORKFLOW)
 PRECOMMIT_CONFIG = Path(".pre-commit-config.yaml")
 
-# `pip install ruff==0.15.8` — tolerates spaces around `==` and other packages
-# on the same line.
+# `ruff==0.16.3` — tolerates spaces around `==` and other packages on the line.
 PIP_PIN = re.compile(r"\bruff\s*==\s*([0-9][^\s'\"]*)")
+# `pip install -r requirements-lint.txt`, also `--requirement`.
+INSTALLS_FROM = re.compile(r"(?:-r|--requirement)[\s=]+\S*requirements-lint\.txt")
 
 # The ruff-pre-commit repo entry, up to the next `- repo:` or end of file.
 # `rev:` is searched only inside that slice so another repo's rev is not read
@@ -86,8 +99,24 @@ REV = re.compile(r"^\s*rev:\s*['\"]?(\S+?)['\"]?\s*$", re.MULTILINE)
 
 
 def workflow_pins(text: str) -> list[str]:
-    """Every Ruff version pinned in the workflow."""
+    """Every Ruff version pinned literally in a text."""
     return PIP_PIN.findall(text)
+
+
+def source_pins(text: str) -> list[str]:
+    """Every distinct Ruff version in requirements-lint.txt, comments ignored."""
+    lines = [ln.split("#", 1)[0] for ln in text.splitlines()]
+    return sorted(set(workflow_pins("\n".join(lines))))
+
+
+def requirements_pin(text: str) -> str | None:
+    """The one Ruff version in requirements-lint.txt, or ``None``.
+
+    More than one distinct version is not a pin but a contradiction, and also
+    comes back as ``None``; ``compare()`` tells the two cases apart.
+    """
+    pins = source_pins(text)
+    return pins[0] if len(pins) == 1 else None
 
 
 def precommit_pin(text: str) -> str | None:
@@ -105,57 +134,77 @@ def precommit_pin(text: str) -> str | None:
     return rev.group(1).removeprefix("v")
 
 
-def compare(workflow_text: str, precommit_text: str) -> tuple[bool, str]:
-    """Pure comparison: ``(they_agree, message)``.
+def compare(
+    requirements_text: str,
+    precommit_text: str,
+    workflows: Mapping[str, str] | None = None,
+) -> tuple[bool, str]:
+    """Pure comparison: ``(everything_agrees, message)``.
 
-    No file or network access, so the test exercises the real behaviour rather
-    than a mock of our own assumption about the file format.
+    ``workflows`` maps a name to a workflow's text. No file or network access,
+    so the test exercises the real behaviour rather than a mock of our own
+    assumption about the file format.
     """
-    pins = workflow_pins(workflow_text)
-    hook = precommit_pin(precommit_text)
-
-    workflow = " / ".join(p.as_posix() for p in PINNED_WORKFLOWS)
+    source = REQUIREMENTS.as_posix()
     config = PRECOMMIT_CONFIG.as_posix()
+    pin = requirements_pin(requirements_text)
+    hook = precommit_pin(precommit_text)
+    findings = []
 
-    if not pins:
-        return False, f"NO PIN: {workflow} carries no `ruff==<version>`."
+    if pin is None:
+        found = source_pins(requirements_text)
+        if len(found) > 1:
+            listed = ", ".join(repr(p) for p in found)
+            findings.append(f"DRIFT: {source} pins Ruff more than once: {listed}.")
+        else:
+            findings.append(f"NO PIN: {source} carries no `ruff==<version>`.")
     if hook is None:
         missing = "has no ruff-pre-commit repo, or no `rev:` on it."
-        return False, f"NO PIN: {config} {missing}"
+        findings.append(f"NO PIN: {config} {missing}")
+    if pin is not None and hook is not None and hook != pin:
+        head = f"DRIFT: {source} pins Ruff to {pin!r},"
+        findings.append(f"{head} {config} to {hook!r}.")
 
-    divergent = sorted({p for p in pins if p != hook})
-    if divergent:
-        others = ", ".join(repr(p) for p in divergent)
-        head = f"DRIFT: {config} pins Ruff to {hook!r},"
-        return False, f"{head} {workflow} to {others}."
+    for name, text in (workflows or {}).items():
+        literals = sorted(set(workflow_pins(text)))
+        if literals:
+            listed = ", ".join(repr(p) for p in literals)
+            tail = f"install from {source} instead."
+            findings.append(f"SECOND SOURCE: {name} pins Ruff {listed} — {tail}")
+        if not INSTALLS_FROM.search(text):
+            tail = f"does not install from {source}."
+            findings.append(f"NOT WIRED: {name} {tail}")
 
-    return True, f"Ruff pin OK ({hook}; both places agree)."
+    if findings:
+        return False, "\n".join(findings)
+    return True, f"Ruff pin OK ({pin}; {source}, hook and workflows agree)."
 
 
 def main(argv: list[str] | None = None) -> int:
-    workflows = [REPO_ROOT / p for p in PINNED_WORKFLOWS]
+    requirements = REPO_ROOT / REQUIREMENTS
     precommit = REPO_ROOT / PRECOMMIT_CONFIG
+    workflows = {p.as_posix(): REPO_ROOT / p for p in PINNED_WORKFLOWS}
 
-    for path in (*workflows, precommit):
+    for path in (requirements, precommit, *workflows.values()):
         if not path.is_file():
             print(f"Unreadable: {path}", file=sys.stderr)
             return 2
 
-    # Concatenated rather than compared pairwise: `compare()` already reports
-    # every version that differs from the hook's, so a third file needs no third
-    # code path — only its text.
-    joined = "\n".join(p.read_text(encoding="utf-8") for p in workflows)
-    ok, message = compare(joined, precommit.read_text(encoding="utf-8"))
+    texts = {name: p.read_text(encoding="utf-8") for name, p in workflows.items()}
+    ok, message = compare(
+        requirements.read_text(encoding="utf-8"),
+        precommit.read_text(encoding="utf-8"),
+        texts,
+    )
     if ok:
         print(message)
         return 0
 
     print(message, file=sys.stderr)
     print(
-        "\nBump them in the same commit: `rev:` in "
-        f"{PRECOMMIT_CONFIG.as_posix()} and `pip install ruff==…` in "
-        f"{' and '.join(p.as_posix() for p in PINNED_WORKFLOWS)}. Otherwise the "
-        "hook formats to one version and CI checks against the other.",
+        f"\nThe version lives in {REQUIREMENTS.as_posix()} only. Bump it there "
+        f"and `rev:` in {PRECOMMIT_CONFIG.as_posix()} in the same commit; the "
+        "workflows install with `pip install -r` and name no version.",
         file=sys.stderr,
     )
     return 1

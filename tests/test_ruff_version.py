@@ -1,6 +1,6 @@
 """Tests for the Ruff version guard.
 
-The pin guard next door compares two TEXTS. That the Ruff which then runs the
+The pin guard next door compares TEXTS. That the Ruff which then runs the
 gates carries that version was never measured — and "both places agree" was
 reported anyway. `scripts/check_ruff_version.py` closes that; this file proves
 it closes it.
@@ -79,11 +79,11 @@ class AnchorTest(unittest.TestCase):
 
     def test_the_real_pin_is_readable(self):
         """The guard must not be green because it cannot find the real pin."""
-        text = (REPO_ROOT / crp.LINT_WORKFLOW).read_text(encoding="utf-8")
-        self.assertTrue(
-            crp.workflow_pins(text),
-            "lint.yml names no `ruff==<version>` — then the version guard "
-            "checks nothing when it matters.",
+        text = (REPO_ROOT / crp.REQUIREMENTS).read_text(encoding="utf-8")
+        self.assertIsNotNone(
+            crp.requirements_pin(text),
+            "requirements-lint.txt names no single `ruff==<version>` — then the "
+            "version guard checks nothing when it matters.",
         )
 
 

@@ -23,8 +23,8 @@ the reason the loop's comment in the workflow says `exclude` and not
 needs rewriting — the tests say which one moved.
 
 Runs the real `ruff` binary against fixtures in a temporary directory. No
-network. `ruff` is installed by .github/workflows/tests.yml, pinned to the same
-version as lint.yml and .pre-commit-config.yaml.
+network. `ruff` is installed by .github/workflows/tests.yml from
+requirements-lint.txt, the same source lint.yml and the pre-commit hook follow.
 """
 
 from __future__ import annotations

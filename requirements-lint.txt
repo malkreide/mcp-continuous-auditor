@@ -1,0 +1,4 @@
+# The single source of the Ruff pin. lint.yml and tests.yml install from here
+# with `pip install -r`; `rev:` in .pre-commit-config.yaml must name the same
+# version. scripts/check_ruff_pin.py holds all of it together.
+ruff==0.16.3
