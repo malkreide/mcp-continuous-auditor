@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the Ruff pin has one source: `requirements-lint.txt`
+
+The version used to sit in three places — `lint.yml`, `tests.yml` and the
+pre-commit `rev:` — held together by `check_ruff_pin.py`. Three copies of a
+number are two chances to drift, and the pattern had already leaked outward:
+`github-repo-skill`'s `ci.yml` template carried `ruff==0.16.1` while this
+repository was on `0.16.3`. The template that existed to prevent drift was a
+drift source of its own. `github-repo-skill` now prescribes the rule, never the
+number (its §8.1); this is the same change applied here.
+
+* **`requirements-lint.txt`** holds the one line `ruff==0.16.3`. Both
+  workflows install with `pip install -r requirements-lint.txt` and name no
+  version.
+* **`.pre-commit-config.yaml` keeps its `rev:`** — pre-commit builds its own
+  environment and cannot read a requirements file. It is the one copy that
+  cannot be removed, so it is the one that is compared.
+* **Check 1 (`check_ruff_pin.py`)** now compares the source with the hook, and
+  adds two findings: `SECOND SOURCE` for a workflow that pins Ruff by itself —
+  **even when its number matches today**, because the copy is the defect, not
+  the difference — and `NOT WIRED` for one that does not install from the file
+  at all. It names every finding in one run instead of stopping at the first.
+* **Check 2 (`check_ruff_version.py`)** reads the pin from the same file.
+
+Held against the real files in both directions: re-inserting `ruff==0.16.3`
+into `lint.yml` reports `SECOND SOURCE` and `NOT WIRED`; raising the source to
+`0.16.9` without the hook reports `DRIFT`. The new test for a pin that exists
+only in a comment caught a misclassification before it shipped — it was
+reported as "pinned more than once" rather than "no pin".
+
+The version itself does not move. Raising it is a separate, measured decision.
+
 ### Fixed — one dropped TCP connection cost a whole `pr-health` sweep
 
 Run [34755776276][run] on 2026-09-13 swept 44 of 47 repositories, inspected 45

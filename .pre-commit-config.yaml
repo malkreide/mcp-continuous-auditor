@@ -10,9 +10,10 @@
 #     pip install pre-commit
 #     pre-commit install
 #
-# NOTE: `rev` below and `pip install ruff==…` in lint.yml must name the same
-# version. Bump both together — scripts/check_ruff_pin.py enforces it, in the
-# hook as well as in CI.
+# NOTE: `rev` below must name the version in requirements-lint.txt, the single
+# source of the pin (pre-commit builds its own environment and cannot read it).
+# Bump both together — scripts/check_ruff_pin.py enforces it, in the hook as
+# well as in CI.
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -26,10 +27,10 @@ repos:
       # Fourth step of the lint job. Stdlib-only, hence `language: system`
       # without an environment of its own.
       #
-      # `always_run`, because the drift can originate in either of the two
-      # files involved and the check is cheap.
+      # `always_run`, because the drift can originate in any of the files
+      # involved and the check is cheap.
       - id: ruff-pin-sync
-        name: Ruff pin sync (lint.yml ↔ .pre-commit-config.yaml)
+        name: Ruff pin sync (requirements-lint.txt ↔ hook ↔ workflows)
         entry: python3 scripts/check_ruff_pin.py
         language: system
         pass_filenames: false

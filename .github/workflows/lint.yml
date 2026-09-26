@@ -26,14 +26,15 @@ jobs:
       # Ruff pinned so an upstream release cannot change the rule set or the
       # formatter and turn CI red on untouched code. Bump deliberately.
       #
-      # NOTE: this version and the `rev` in .pre-commit-config.yaml must agree.
-      # The last step of this job checks that.
+      # The version is NOT here: it lives in requirements-lint.txt alone, and
+      # `rev:` in .pre-commit-config.yaml must name the same one. Check 1 holds
+      # both, and fails if this file ever pins Ruff by itself again.
       # `pyyaml` kommt dazu, seit Check 6 (die ausgelieferten Workflow-
       # Templates) in diesem Job laeuft statt in tests.yml. Ungepinnt wie
       # dort: Es wird zum Parsen benutzt, nicht zum Formatieren — ein
       # Upstream-Release verschiebt hier kein Urteil.
       - name: Install pinned Ruff
-        run: pip install ruff==0.16.3 pyyaml
+        run: pip install -r requirements-lint.txt pyyaml
 
       # ONE COMMAND INSTEAD OF FIVE STEPS.
       #

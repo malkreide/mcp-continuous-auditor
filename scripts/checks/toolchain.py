@@ -43,32 +43,36 @@ def _version_module():
     return check_ruff_version
 
 
-@register(1, "the ruff pin agrees across the workflows and the pre-commit hook")
+@register(1, "the ruff pin has one source, and the hook and workflows follow it")
 def ruff_pin_sync(root: Path) -> str:
-    """Compares TEXTS — the workflows and `.pre-commit-config.yaml`.
+    """Compares TEXTS — `requirements-lint.txt`, the hook, the workflows.
 
-    Let them drift and the hook formats to one version while CI checks against
-    the other: the hook reports green and CI turns red. A missing pin is a
-    finding too; then no comparison happened.
+    The version lives in `requirements-lint.txt` alone. Let the hook drift from
+    it and the hook formats to one version while CI checks against the other:
+    the hook reports green and CI turns red. A missing pin is a finding too;
+    then no comparison happened. So is a workflow that pins by itself or does
+    not install from the file — the single source would have stopped being
+    single without anything saying so.
 
     What this does NOT do is the reason check 2 sits next to it: whether the
     Ruff that then runs the gates carries that version, it never says.
     """
     crp = _pin_module()
-    texts = []
-    for rel in (*crp.PINNED_WORKFLOWS, crp.PRECOMMIT_CONFIG):
+    texts = {}
+    for rel in (crp.REQUIREMENTS, crp.PRECOMMIT_CONFIG, *crp.PINNED_WORKFLOWS):
         path = root / rel
         if not path.is_file():
             raise CheckFailed(f"not readable: {rel.as_posix()}")
-        texts.append(path.read_text(encoding="utf-8"))
-    *workflows, precommit = texts
+        texts[rel.as_posix()] = path.read_text(encoding="utf-8")
+    requirements = texts.pop(crp.REQUIREMENTS.as_posix())
+    precommit = texts.pop(crp.PRECOMMIT_CONFIG.as_posix())
 
-    ok, message = crp.compare("\n".join(workflows), precommit)
+    ok, message = crp.compare(requirements, precommit, texts)
     if not ok:
         raise CheckFailed(
-            f"{message}\n  Bump them in the same commit: `rev:` in "
-            f"{crp.PRECOMMIT_CONFIG.as_posix()} and `pip install ruff==…` in "
-            f"{' and '.join(p.as_posix() for p in crp.PINNED_WORKFLOWS)}."
+            f"{message}\n  The version lives in {crp.REQUIREMENTS.as_posix()} "
+            f"only: bump it there and `rev:` in {crp.PRECOMMIT_CONFIG.as_posix()} "
+            "in the same commit; the workflows install with `pip install -r`."
         )
     return message
 
@@ -77,7 +81,7 @@ def ruff_pin_sync(root: Path) -> str:
 def ruff_version_matches_pin(root: Path) -> str:
     """Holds the text against the running program.
 
-    Check 1 proves the workflows and the hook name the same number — not that
+    Check 1 proves the source and the hook name the same number — not that
     the Ruff about to run the gates carries it. A different one earlier on
     PATH and the gates run on a version nobody pinned.
 
@@ -87,11 +91,10 @@ def ruff_version_matches_pin(root: Path) -> str:
     masked the installed 0.16.1.
     """
     crp, crv = _pin_module(), _version_module()
-    workflow = root / crp.LINT_WORKFLOW
-    if not workflow.is_file():
-        raise CheckFailed(f"not readable: {crp.LINT_WORKFLOW.as_posix()}")
-    pins = crp.workflow_pins(workflow.read_text(encoding="utf-8"))
-    pinned = pins[0] if pins else None
+    source = root / crp.REQUIREMENTS
+    if not source.is_file():
+        raise CheckFailed(f"not readable: {crp.REQUIREMENTS.as_posix()}")
+    pinned = crp.requirements_pin(source.read_text(encoding="utf-8"))
 
     # FAIL rather than skip: a skipped check reports "passed" where "did not
     # run" would be correct.

@@ -1,10 +1,10 @@
-"""The Ruff on PATH carries the version lint.yml pins.
+"""The Ruff on PATH carries the version requirements-lint.txt pins.
 
-`scripts/check_ruff_pin.py` compares TWO TEXTS: the workflows and
-`.pre-commit-config.yaml`. It proves they name the same number — not that the
+`scripts/check_ruff_pin.py` compares TEXTS: `requirements-lint.txt`, the
+workflows and `.pre-commit-config.yaml`. It proves they name the same number — not that the
 Ruff which then runs `ruff check` and `ruff format --check` carries it. If a
 different Ruff sits earlier on PATH than the one just installed, the pin sync
-still reports "both places agree", and the gates run beside it on a version
+still reports "they agree", and the gates run beside it on a version
 nobody pinned.
 
 This is not hypothetical for this portfolio. Up to Ruff 0.15.8
@@ -21,7 +21,7 @@ nothing. This repository shipped the idea to others without running it on
 itself.
 
 THREE ANCHORS, each failing with its own message rather than silently: the pin
-in the workflow, the presence of Ruff on PATH, and the OUTPUT SHAPE
+in requirements-lint.txt, the presence of Ruff on PATH, and the OUTPUT SHAPE
 `ruff <version>`. If upstream changes that shape, this check must not quietly
 stop comparing — it says it could not read the answer.
 
@@ -48,7 +48,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from check_ruff_pin import LINT_WORKFLOW, workflow_pins  # noqa: E402
+from check_ruff_pin import REQUIREMENTS, requirements_pin  # noqa: E402
 
 # The output shape "ruff 0.16.1" is itself an anchor.
 VERSION_LINE = re.compile(r"^ruff\s+([0-9]\S*)", re.MULTILINE)
@@ -69,7 +69,7 @@ def compare(pinned: str | None, raw: str, returncode: int) -> tuple[bool, str]:
     """
     if pinned is None:
         return False, (
-            f"{LINT_WORKFLOW.as_posix()} names no `ruff==<version>` — anchor "
+            f"{REQUIREMENTS.as_posix()} names no single `ruff==<version>` — anchor "
             "gone. Without it this check has nothing to hold the running Ruff "
             "against, and would have reported success for exactly that reason."
         )
@@ -97,13 +97,12 @@ def compare(pinned: str | None, raw: str, returncode: int) -> tuple[bool, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    workflow = REPO_ROOT / LINT_WORKFLOW
-    if not workflow.is_file():
-        print(f"File not readable: {workflow}", file=sys.stderr)
+    source = REPO_ROOT / REQUIREMENTS
+    if not source.is_file():
+        print(f"File not readable: {source}", file=sys.stderr)
         return 2
 
-    pins = workflow_pins(workflow.read_text(encoding="utf-8"))
-    pinned = pins[0] if pins else None
+    pinned = requirements_pin(source.read_text(encoding="utf-8"))
 
     executable = shutil.which("ruff")
     if executable is None:
