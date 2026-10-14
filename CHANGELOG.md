@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the datastore probe queries a table that exists; its fixtures come from it
+
+The live probe's `datastore_search_sql` entry asked for resource
+`a2f7c7d4-3f2a-4f9a-9b3d-000000000000` — an id that exists nowhere — and failed
+every week with HTTP 409. So the one probe for the target's main SQL surface
+had never compared anything, and nothing said so beyond a warning line.
+
+It now queries **ugz_ogd_air_h1_2026** (`90410203-4b4f-4a65-9015-1fca2792e04d`),
+the hourly air-quality table the target itself reads (`AIR_QUALITY_RESOURCE_ID`),
+with the same `SELECT * … LIMIT 3` as before.
+
+Pointed at a real table, the probe showed what the 409 had hidden: the fixture
+it guards was hand-made too, although its `_comment` said "Recorded". Table
+`"x"`, columns `station`/`datum`/`wert`, `wert` a number — while the real table
+reports `Datum`/`Standort`/`Parameter`/`Intervall`/`Einheit`/`Wert`/`Status`,
+**every value as text**, plus CKAN's `_id` and `_full_text`. Measured: `drift=true`,
+3 paths only in the fixture, 8 only in the endpoint.
+
+The three datastore fixtures now come from that table:
+
+* **`datastore_sql.json`** — recorded, unchanged (round trip against the saved
+  response).
+* **`datastore_sql_empty.json`** — recorded with `WHERE 1=0`, unchanged. Its own
+  comment claimed it kept "byte-identical" structure with the populated
+  fixture; after the first change that would have been false. Recorded from
+  the same table, the two have identical `fields`, so the claim holds.
+* **`datastore_sql_ipi.json`** — an injected record cannot be recorded, so it
+  is **derived**: a recorded `LIMIT 1` with exactly one field, `Standort`,
+  replaced by the instruction-shaped payload. Checked: every other field,
+  `fields` and `sql` are as recorded.
+
+Measured after: live probe `alert=false` — **all three probes structurally in
+sync for the first time** (`datastore_search_sql` 16 paths). `determ` against the
+target 13/13; `graded`, deterministic part, 10/11 as before (the UNION finding);
+the injected text comes back verbatim as data.
+
+**What the real data showed at once:** `zurich_datastore_sql` passes CKAN's
+internal full-text index through to the model — `_full_text` appears in the
+column list and in every record, a tsvector string like
+`'+0100':6 '-01':2,3 '/m3':12 …`. It filters `_id` out of the column list and
+not this. Noise that costs tokens and means nothing to a reader; a finding
+against the target.
+
 ### Fixed — the Stadtkreise fixture is a recorded response, not a drawing
 
 `geo_layer_stadtkreise.json` backed the geo layer A contract test and the
