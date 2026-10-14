@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — every action runs on Node 24
+
+Every run carried the same warning: `actions/checkout@v4` and
+`actions/setup-python@v5` target Node 20, and the runner was already forcing
+them onto Node 24. The same held for every other action in the workflows and in
+the three shipped templates — which means every target repository that adopted
+a template inherited it too.
+
+The runtime of each version was **read from its `action.yml`**, not assumed
+from its number, and that mattered twice: `upload-artifact@v5` and
+`create-pull-request@v7` are newer majors that still declare `node20`.
+
+| action | was | now | breaking changes, held against the use here |
+|---|---|---|---|
+| `actions/checkout` | `v4` | `v7` | v6 keeps credentials in a separate file, v7 refuses fork checkouts under `pull_request_target` / `workflow_run` — neither trigger is used |
+| `actions/setup-python` | `v5` | `v7` | runtime and ESM only; inputs unchanged |
+| `actions/setup-node` | `v4` | `v7` | caches by default since v5 — see below; v7's `NODE_AUTH_TOKEN` change needs `registry-url`, not used |
+| `actions/upload-artifact` | `v4` | `v7` | runtime and ESM only |
+| `peter-evans/create-pull-request` | `v6` | `v8` | v8 carries the fix for `checkout@v6`'s credential file, which is what makes the two compatible in `redteam-regen` |
+| `astral-sh/setup-uv` | `v5` | `v10.3.0` | v9 `prune-cache` defaults to `false`, v10 stops caching on sensitive events; no inputs are passed |
+| `actions/github-script` | `v7` | `v9` | only in the example in `docs/probes/live-schedule.md`; v9 breaks `require('@actions/github')`, which it does not use |
+
+Every input passed anywhere was checked against the new `action.yml`; none is
+missing.
+
+Two changes go beyond the number:
+
+* **`package-manager-cache: false`** on every `setup-node` step in the
+  templates. v4 cached nothing unless asked; since v5 it caches whenever it
+  detects a package manager. Off restores what these jobs did — and the jobs
+  hold model keys or write access, where a restored cache is untrusted input.
+  `setup-node`'s own README recommends exactly this for such workflows.
+* **`setup-uv` is pinned to an exact version**, unlike everything else here.
+  Upstream stopped publishing floating major tags after `v7`
+  (astral-sh/setup-uv#826): `@v10` does not resolve. `@v7` would have reached
+  Node 24 too, but on a line that no longer moves — no fixes, including v10's
+  caching change for sensitive events.
+
+`.github/dogfood.yml` keys unnamed steps by their `uses:` spec, so its ten
+version-bearing keys moved in the same commit; without them the guard reports
+every one as unclassified. The test fixtures in `tests/` keep their old
+versions — they exercise parsing, not a claim about what to run.
+
+**Not changed:** `node-version: "20"` in `ci.yml.template` and
+`redteam-regen.yml.template`. That is the Node that runs promptfoo in the
+target repository, not the runtime of an action — and Node 20 has been past
+end of life since April 2026. Raising it is its own decision, measured against
+promptfoo, and not part of this one.
+
 ### Changed — the `mcp-audit-skill` pin is raised to `v3.1.0`
 
 `audit-pin-drift` went red on its scheduled run of 2026-10-12: this repository
