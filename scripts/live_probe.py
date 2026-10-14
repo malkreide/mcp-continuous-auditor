@@ -36,6 +36,8 @@ signalled out-of-band so the workflow decides whether to open an issue:
   * appends `drift=true|false` to $GITHUB_OUTPUT      (schema drift only)
   * appends `recall_drop=true|false`                 (a floor was breached)
   * appends `alert=true|false`                       (either of the two — use this)
+    and writes NO `alert` when nothing was found but a probe failed: see
+    `alert_verdict()`.
 
 Stdlib only (urllib) — no third-party deps, so the probe runs anywhere.
 """
@@ -124,6 +126,25 @@ def count_records(payload: Any, count_path: str | None = None) -> int | None:
         if isinstance(node, list):
             return len(node)
     return None
+
+
+def alert_verdict(*, finding: bool, incomplete: bool) -> str | None:
+    """Pure: the `alert=` value for drift_issue.py, or None to write none.
+
+    `false` is the sentence "every comparison was made and none found
+    anything", and drift_issue.py closes the tracking issue on it. A run in
+    which a probe failed — HTTP error, uncountable payload, nothing declared —
+    cannot say that. It writes no verdict, which drift_issue.probe_ran() reads
+    as "did not run" by its own tested rule, so the issue stays as it is.
+
+    A finding wins over an incomplete run: what was measured is real, and the
+    router reports it even when a sibling never ran.
+    """
+    if finding:
+        return "true"
+    if incomplete:
+        return None
+    return "false"
 
 
 def _fetch(probe: dict) -> Any:
@@ -252,6 +273,10 @@ def main() -> int:
         report.append("")
     if error_rows:
         report.append("## ⚠️ Probe errors (transient or endpoint moved)\n")
+        report.append(
+            "These comparisons were not made, so this run clears nothing: an "
+            "open tracking issue stays open.\n"
+        )
         report.extend(error_rows)
         report.append("")
     if ok_rows:
@@ -264,6 +289,10 @@ def main() -> int:
     report_path.write_text(report_text, encoding="utf-8")
     print(report_text)
 
+    verdict = alert_verdict(
+        finding=has_drift or has_recall_drop,
+        incomplete=bool(error_rows) or not probes,
+    )
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if gh_out:
         with open(gh_out, "a", encoding="utf-8") as fh:
@@ -272,7 +301,8 @@ def main() -> int:
             # gate on now that a probe can fail two independent ways.
             fh.write(f"drift={'true' if has_drift else 'false'}\n")
             fh.write(f"recall_drop={'true' if has_recall_drop else 'false'}\n")
-            fh.write(f"alert={'true' if (has_drift or has_recall_drop) else 'false'}\n")
+            if verdict is not None:
+                fh.write(f"alert={verdict}\n")
             fh.write(f"report_path={report_path}\n")
             # So an issue opened from this run names the manifest revision it
             # walked, not just the day it ran.

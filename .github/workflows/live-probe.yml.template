@@ -112,7 +112,10 @@ jobs:
       # and the guard closes on the strength of a comparison that never happened.
       # `unknown` is the state that makes closing safe: probe crashed, canary
       # skipped because the install failed, report missing or empty — touch
-      # nothing, in either direction.
+      # nothing, in either direction. A probe or canary that ran but failed a
+      # comparison (HTTP error, unknown tool, uncountable answer) and found
+      # nothing writes NO `alert=` for exactly this reason: `alert=false` is
+      # the all-clear, and that run cannot give one.
       #
       # `always()` is load-bearing. `clear` and `unknown` only exist if this step
       # runs on a green week and on a broken one; the old condition gated on

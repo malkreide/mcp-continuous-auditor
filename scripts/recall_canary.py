@@ -41,7 +41,9 @@ this belongs in the TARGET repo's workflow, not the auditor's CI.
   RECALL_MANIFEST     manifest path          (default alongside this script)
 
 Exit code is always 0 — a flaky upstream must not fail the cron. Findings are
-signalled via $GITHUB_OUTPUT: `recall_drop`, `errors`, `alert`.
+signalled via $GITHUB_OUTPUT: `recall_drop`, `errors`, `alert`. A run in which a
+canary failed and none breached writes NO `alert` (live_probe.alert_verdict), so
+the routing step cannot read an unmeasured run as an all-clear.
 """
 
 from __future__ import annotations
@@ -64,7 +66,11 @@ _TIMEOUT = int(os.environ.get("RECALL_CANARY_TIMEOUT", "60"))
 # Reuse live_probe's counting so a floor means the same thing in both jobs.
 sys.path.insert(0, str(_HERE))
 import probe_provenance  # noqa: E402
-from live_probe import count_records  # noqa: E402
+from live_probe import alert_verdict, count_records  # noqa: E402
+
+
+class ToolCallError(RuntimeError):
+    """The server answered the call with an error result."""
 
 
 def _load_server() -> Any:
@@ -79,7 +85,17 @@ def _tool_payload(result: Any) -> Any:
     Mirrors promptfoo/providers/call_tool.py: the text block carries the
     structured output for dict-returning tools; fall back to the structured
     attributes when a tool returns Markdown or the block is absent.
+
+    An error result raises instead. The official SDK client does not raise on
+    `Unknown tool`, a rejected argument or a tool that threw — it returns a
+    result flagged `is_error` (`isError` in SDK 1.x), and parsed as a payload
+    its text was "uncountable", which the report blamed on `count_path`. The
+    standalone `fastmcp` client already raises here; this makes both say it.
     """
+    if getattr(result, "is_error", None) or getattr(result, "isError", None):
+        blocks = getattr(result, "content", None) or []
+        text = " ".join(t for b in blocks if (t := getattr(b, "text", None)))
+        raise ToolCallError(text or "error result with no text")
     content = getattr(result, "content", None)
     if isinstance(content, list) and content:
         text = getattr(content[0], "text", None)
@@ -213,6 +229,10 @@ def build_report(
         report.append("")
     if error_rows:
         report.append("## ⚠️ Canary errors (transient upstream, or a manifest bug)\n")
+        report.append(
+            "These canaries measured nothing, so this run clears nothing: an "
+            "open tracking issue stays open.\n"
+        )
         report.extend(error_rows)
         report.append("")
     if ok_rows:
@@ -254,12 +274,14 @@ def main() -> int:
     report_path.write_text(report_text, encoding="utf-8")
     print(report_text)
 
+    verdict = alert_verdict(finding=bool(recall_rows), incomplete=bool(error_rows))
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if gh_out:
         with open(gh_out, "a", encoding="utf-8") as fh:
             fh.write(f"recall_drop={'true' if recall_rows else 'false'}\n")
             fh.write(f"errors={'true' if error_rows else 'false'}\n")
-            fh.write(f"alert={'true' if recall_rows else 'false'}\n")
+            if verdict is not None:
+                fh.write(f"alert={verdict}\n")
             fh.write(f"report_path={report_path}\n")
 
     return 0  # a flaky upstream must not fail the cron
