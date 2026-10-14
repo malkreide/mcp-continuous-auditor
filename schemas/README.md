@@ -9,14 +9,23 @@ red CI check, never a silent break.
 
 | File | Source | Maintained by |
 |---|---|---|
-| `zurich_datastore_sql.json` | server-derived return-type of the tool | `generate_schemas.py` (regenerate) |
-| `<other-tool>.json` | server-derived return-type of each tool | `generate_schemas.py` (regenerate) |
+| `<tool>.json` (in the target repo) | server-derived return-type of each tool | `generate_schemas.py` (regenerate) |
 | `geojson_featurecollection.json` | RFC 7946 (GeoJSON) | by hand — resources carry no output schema |
 
-The committed `zurich_datastore_sql.json` here is a **representative** schema for
-the auditor repo (the target server is not vendored in). In the target repo,
-`generate_schemas.py` regenerates it — and every other tool's schema — from the
-live type hints.
+**No tool schema is committed here.** There used to be a `zurich_datastore_sql.json`,
+described as "representative" in this file and as "GENERATED from the FastMCP
+return type" in its own `$comment`. Neither held: `zurich_datastore_sql` has
+returned Markdown with a fenced JSON block of records since the target's first
+commit, so its real output schema is `{"result": string}`, and the
+`fields`/`records`/`sql` object the file described was never produced. The
+contract tests now assert the shape the tool actually returns
+(`promptfoo/assertions/contract.js`); the schemas themselves belong in the target
+repo, regenerated from its type hints by `generate_schemas.py`.
+
+`geojson_featurecollection.json` declares `"$schema":
+"http://json-schema.org/draft-07/schema#"` — **http**, the meta-schema's actual
+identifier. Written as https, Ajv (promptfoo's validator) cannot resolve it and
+every `is-json` against the file errors out before it validates anything.
 
 ## Regenerate (in the target MCP-server repo)
 

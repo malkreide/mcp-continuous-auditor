@@ -9,7 +9,7 @@ and red-team cases. It is split at the **credential boundary** (Analysis T-C).
 
 | File | Needs a key? | What it runs | Who runs it |
 |---|---|---|---|
-| `promptfooconfig.determ.yaml` | **no** | contract (`is-json` vs `schemas/`), the schema-drift detector's partner, deterministic injection negatives, the spec-2026-07-28 list-response contract (`ttlMs`/`cacheScope`, deterministic order) | the credential-free Worker microVM; the CI `determ` job (runs on forks too) |
+| `promptfooconfig.determ.yaml` | **no** | the output contract (`assertions/contract.js`; `is-json` vs `schemas/` for the GeoJSON resources), deterministic injection negatives asserted on the recorded upstream requests, the spec-2026-07-28 list-response contract (`ttlMs`/`cacheScope`, deterministic order) | the credential-free Worker microVM; the CI `determ` job (runs on forks too) |
 | `promptfooconfig.yaml` | **yes** (grader) | the determ tests **plus** the model-graded layer: `llm-rubric` + committed red-team | CI `graded` job (secrets); a keyed operator run |
 
 `nightly-audit.sh` picks the profile via `PROMPTFOO_PROFILE` (`determ` default,
@@ -21,6 +21,24 @@ Why the split: the Worker holds **no API keys** by design. The monolithic config
 `llm-rubric` grader needs one, so the Worker would hard-fail on it every night. It
 now runs only the key-less `determ` profile; the graded layer runs where a scoped
 grader key exists (CI / a keyed run).
+
+## What a passing test has to have touched
+
+Until 2026-10 every tool test in both profiles passed its arguments flat, while
+the target's tools take one Pydantic model, `params`. No tool body ever ran,
+and three tests passed on the validation error (details in the CHANGELOG). The
+setup now makes that state impossible to read as green:
+
+- `providers/call_tool.py` **refuses arguments** the tool's input schema does not
+  declare — a provider ERROR, not an output an assertion can match;
+- it **records every upstream request** (`metadata.requests`), so "not
+  forwarded" and "escaped" are asserted on what was sent, not on what was
+  printed;
+- a fixture can carry **`_routes`** for a tool that makes several requests;
+- the shared checks live in **`assertions/contract.js`**, used by both profiles,
+  and are unit-tested in `tests/test_promptfoo_contract_js.py`.
+
+Copy `assertions/` along with `providers/` and `fixtures/` into a target repo.
 
 ## What the determ profile cannot say about the stateless core
 
