@@ -51,12 +51,12 @@ sudo apt install -y git curl ca-certificates
 
 ## 2. Laufzeiten installieren (alle ARM64-nativ)
 
-### Node.js 20+ (OpenClaw, promptfoo)
+### Node.js 24 (OpenClaw, promptfoo)
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
-node -v             # -> v20.x oder neuer
+node -v             # -> v24.16 oder neuer — OpenClaw verlangt mindestens das
 ```
 
 > Hinweis: NodeSource liefert offizielle `arm64`-Pakete.

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — promptfoo runs on Node 24 in the templates
+
+The previous entry left `node-version: "20"` in `ci.yml.template` and
+`redteam-regen.yml.template` on purpose: that is the Node that runs promptfoo in
+the target repository, and changing it had to be measured against promptfoo
+rather than assumed. It now reads `"24"` in all three jobs (`determ`, `graded`,
+`regen`).
+
+What the change rests on:
+
+* **The pinned promptfoo admits it.** `0.121.17` declares
+  `^20.20.0 || >=22.22.0`, and none of the 824 entries in the committed
+  lockfile declares an engine that excludes Node 24.
+* **promptfoo asks for it.** Installed under Node 20.20.2 it prints *"Node.js 20
+  has reached end-of-life and is deprecated in promptfoo … Node.js 24 LTS
+  preferred"*. Node 20's last release was 2026-03-24.
+* **The gate does not move.** The `determ` job — `npm ci` from the committed
+  lockfile, then `promptfoo eval -c promptfooconfig.determ.yaml` — was run
+  against `zurich-opendata-mcp` at `c2e3b2d` under Node 20.20.2 (npm 10.8.2) and
+  Node 24.21.0 (npm 11.19.0), both verified against nodejs.org's SHA-256 sums.
+  `npm ci` is clean under both; all 13 test outcomes are identical, test by test.
+
+That last run is **not green under either version**: 4 pass, 7 fail, 2 error,
+for reasons that have nothing to do with Node (a tool signature in the target, a
+draft-07 `$schema` the bundled Ajv does not resolve, custom assertions returning
+the wrong type). It is a finding of its own and is not touched here; it is why
+the comparison is made per test and not by the summary line.
+
+**The READMEs and the Raspberry Pi guide** said "Node.js 20+ (OpenClaw,
+promptfoo)". For OpenClaw that was already false: `npm i -g openclaw` installs
+the latest release, and `openclaw@2026.10.3` declares
+`>=24.16.0 <25 || >=26.1.0`. The prerequisite is now Node.js 24, at least 24.16
+— OpenClaw sets that floor, promptfoo runs above it. The Pi guide installs from
+NodeSource's `setup_24.x`, which serves arm64.
+
+**Not changed — the Worker microVM, and it is broken.**
+`worker-cloud-init.yaml.tmpl` installs Debian 12's `nodejs` and says it "is
+enough for promptfoo". Measured: that package is `18.20.4`, and promptfoo
+`0.121.17` **refuses to start on it** — *"promptfoo requires a supported Node.js
+runtime … Required: ^20.20.0 || >=22.22.0"*, exit 1. `npm ci` only warns
+(`EBADENGINE`), so the failure surfaces at eval time. Debian 13 would not fix it
+either: its `nodejs` is `20.19.2`, below the same floor. The Worker's bootstrap
+allows signed apt only and no `curl | sh`; where its Node 24 comes from under
+that rule is a decision of its own, not a line in this change.
+
 ### Changed — every action runs on Node 24
 
 Every run carried the same warning: `actions/checkout@v4` and
