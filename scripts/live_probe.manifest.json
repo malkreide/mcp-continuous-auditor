@@ -5,7 +5,7 @@
       "name": "datastore_search_sql",
       "fixture": "datastore_sql",
       "method": "GET",
-      "url": "https://data.stadt-zuerich.ch/api/3/action/datastore_search_sql?sql=SELECT%20*%20FROM%20%22a2f7c7d4-3f2a-4f9a-9b3d-000000000000%22%20LIMIT%203"
+      "url": "https://data.stadt-zuerich.ch/api/3/action/datastore_search_sql?sql=SELECT%20%2A%20FROM%20%2290410203-4b4f-4a65-9015-1fca2792e04d%22%20LIMIT%203"
     },
     {
       "name": "geo_wfs_stadtkreise",

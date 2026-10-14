@@ -1,26 +1,46 @@
 {
-  "_comment": "Zero-record variant of datastore_sql.json — same UPSTREAM shape, empty records list. Exists for the confabulation guards: an empty result is the case where a server is most tempted to explain itself, and where a model is most tempted to invent. Structure is kept byte-identical to the populated fixture so the tests isolate emptiness, nothing else. See termdat-mcp#11 and mcp-audit check FID-003.",
-  "help": "https://data.stadt-zuerich.ch/api/3/action/help_show?name=datastore_search_sql",
+  "_comment": "RECORDED 2026-10-14T12:30Z from https://data.stadt-zuerich.ch/api/3/action/datastore_search_sql?sql=SELECT%20%2A%20FROM%20%2290410203-4b4f-4a65-9015-1fca2792e04d%22%20WHERE%201%3D0 — the same table as datastore_sql.json, `WHERE 1=0`, UNCHANGED. Zero records, and the same `fields` as the populated fixture, so the confabulation guards isolate emptiness and nothing else (termdat-mcp#11, mcp-audit FID-003). Until 2026-10-14 this was a hand-made variant of a hand-made fixture; its claim to share the populated fixture's shape now holds because both come from the same table.",
+  "help": "https://ckan-prod.zurich.datopian.com/api/3/action/help_show?name=datastore_search_sql",
   "success": true,
   "result": {
-    "sql": "SELECT * FROM \"x\" LIMIT 5",
+    "sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" WHERE 1=0",
     "records": [],
     "fields": [
       {
         "id": "_id",
-        "type": "int"
+        "type": "int4"
       },
       {
-        "id": "station",
+        "id": "_full_text",
+        "type": "tsvector"
+      },
+      {
+        "id": "Datum",
         "type": "text"
       },
       {
-        "id": "datum",
+        "id": "Standort",
         "type": "text"
       },
       {
-        "id": "wert",
-        "type": "numeric"
+        "id": "Parameter",
+        "type": "text"
+      },
+      {
+        "id": "Intervall",
+        "type": "text"
+      },
+      {
+        "id": "Einheit",
+        "type": "text"
+      },
+      {
+        "id": "Wert",
+        "type": "text"
+      },
+      {
+        "id": "Status",
+        "type": "text"
       }
     ]
   }
