@@ -69,7 +69,7 @@ Dieses Projekt betreibt einen kontinuierlichen Auditor für [MCP](https://modelc
 
 ## Voraussetzungen
 
-- Node.js 20+ (OpenClaw, promptfoo)
+- Node.js 24, mindestens 24.16 (OpenClaw verlangt es; promptfoo läuft darauf)
 - Python 3.11+ und [uv](https://github.com/astral-sh/uv)
 - Docker (Agenten-Sandbox)
 - Telegram-Bot-Token (via [@BotFather](https://t.me/BotFather)) und deine numerische Telegram-User-ID

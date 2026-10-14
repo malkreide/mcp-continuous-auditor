@@ -69,7 +69,7 @@ This project runs a continuous auditor for [MCP](https://modelcontextprotocol.io
 
 ## Prerequisites
 
-- Node.js 20+ (OpenClaw, promptfoo)
+- Node.js 24, at least 24.16 (OpenClaw requires it; promptfoo runs on it)
 - Python 3.11+ and [uv](https://github.com/astral-sh/uv)
 - Docker (agent sandbox)
 - A Telegram bot token (via [@BotFather](https://t.me/BotFather)) and your numeric Telegram user ID

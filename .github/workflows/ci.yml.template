@@ -133,9 +133,11 @@ jobs:
       # setup-node caches by default since v5 whenever it detects a package
       # manager; v4 did not. Off, to keep the behaviour these jobs had — and
       # because a restored cache is untrusted input to a job holding secrets.
+      # Node 24 (LTS): the pinned promptfoo admits `^20.20.0 || >=22.22.0`,
+      # and Node 20 has been past end of life since 2026-04-30.
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           package-manager-cache: false
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.0
@@ -183,7 +185,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           package-manager-cache: false
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.0
