@@ -61,7 +61,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 #: Der Tag, gegen den dieses Repo die Kette zitiert. EINE Stelle, absichtlich.
-PIN = "v3.0.0"
+PIN = "v3.1.0"
 
 #: Die vier Skills — in Backticks, wie sie in der Tabelle stehen. Die Begrenzer
 #: gehoeren zur Zusage: ohne sie wuerde `mcp-data-source-probe` auch in

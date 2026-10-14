@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the `mcp-audit-skill` pin is raised to `v3.1.0`
+
+`audit-pin-drift` went red on its scheduled run of 2026-10-12: this repository
+cited `v3.0.0`, the latest release upstream is `v3.1.0`. As its own header says,
+that is not a defect here but the prompt to raise the pin deliberately — so the
+third step, reading what changed between the two releases, came first.
+
+Every target a link here makes a claim about was held against both tags:
+
+| cited as | path in `mcp-audit-skill` | `v3.0.0` → `v3.1.0` |
+|---|---|---|
+| step 1.4 recall ground truth | `skills/mcp-data-source-probe/SKILL.md` | unchanged |
+| rule 5 — recall in the tests | `skills/mcp-data-fidelity/SKILL.md` | unchanged |
+| rules 1–4, stateless, legacy SSE, `parlament-mcp#29` | `skills/mcp-transport-hardening/` | unchanged |
+| `OPS-005`, from this repository's #29 | `checks/OPS-005.md` | unchanged |
+| `ARCH-014` | `checks/ARCH-014.md` | unchanged |
+| chain membership | `docs/quality-chain.json` | unchanged |
+
+That matches the release's own statement — the catalogue is unchanged, no
+verdict moves, §5 triggers no re-audit. Two `v3.1.0` changes touch this
+repository at all, and neither asks anything of it: `check_quality_chain.py`
+now also reports repositories that carry the `mcp-quality-chain` topic without
+being in the manifest (this one is in `repos`), and the skill READMEs install
+Ruff from `requirements-lint.txt` — the rule this repository adopted in #104.
+
+* **`PIN`** in `tests/test_quality_chain_table.py` is `v3.1.0`.
+* **Both READMEs** link their skills and the catalogue at `v3.1.0`. The
+  sentence on the merge keeps naming `v3.0.0` — it says *when* the skills moved
+  under `skills/`, which stays true — but no longer links it, and "pinned to
+  that tag" now names the pin explicitly instead of pointing back at the
+  historical one.
+* **`docs/probes/vendored-copy.md`** cites `ARCH-014` at `v3.1.0`.
+
 ### Changed — the Ruff pin has one source: `requirements-lint.txt`
 
 The version used to sit in three places — `lint.yml`, `tests.yml` and the
