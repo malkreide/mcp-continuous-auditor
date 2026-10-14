@@ -184,8 +184,15 @@ Covers:
   (Analysis T-B). Needs `bash`.
 - `test_promptfoo_profiles.py` — the split promptfoo profiles are structurally
   correct: determ is key-less, graded carries the model layer + committed
-  red-team, the generative spec is isolated (Analysis T-C / T-A). Needs `PyYAML`;
-  self-skips without it.
+  red-team, the generative spec is isolated (Analysis T-C / T-A) — and their
+  assertions can run: no multi-line inline JavaScript without a top-level
+  `return`, no reference to a missing schema or assertion function, no
+  `https://` draft-07 meta-schema Ajv cannot resolve. Needs `PyYAML`; self-skips
+  without it.
+- `test_promptfoo_contract_js.py` — the shared assertions in
+  `promptfoo/assertions/contract.js`, driven by `node`: records within LIMIT, an
+  error text never read as a result, a missing request log never read as
+  "nothing forwarded", a quote that reached upstream unescaped. Needs `node`.
 - `test_improve_loop.py` — the **real** Phase-6c orchestrator
   (`scripts/improve-loop.sh`) end-to-end with a fake writer queue, the fake
   suite runner and a local git target: keeps are committed (only under
@@ -335,7 +342,10 @@ Covers:
 `test_smoke_target.py` runs `schemas/generate_schemas.py` and
 `promptfoo/providers/call_tool.py` against `tests/fixtures/smoke_server.py`, a
 tiny local FastMCP server — the two code paths that otherwise only run in the
-external target repo. Provide fastmcp, e.g. with uv:
+external target repo. It also holds what the eval profiles now rely on: the
+provider records every upstream request, refuses arguments the tool's input
+schema does not declare, answers a fixture's `_routes` by request, and lists
+twice to measure order. Provide fastmcp, e.g. with uv:
 
 ```bash
 uv run --with fastmcp python -m unittest tests.test_smoke_target

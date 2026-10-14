@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the promptfoo profiles never reached the tools they tested
+
+The key-less `determ` profile, run against `zurich-opendata-mcp@c2e3b2d`, passed
+4 of 13 (measured while moving promptfoo to Node 24, identically under Node 20).
+The nine failures were the visible half. The other half was worse: **three of
+the four passes were for the wrong reason**, and the `graded` profile, whose
+red-team cases share the setup, had the same defect throughout.
+
+**Why — one cause, three symptoms.** Every tool of the target takes one
+Pydantic model, `params`, and has since its first commit (2026-02-25). Every
+tool test in both profiles passed its arguments flat, plus a `resource_id` the
+SQL model forbids (`extra="forbid"`). So no tool body ever ran: each call
+stopped in argument validation. Then:
+
+* *"DELETE is rejected"* passed — `contains-any ["Error", …]` found the word in
+  Pydantic's message. The SQL guard was never reached.
+* *"geo_features is Markdown, not raw GeoJSON"* passed — a validation message is
+  not JSON.
+* *"empty result does not assert absence"* passed — a validation message does
+  not say "out of scope".
+* In `graded`, the red-team cases (`prompt-injection`, `pii`, `sql-injection`)
+  handed the grader validation errors to judge.
+
+**What changed.**
+
+* **Arguments as the tools declare them**, `{"params": {…}}`, in both profiles.
+* **The provider refuses arguments that cannot match the tool's input schema**
+  (`call_tool.py`, `_check_args`): a missing required key or an undeclared one
+  becomes a provider ERROR, which no assertion can turn into a pass. Top-level
+  only — what is *inside* `params` is the tool's behaviour, and a test may send
+  invalid values on purpose. An empty `properties: {}` counts as "takes nothing";
+  only a schema with no `properties` at all is left unchecked.
+* **The provider records every upstream request** and returns it as
+  `metadata.requests`. "Payload not forwarded" is now asserted on that list —
+  no request at all — instead of on the wording of the output.
+* **A fixture can answer more than one request** (`_routes`, matched on the
+  request, not on call order). `search_stadtratsbeschluesse` asks for records
+  and, in parallel, `COUNT(*) AS cnt`; given the records payload for both, it
+  raised `KeyError: 'cnt'` — and *"quote is escaped, no raw DROP forwarded"*
+  would have passed on the traceback. It now asserts that the query reached
+  upstream with its quote doubled, and only doubled.
+* **Shared assertions in `promptfoo/assertions/contract.js`**, used by both
+  profiles. Every function returns a reason; a missing request log reads as
+  "not measured", never as "nothing sent".
+* **Multi-line inline JavaScript** is a function body to promptfoo; the three
+  `(() => { … })()` asserts returned nothing ("Custom function must return a
+  boolean") and now `return`.
+* **German rejection vocabulary.** The target answers "Fehler: … nicht
+  gestattet"; the English-only list matched nothing it actually says.
+* **`"tools/list: the order is deterministic across two calls"`** asserted only
+  that `names` is an array. The provider now lists twice and reports
+  `repeat_identical`, which the test checks.
+
+**Two contracts the target never had, replaced by the one it has** (decided
+with the maintainer):
+
+* `zurich_datastore_sql` returns Markdown with one fenced JSON block of records,
+  and has since its first commit. `schemas/zurich_datastore_sql.json` described
+  a `fields`/`records`/`sql` object it never produced — while its own `$comment`
+  said "GENERATED from the FastMCP return type". The tests now assert the block:
+  it parses, holds objects, honours LIMIT; zero rows is reported without records
+  and without an error. The schema file is removed. **That the tool offers no
+  structured output is a finding against the target**, not something a test
+  here can fix.
+* Geo layer B read `zurich://geo/quartiere`, a layer the target has never
+  offered (`{"error": "Unknown layer: quartiere"}`). It was hidden because
+  `geojson_featurecollection.json` named the draft-07 meta-schema as `https://`
+  — the identifier is `http://` — so Ajv errored before validating anything.
+  Both fixed; layer B is now `kreisbuero`, a point layer next to polygon layer A,
+  with a fixture **recorded** from the WFS (two features, an internal `editor`
+  account name redacted). `geo_layer_quartiere.json` and its live-probe entry
+  are replaced by it; `live_probe.py` skips `_routes` like `_comment`.
+
+**Result**, `determ` against the target under Node 24: **13 of 13**, each for
+its own reason. Held by negative controls on the real target: flat arguments
+restored → all seven tool tests ERROR; `_sql_escape` disabled → the escaping
+test fails; the SQL guard bypassed → both rejection tests fail with the request
+they let through; `LIMIT 2` against three records → fails.
+
+**`graded`, deterministic part** (the `llm-rubric` asserts need a model key and
+were not run): **10 of 11.** The one failure is real and stays:
+`redteam/sql-injection` — *the target forwards
+`SELECT * FROM "x" UNION SELECT password FROM users--` upstream*; its guard
+admits a single SELECT, and a UNION SELECT is one. Until now that test passed on
+the validation error. Whether a read-only public datastore must refuse UNION is
+a decision about the target, recorded here rather than settled by the test.
+
+**Also found, not changed here:** the Stadtkreise fixture is not a recorded
+response — its coordinates are a hand-drawn square and its fields (`knr`,
+`kname`) do not exist upstream, so the live probe should report it as drift.
+
+New tests hold all of it: `test_smoke_target.py` (request log, argument refusal,
+routes, double listing), `test_promptfoo_profiles.py` (no top-level-`return`-less
+multi-line JS, no missing schema or assertion function, no `https://` draft-07),
+`test_promptfoo_contract_js.py` (the shared assertions, refusals first). Each of
+the profile checks fails on the previous `main`.
+
 ### Fixed — the Worker microVM could not run promptfoo; it now gets Node 24
 
 The entry below ends on a measurement: the Worker installs Debian 12's `nodejs`,

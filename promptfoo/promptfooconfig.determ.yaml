@@ -23,17 +23,28 @@ providers:
     label: mcp-direct
 
 tests:
-  # ─── (1) is-json contract: schemas are the drift detector ──────────────────
-  - description: "datastore_sql: valid query returns schema-conformant JSON"
+  # ─── (1) output contract ───────────────────────────────────────────────────
+  # ARGUMENTS ARE WHAT THE TOOL DECLARES. Every tool here takes one Pydantic
+  # model, `params` — and has since the target's first commit. These tests used
+  # to pass their arguments flat (plus a `resource_id` the SQL model forbids),
+  # so no tool body ever ran: every call stopped in argument validation, and
+  # three tests passed on that error message. The provider now refuses
+  # arguments that do not match the tool's input schema (call_tool.py,
+  # `_check_args`), so that state turns into a provider ERROR, never a pass.
+  #
+  # zurich_datastore_sql returns Markdown with the records in ONE fenced JSON
+  # block, and always has. The contract asserted is that one — the block parses,
+  # holds objects, honours LIMIT — not a bare-JSON shape the tool never had.
+  # That it offers no structured output at all is a finding against the target,
+  # recorded in the CHANGELOG, not something this test can pretend away.
+  - description: "datastore_sql: valid query returns well-formed records within LIMIT"
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql
-      args: '{"resource_id": "FIXTURE", "sql": "SELECT * FROM \"x\" LIMIT 5"}'
+      args: '{"params": {"sql": "SELECT * FROM \"x\" LIMIT 5"}}'
     assert:
-      - type: is-json
-        value: file://../schemas/zurich_datastore_sql.json
       - type: javascript
-        value: "JSON.parse(output).records.length <= 5"
+        value: file://assertions/contract.js:datastoreRows
 
   - description: "geo layer A (Stadtkreise): GeoJSON FeatureCollection is schema-conformant"
     vars:
@@ -45,15 +56,20 @@ tests:
       - type: javascript
         value: "JSON.parse(output).type === 'FeatureCollection'"
 
-  - description: "geo layer B (Quartiere): GeoJSON FeatureCollection is schema-conformant"
+  # A POINT layer next to the polygon layer above. This test used to read
+  # `zurich://geo/quartiere`, which the target has never offered — it answered
+  # {"error": "Unknown layer: quartiere"}, and a draft-07 `$schema` written as
+  # https (the meta-schema is http) made the assertion error out before anyone
+  # saw that. The fixture is a recorded WFS response, not a hand-made one.
+  - description: "geo layer B (Kreisbüro, points): GeoJSON FeatureCollection is schema-conformant"
     vars:
-      resource: "zurich://geo/quartiere"
-      fixture: geo_layer_quartiere
+      resource: "zurich://geo/kreisbuero"
+      fixture: geo_layer_kreisbuero
     assert:
       - type: is-json
         value: file://../schemas/geojson_featurecollection.json
       - type: javascript
-        value: "JSON.parse(output).features.every(f => f.type === 'Feature')"
+        value: "JSON.parse(output).features.every(f => f.type === 'Feature' && f.geometry.type === 'Point')"
 
   # The zurich_geo_features TOOL returns a Markdown summary, not GeoJSON
   # (audit 2026-06-27). Encode that as a contract so a future switch to raw
@@ -62,40 +78,60 @@ tests:
     vars:
       tool: zurich_geo_features
       fixture: geo_layer_stadtkreise
-      args: '{"layer_id": "stadtkreise"}'
+      args: '{"params": {"layer_id": "stadtkreise"}}'
     assert:
+      # "Not JSON" alone passed on an error message for months. It has to be a
+      # result first.
+      - type: javascript
+        value: file://assertions/contract.js:notAnError
       - type: javascript
         value: |
           (() => { try { JSON.parse(output); return false; } catch { return true; } })()
 
   # ─── (2) injection negative-tests (deterministic — no grader needed) ────────
+  # "Not forwarded" is asserted on what the tool SENT (the provider records
+  # every upstream request), not on what it printed. The rejection vocabulary
+  # includes German because the target answers in German — the English-only
+  # list matched nothing the server actually says, and passed only on the
+  # argument-validation error that stood in for it.
   - description: "datastore_sql: stacked-statement injection is rejected, payload not forwarded"
     vars:
       tool: zurich_datastore_sql
       # Rejected by _validate_select_only BEFORE any network call -> no fixture.
-      args: '{"resource_id": "FIXTURE", "sql": "SELECT 1; DROP TABLE x;--"}'
+      args: '{"params": {"sql": "SELECT 1; DROP TABLE x;--"}}'
     assert:
+      - type: javascript
+        value: file://assertions/contract.js:notForwarded
       - type: not-contains
         value: "DROP TABLE"
       - type: contains-any
-        value: ["error", "Error", "abgelehnt", "not allowed", "rejected", "invalid"]
+        value: ["Fehler", "nicht erlaubt", "nicht akzeptiert", "nicht gestattet", "error", "Error", "abgelehnt", "not allowed", "rejected", "invalid"]
 
   - description: "datastore_sql: non-SELECT (DELETE) is rejected"
     vars:
       tool: zurich_datastore_sql
-      args: '{"resource_id": "FIXTURE", "sql": "DELETE FROM \"x\""}'
+      args: '{"params": {"sql": "DELETE FROM \"x\""}}'
     assert:
+      - type: javascript
+        value: file://assertions/contract.js:notForwarded
       - type: contains-any
-        value: ["error", "Error", "abgelehnt", "not allowed", "rejected", "SELECT"]
+        value: ["Fehler", "nicht erlaubt", "nicht gestattet", "error", "Error", "abgelehnt", "not allowed", "rejected", "SELECT"]
 
+  # The query is supposed to REACH upstream — escaped. So the assertion is on
+  # the recorded request: the quote arrives doubled, never raw. The old
+  # `not-contains "DROP TABLE y"` on the output passed on a KeyError traceback
+  # (one fixture answered both of the tool's requests; see `_routes` in
+  # fixtures/strb_search.json).
   - description: "search_stadtratsbeschluesse: quote in query is escaped, no raw DROP forwarded"
     vars:
       tool: search_stadtratsbeschluesse
       fixture: strb_search
-      args: '{"query": "x''; DROP TABLE y;--"}'
+      args: '{"params": {"query": "x''; DROP TABLE y;--"}}'
     assert:
-      - type: not-contains
-        value: "DROP TABLE y"
+      - type: javascript
+        value: file://assertions/contract.js:notAnError
+      - type: javascript
+        value: file://assertions/contract.js:quoteDoubledUpstream
 
   # ─── (4) confabulation guards: the empty result ────────────────────────────
   # An empty result is where a server is most tempted to explain itself, and a
@@ -113,12 +149,10 @@ tests:
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql_empty
-      args: '{"resource_id": "FIXTURE", "sql": "SELECT * FROM \"x\" WHERE 1=0"}'
+      args: '{"params": {"sql": "SELECT * FROM \"x\" WHERE 1=0"}}'
     assert:
-      - type: is-json
-        value: file://../schemas/zurich_datastore_sql.json
       - type: javascript
-        value: "JSON.parse(output).records.length === 0"
+        value: file://assertions/contract.js:datastoreEmpty
 
   # ─── (5) spec 2026-07-28: list responses ───────────────────────────────────
   # WHAT THESE CAN AND CANNOT SAY. The stateless core is a WIRE property, and
@@ -149,8 +183,10 @@ tests:
       list: tools
     assert:
       - type: is-json
+      # The provider lists twice and compares (`repeat_identical`). This used to
+      # assert only that `names` is an array, which no server can fail.
       - type: javascript
-        value: "Array.isArray(JSON.parse(output).names)"
+        value: "JSON.parse(output).repeat_identical === true"
 
   - description: "tools/list: names are unique and ordered, not a set in disguise"
     vars:
@@ -160,13 +196,13 @@ tests:
       # order. A duplicate name makes any order meaningless, and an empty
       # listing is not a passing listing — a server with no tools cannot have
       # been what the caller asked about.
+      # Multi-line inline JavaScript is a FUNCTION BODY to promptfoo, so it needs
+      # an explicit `return` — the IIFE that stood here returned nothing.
       - type: javascript
         value: |
-          (() => {
-            const o = JSON.parse(output);
-            if (!o.count) return false;
-            return new Set(o.names).size === o.names.length;
-          })()
+          const o = JSON.parse(output);
+          if (!o.count) return false;
+          return new Set(o.names).size === o.names.length;
 
   - description: "tools/list: ttlMs/cacheScope are observed, and a malformed pair fails"
     vars:
@@ -187,14 +223,12 @@ tests:
       # assert is for.
       - type: javascript
         value: |
-          (() => {
-            const o = JSON.parse(output);
-            const ttlOk = o.ttlMs === null
-              || (typeof o.ttlMs === 'number' && Number.isFinite(o.ttlMs) && o.ttlMs >= 0);
-            const scopeOk = o.cacheScope === null
-              || ['public', 'private'].includes(String(o.cacheScope));
-            return ttlOk && scopeOk;
-          })()
+          const o = JSON.parse(output);
+          const ttlOk = o.ttlMs === null
+            || (typeof o.ttlMs === 'number' && Number.isFinite(o.ttlMs) && o.ttlMs >= 0);
+          const scopeOk = o.cacheScope === null
+            || ['public', 'private'].includes(String(o.cacheScope));
+          return ttlOk && scopeOk;
 
   - description: "resources/list: same contract, so a partial migration is visible"
     vars:
@@ -203,16 +237,14 @@ tests:
       - type: is-json
       - type: javascript
         value: |
-          (() => {
-            const o = JSON.parse(output);
-            return Array.isArray(o.names) && new Set(o.names).size === o.names.length;
-          })()
+          const o = JSON.parse(output);
+          return Array.isArray(o.names) && new Set(o.names).size === o.names.length;
 
   - description: "empty result: the server does not assert absence on the caller's behalf"
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql_empty
-      args: '{"resource_id": "FIXTURE", "sql": "SELECT * FROM \"x\" WHERE 1=0"}'
+      args: '{"params": {"sql": "SELECT * FROM \"x\" WHERE 1=0"}}'
     assert:
       # Zero rows means "this query matched nothing", never "the data does not
       # exist" or "you are out of scope". A tool that draws the conclusion for

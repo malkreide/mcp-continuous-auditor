@@ -82,6 +82,87 @@ class SmokeTargetTest(unittest.TestCase):
         self.assertIn("output", out, msg=out)
         self.assertEqual(json.loads(out["output"])["name"], "smoke")
 
+    # --- what the determ/graded profiles now lean on -----------------------
+    # Each of these closes a way the profiles passed without measuring: a test
+    # whose arguments never reached the tool, a "not forwarded" read off the
+    # output, one fixture answering two different requests, and a determinism
+    # check that looked at one listing.
+
+    def test_upstream_requests_are_recorded_for_the_assertions(self) -> None:
+        import call_tool as ct
+
+        out = ct.call_api(
+            "", {}, {"vars": {"tool": "record_count", "fixture": "records"}}
+        )
+        reqs = out["metadata"]["requests"]
+        self.assertEqual(len(reqs), 1, msg=reqs)
+        self.assertEqual(reqs[0]["method"], "GET")
+        self.assertEqual(reqs[0]["url"], "https://smoke.invalid/api/records")
+
+    def test_a_tool_that_makes_no_request_records_none(self) -> None:
+        """An empty list is a measurement; a missing one would not be."""
+        import call_tool as ct
+
+        out = ct.call_api("", {}, {"vars": {"tool": "health"}})
+        self.assertEqual(out["metadata"]["requests"], [], msg=out)
+
+    def test_arguments_the_tool_does_not_declare_are_refused(self) -> None:
+        """The state both profiles were in: flat arguments for a `params` tool.
+        It has to be a provider ERROR — no assertion can turn that into a pass."""
+        import call_tool as ct
+
+        out = ct.call_api(
+            "",
+            {},
+            {"vars": {"tool": "record_count", "args": '{"sql": "DELETE FROM x"}'}},
+        )
+        self.assertNotIn("output", out, msg=out)
+        self.assertIn("do not match its input schema", out["error"])
+        self.assertIn("'sql'", out["error"])
+        # The wrapper the SDK puts around it is gone; the cause is what is shown.
+        self.assertNotIn("TaskGroup", out["error"])
+
+    def test_a_tool_the_server_does_not_offer_is_an_error(self) -> None:
+        import call_tool as ct
+
+        out = ct.call_api("", {}, {"vars": {"tool": "no_such_tool"}})
+        self.assertIn("offers no tool 'no_such_tool'", out["error"])
+
+    def test_a_route_answers_the_request_it_matches(self) -> None:
+        import tempfile
+
+        import call_tool as ct
+
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "routed.json").write_text(
+                json.dumps(
+                    {
+                        "_routes": [
+                            {"match": "smoke.invalid", "payload": {"result": [1, 2]}}
+                        ],
+                        "result": ["only", "the", "default", "has", "five"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            old = os.environ["MCP_FIXTURES_DIR"]
+            os.environ["MCP_FIXTURES_DIR"] = d
+            try:
+                out = ct.call_api(
+                    "", {}, {"vars": {"tool": "record_count", "fixture": "routed"}}
+                )
+            finally:
+                os.environ["MCP_FIXTURES_DIR"] = old
+        self.assertEqual(json.loads(out["output"])["count"], 2, msg=out)
+
+    def test_list_is_asked_twice_and_compared(self) -> None:
+        import call_tool as ct
+
+        out = ct.call_api("", {}, {"vars": {"list": "tools"}})
+        listing = json.loads(out["output"])
+        self.assertIs(listing["repeat_identical"], True)
+        self.assertEqual(sorted(listing["names"]), ["health", "record_count"])
+
 
 if __name__ == "__main__":
     unittest.main()

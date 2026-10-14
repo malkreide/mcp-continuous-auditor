@@ -144,6 +144,9 @@ def _load_fixture(name: str) -> Any:
     payload = json.loads((_FIXTURES / fname).read_text(encoding="utf-8"))
     if isinstance(payload, dict):
         payload.pop("_comment", None)  # housekeeping key, not part of the contract
+        # Replay routing for the promptfoo provider (call_tool.py): extra
+        # responses for a tool's secondary requests, not part of the upstream shape.
+        payload.pop("_routes", None)
     return payload
 
 

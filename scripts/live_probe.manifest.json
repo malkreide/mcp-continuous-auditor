@@ -14,10 +14,10 @@
       "url": "https://www.ogd.stadt-zuerich.ch/wfs/geoportal/Stadtkreise?service=WFS&version=1.1.0&request=GetFeature&outputFormat=application/json&typename=adm_stadtkreise_a"
     },
     {
-      "name": "geo_wfs_quartiere",
-      "fixture": "geo_layer_quartiere",
+      "name": "geo_wfs_kreisbuero",
+      "fixture": "geo_layer_kreisbuero",
       "method": "GET",
-      "url": "https://www.ogd.stadt-zuerich.ch/wfs/geoportal/Statistische_Quartiere?service=WFS&version=1.1.0&request=GetFeature&outputFormat=application/json&typename=adm_statistische_quartiere_a"
+      "url": "https://www.ogd.stadt-zuerich.ch/wfs/geoportal/Kreisbuero?service=WFS&version=1.1.0&request=GetFeature&outputFormat=application/json&typename=poi_kreisbuero_view&maxFeatures=2"
     }
   ]
 }

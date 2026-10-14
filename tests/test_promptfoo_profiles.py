@@ -80,5 +80,93 @@ class PromptfooProfilesTest(unittest.TestCase):
         self.assertTrue(any("call_tool.py" in pid for pid in _provider_ids(c)))
 
 
+EVAL_PROFILES = ("promptfooconfig.determ.yaml", "promptfooconfig.yaml")
+
+
+def _asserts(cfg: dict):
+    for t in cfg.get("tests", []) or []:
+        for a in t.get("assert") or []:
+            yield t.get("description", "?"), a
+
+
+@unittest.skipUnless(_HAVE_YAML, "PyYAML not installed")
+class AssertionsThatCanRunTest(unittest.TestCase):
+    """Three ways both eval profiles reported on something they never checked.
+
+    Each was measured against zurich-opendata-mcp on 2026-10-14 and is held here
+    structurally, so it fails in the unit suite rather than in a nightly run
+    that nobody reads closely enough to see an ERROR where a PASS was expected.
+    """
+
+    def test_multiline_inline_javascript_returns_something(self) -> None:
+        """promptfoo runs a multi-line inline value as a FUNCTION BODY. The
+        `(() => { … })()` written over several lines evaluated and returned
+        nothing — "Custom function must return a boolean", every run."""
+        for profile in EVAL_PROFILES:
+            for desc, a in _asserts(_load(profile)):
+                v = a.get("value")
+                if a.get("type") != "javascript" or not isinstance(v, str):
+                    continue
+                if v.startswith("file://") or "\n" not in v.rstrip():
+                    continue
+                # A `return` INSIDE the arrow function does not count — the old
+                # IIFEs had plenty. It has to sit at the body's own top level,
+                # i.e. on a line at the smallest indentation in the value.
+                lines = [ln for ln in v.splitlines() if ln.strip()]
+                indent = min(len(ln) - len(ln.lstrip()) for ln in lines)
+                top = [
+                    ln.strip() for ln in lines if len(ln) - len(ln.lstrip()) == indent
+                ]
+                with self.subTest(profile=profile, test=desc):
+                    self.assertTrue(
+                        any(ln.startswith("return") for ln in top),
+                        "multi-line inline javascript with no top-level `return` "
+                        "evaluates to undefined in promptfoo",
+                    )
+
+    def test_every_referenced_assertion_function_is_exported(self) -> None:
+        import re
+
+        refs = [
+            (profile, desc, a["value"])
+            for profile in EVAL_PROFILES
+            for desc, a in _asserts(_load(profile))
+            if isinstance(a.get("value"), str)
+            and a["value"].startswith("file://assertions/")
+        ]
+        for profile, desc, v in refs:
+            with self.subTest(profile=profile, test=desc):
+                path, _, fn = v[len("file://") :].partition(":")
+                self.assertTrue((PF / path).is_file(), v)
+                js = (PF / path).read_text(encoding="utf-8")
+                exports = re.search(r"module\.exports\s*=\s*\{([^}]*)\}", js)
+                self.assertIsNotNone(exports, f"{path} exports nothing")
+                exported = {n.strip() for n in exports.group(1).split(",")}
+                self.assertIn(fn, exported, f"{v}: not exported")
+
+    def test_every_schema_file_an_is_json_names_exists(self) -> None:
+        """A deleted or renamed schema must not leave an assertion pointing at
+        nothing."""
+        for profile in EVAL_PROFILES:
+            for desc, a in _asserts(_load(profile)):
+                v = a.get("value")
+                if a.get("type") == "is-json" and isinstance(v, str):
+                    with self.subTest(profile=profile, test=desc):
+                        self.assertTrue((PF / v[len("file://") :]).is_file(), v)
+
+    def test_schema_files_name_a_resolvable_meta_schema(self) -> None:
+        """draft-07's identifier is http://. Written as https://, Ajv cannot
+        resolve it and every is-json against the file errors out — which hid,
+        among other things, a test reading a layer the target never offered."""
+        import json
+
+        for f in sorted((PF.parent / "schemas").glob("*.json")):
+            with self.subTest(schema=f.name):
+                meta = json.loads(f.read_text(encoding="utf-8")).get("$schema", "")
+                self.assertFalse(
+                    meta.startswith("https://json-schema.org/draft-0"), meta
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

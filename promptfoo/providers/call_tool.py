@@ -3,8 +3,10 @@
 Deterministic by construction — there is **no live network**. Outbound httpx is
 patched with an ``AsyncMock`` that replays a recorded fixture from
 ``promptfoo/fixtures/``; the server's in-memory client then drives the real tool
-against that fixture. The provider returns the tool's **raw JSON** so promptfoo
-can ``is-json``-validate it against the generated schema (schema drift = red CI).
+against that fixture. The provider returns the tool's **raw output** — JSON for
+a tool that returns structured data, its text for one that does not — and, as
+``metadata.requests``, every upstream request the tool made. An assertion that a
+payload "is not forwarded" reads that list, not the wording of the output.
 
 Which in-memory client that is depends on the target — see ``in_memory_client``
 below. Two different projects are called FastMCP and they cannot share an
@@ -24,10 +26,15 @@ promptfoo calls ``call_api(prompt, options, context)``; it reads these vars:
              statement about the SDK and would be green for every server, migrated
              or not. That question belongs to scripts/spec_probe.py --url, which
              measures it on a real connection.
-  args       JSON object string of tool arguments (default "{}")
+  args       JSON object string of tool arguments (default "{}"), exactly as the
+             tool's input schema declares them — a tool taking one Pydantic
+             model wants ``{"params": {...}}``. Arguments that cannot match the
+             schema are refused before the call (see ``_check_args``).
   fixture    fixture basename under promptfoo/fixtures/ (the recorded UPSTREAM
              httpx response the mocked client should replay). Omit for tools
              whose path is rejected before any network call (e.g. an SQL guard).
+             A fixture may carry ``_routes`` for a tool that makes more than one
+             upstream request (see ``_split_routes``).
 
 The target server is imported via MCP_SERVER_IMPORT="package.module:attr"
 (default ``zurich_opendata_mcp.server:mcp``). Fixture dir override:
@@ -37,6 +44,7 @@ MCP_FIXTURES_DIR.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import importlib
 import json
 import os
@@ -62,10 +70,27 @@ def call_api(prompt: str, options: dict, context: dict) -> dict:
         return {"error": "provider needs `tool`, `resource` or `list` in vars"}
 
     try:
-        output = asyncio.run(_invoke(tool, resource, args, fixture, listing))
-        return {"output": output}
+        output, requests = asyncio.run(_invoke(tool, resource, args, fixture, listing))
+        # `requests` is every upstream call the tool made, as the httpx mock saw
+        # it. An assertion reads it as context.providerResponse.metadata.requests:
+        # "the payload was not forwarded" is a statement about THIS list, and an
+        # error message that happens to omit the payload is not evidence of it.
+        return {"output": output, "metadata": {"requests": requests}}
     except Exception as exc:  # surface to promptfoo as a provider error, not a crash
-        return {"error": f"{type(exc).__name__}: {exc}"}
+        return {"error": _describe(exc)}
+
+
+def _describe(exc: BaseException) -> str:
+    """The leaf exceptions, not their wrapper.
+
+    The in-memory clients run inside an anyio task group, so an exception raised
+    while the client is open arrives as "ExceptionGroup: unhandled errors in a
+    TaskGroup (1 sub-exception)" — which names the mechanism and hides the cause.
+    """
+    group_type = getattr(builtins, "BaseExceptionGroup", None)  # Python >= 3.11
+    if group_type is not None and isinstance(exc, group_type):
+        return "; ".join(_describe(e) for e in exc.exceptions)
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _load_server() -> Any:
@@ -80,6 +105,37 @@ def _fixture_payload(fixture: str | None) -> Any:
     base = Path(os.environ.get("MCP_FIXTURES_DIR", _DEFAULT_FIXTURES))
     name = fixture if fixture.endswith(".json") else f"{fixture}.json"
     return json.loads((base / name).read_text(encoding="utf-8"))
+
+
+def _split_routes(payload: Any) -> tuple[Any, list[dict]]:
+    """Separate a fixture's default response from its `_routes`.
+
+    ONE FIXTURE PER TEST USED TO MEAN ONE RESPONSE PER TEST, and a tool that makes
+    two upstream calls got the same answer twice. `search_stadtratsbeschluesse`
+    asks for the records and, in parallel, for `COUNT(*) AS cnt`; handed the
+    records payload for both, it raised `KeyError: 'cnt'` before producing any
+    output — and a test asserting what the output does NOT contain passed on the
+    traceback.
+
+    `_routes` is a list of `{"match": <substring>, "payload": <response>}`. Each
+    upstream request is serialised (method, URL, params, body) and the first
+    route whose `match` occurs in it answers; everything else gets the fixture
+    itself. Matching on the request rather than on call order keeps it correct
+    under `asyncio.gather`, which promises no order.
+    """
+    if isinstance(payload, dict) and "_routes" in payload:
+        payload = dict(payload)
+        return payload, list(payload.pop("_routes") or [])
+    return payload, []
+
+
+def _request_record(method: str, url: Any, kwargs: dict) -> dict:
+    """What a tool sent upstream, JSON-safe, for routing and for the assertions."""
+    record = {"method": str(method).upper(), "url": str(url)}
+    for key in ("params", "json", "data", "content"):
+        if kwargs.get(key) is not None:
+            record[key] = json.loads(json.dumps(kwargs[key], default=str))
+    return record
 
 
 class _FakeResponse:
@@ -260,7 +316,63 @@ async def _list(client: Any, kind: str) -> str:
             f"the in-memory client exposes no `{method}` — the list response was "
             "NOT measured, which is not the same as a compliant one"
         )
-    return _list_to_json(kind, await fn())
+    # Asked TWICE, because "deterministic order" is a claim about two answers.
+    # The test that says so used to receive one listing and check that `names`
+    # was an array — which every server passes, ordered or not.
+    first = json.loads(_list_to_json(kind, await fn()))
+    second = json.loads(_list_to_json(kind, await fn()))
+    first["repeat_identical"] = first["names"] == second["names"]
+    return json.dumps(first, ensure_ascii=False)
+
+
+def _input_schema_of(tool: Any) -> dict:
+    """A tool's input schema under either spelling (`mcp` 2.x snake_cases it)."""
+    return (
+        getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None) or {}
+    )
+
+
+async def _check_args(client: Any, tool: str, args: dict) -> None:
+    """Refuse a call whose arguments cannot reach the tool body.
+
+    WHY THIS EXISTS. zurich-opendata-mcp has taken one Pydantic model per tool,
+    `params`, since its first commit. Every tool test in both profiles passed its
+    arguments flat. So every call stopped in argument validation, the tool never
+    ran — and three tests PASSED on the validation error: "DELETE is rejected"
+    found the word "Error" in Pydantic's message, "not raw GeoJSON" found that a
+    message is not JSON. That is a gate measuring its own input, green.
+
+    The check is the protocol's own contract, not a guess about the SDK: the
+    tool's `inputSchema` names its required top-level keys and its properties. A
+    missing required key or a key the tool does not declare means the test, not
+    the server, is malformed — and that must surface as a provider ERROR, which
+    no assertion can turn into a pass.
+
+    Deliberately top-level only. Whether the VALUES inside `params` are valid is
+    the tool's behaviour, and a test may well send invalid ones on purpose (an
+    unknown layer, a non-SELECT statement) to see them rejected.
+    """
+    listing = await client.list_tools()
+    tools = list(getattr(listing, "tools", listing))  # `fastmcp` returns a plain list
+    match = next((t for t in tools if getattr(t, "name", None) == tool), None)
+    if match is None:
+        raise LookupError(
+            f"the server offers no tool {tool!r} — the test names a tool that does not exist"
+        )
+    schema = _input_schema_of(match)
+    declared = set((schema.get("properties") or {}).keys())
+    missing = [k for k in (schema.get("required") or []) if k not in args]
+    # `properties: {}` is a statement — the tool takes nothing — and every key
+    # is then undeclared. Only a schema with no `properties` at all says nothing.
+    knows_properties = isinstance(schema.get("properties"), dict)
+    unknown = [k for k in args if knows_properties and k not in declared]
+    if missing or unknown:
+        raise ValueError(
+            f"arguments for {tool!r} do not match its input schema — the call could "
+            f"not reach the tool body, so nothing about the tool was measured. "
+            f"missing required: {missing or '-'}; not declared: {unknown or '-'}; "
+            f"declared: {sorted(declared) or '-'}"
+        )
 
 
 async def _invoke(
@@ -269,20 +381,28 @@ async def _invoke(
     args: dict,
     fixture: str | None,
     listing: str | None = None,
-) -> str:
+) -> tuple[str, list[dict]]:
     mcp = _load_server()
-    payload = _fixture_payload(fixture)
+    payload, routes = _split_routes(_fixture_payload(fixture))
+    requests: list[dict] = []
 
     async def _fake_request(
         self: Any, method: str, url: Any, *a: Any, **k: Any
     ) -> _FakeResponse:
         # The single network chokepoint for httpx.AsyncClient.get/post/... is request().
+        record = _request_record(method, url, k)
+        requests.append(record)
+        seen = json.dumps(record, ensure_ascii=False)
+        for route in routes:
+            if route.get("match") and route["match"] in seen:
+                return _FakeResponse(route.get("payload"))
         return _FakeResponse(payload)
 
     with patch("httpx.AsyncClient.request", new=_fake_request):
         async with in_memory_client(mcp) as client:
             if listing:
-                return await _list(client, listing)
+                return await _list(client, listing), requests
             if resource:
-                return _resource_to_json(await client.read_resource(resource))
-            return _result_to_json(await client.call_tool(tool, args))
+                return _resource_to_json(await client.read_resource(resource)), requests
+            await _check_args(client, tool, args)
+            return _result_to_json(await client.call_tool(tool, args)), requests
