@@ -28,4 +28,6 @@
 (^|\.)astral\.sh$
 (^|\.)deb\.debian\.org$
 (^|\.)security\.debian\.org$
+# nodejs 24 for promptfoo — Debian's is too old; see worker-cloud-init.yaml.tmpl.
+(^|\.)deb\.nodesource\.com$
 (^|\.)data\.stadt-zuerich\.ch$

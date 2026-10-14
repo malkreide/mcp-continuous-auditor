@@ -27,11 +27,88 @@
 #   ${BROKER_PORT}           vsock port the Broker listener is bound to (e.g. 9000)
 
 package_update: true
-# Signed apt only (no curl|sh). Debian's nodejs (>=18) is enough for promptfoo;
-# uv is installed from a pinned pip release below.
-packages: [git, ca-certificates, python3, python3-pip, nodejs, npm, socat, build-essential]
+# Signed apt only (no curl|sh); uv is installed from a pinned pip release below.
+#
+# nodejs comes from NodeSource's node_24.x, NOT from Debian. Debian 12 ships
+# nodejs 18.20.4 and the pinned promptfoo REFUSES TO START on it ("requires a
+# supported Node.js runtime … ^20.20.0 || >=22.22.0", exit 1 — measured); Debian
+# 13's 20.19.2 is below the same floor. An earlier comment here said Debian's
+# nodejs "is enough for promptfoo". It was not, and `npm ci` only warns about it,
+# so the failure surfaced at eval time instead of at boot.
+#
+# The rule above still holds: the source is added by write_files below — a pinned
+# key, a sources entry signed-by that key, an apt pin — and apt verifies it like
+# any Debian mirror. No key is fetched at boot, no script is piped into a shell.
+# NodeSource's nodejs bundles npm and declares `Conflicts: npm`, so Debian's `npm`
+# is NOT listed: with it, the package set does not resolve at all (measured).
+packages: [git, ca-certificates, python3, python3-pip, nodejs, socat, build-essential]
 
 write_files:
+  # NodeSource's archive signing key, ASCII-armored and pinned here rather than
+  # fetched at boot. apt reads a `.asc` keyring directly; Debian's cloud image has
+  # no `gpg`, which is why this is not cloud-init's `apt: sources: key:` (that
+  # path dearmors with gpg and would fail).
+  #   pub  rsa2048 2016-05-23  NSolid <nsolid-gpg@nodesource.com>
+  #   fpr  6F71 F525 2828 41EE DAF8  51B4 2F59 B5F9 9B1B E0B4
+  # Verified 2026-10-14: identical from deb.nodesource.com and keyserver.ubuntu.com,
+  # and it validates node_24.x/dists/nodistro/InRelease. Rotating it is an edit
+  # here, made the same way.
+  - path: /etc/apt/keyrings/nodesource.asc
+    permissions: "0644"
+    content: |
+      -----BEGIN PGP PUBLIC KEY BLOCK-----
+
+      mQENBFdDN1ABCADaNd/I3j3tn40deQNgz7hB2NvT+syXe6k4ZmdiEcOfBvFrkS8B
+      hNS67t93etHsxEy7E0qwsZH32bKazMqe9zDwoa3aVImryjh6SHC9lMtW27JPHFeM
+      Srkt9YmH1WMwWcRO6eSY9B3PpazquhnvbammLuUojXRIxkDroy6Fw4UKmUNSRr32
+      9Ej87jRoR1B2/57Kfp2Y4+vFGGzSvh3AFQpBHq51qsNHALU6+8PjLfIt+5TPvaWR
+      TB+kAZnQZkaIQM2nr1n3oj6ak2RATY/+kjLizgFWzgEfbCrbsyq68UoY5FPBnu4Z
+      E3iDZpaIqwKr0seUC7iA1xM5eHi5kty1oB7HABEBAAG0Ik5Tb2xpZCA8bnNvbGlk
+      LWdwZ0Bub2Rlc291cmNlLmNvbT6JAU4EEwEKADgCGwMCHgECF4AWIQRvcfUlKChB
+      7tr4UbQvWbX5mxvgtAUCaWfGnwULCQgHAgYVCgkICwIEFgIDAQAKCRAvWbX5mxvg
+      tL0CB/0TTur63uXTPbq+JBQET6jnEVaDrNmpHI/z2RMuj163gmy9CtCwG060c+TI
+      qzmzlPacbTkGc5C50teX2mhs+5JIthfhMibR6Dgy0zeSVuvt9WJ3TNWBpoW5Ezka
+      17SA3Xv9UEJS2eyRd7ALf7TGGAj8DG+xRABXl6bJIXh1s7Hki7kwgVrpNxm/EqyX
+      OrzExm0g2UjgdkbnZrnTyZMB6X8f8fZPo0QcByPvLee2DtkKeE+SZlFXyvnCzcw0
+      94K45vlWkEdRzmiiWAG7guzZyZYGcCO5EoJ3LUP90qhrmQUfsbtczeoEW17EW1jM
+      RohLo8BqVyYc1CAFlULIDNeS3aipuQENBFdDN1ABCACq02gutmss6jiD2u50vdAR
+      x3JOGd92trWRf7qH9/MTToslhoU/LiXhaE0x5+UkKuRbcruCtytn226brvwD0BdO
+      QGpY81ZAxjTFuKUpIDmrHcrI/N9XLrLKx19kWEttsIPNJOgvx8JoeReOX2hLjcbF
+      fmz8e6D1K7eZ+hjMfOLxD94tfhQwYtKbfwf0JwxQV5ItQRryd+X+TcA3nyvFWiJ8
+      Vz92Tf1iG7Z+XasaaZFf2JDuxoiZaSZY7va395ClCEMykFsRbGwgDyB6Fr+6x/UU
+      sYA4rYV7RumIOUdWngWyWjzVy/cKSWASW4jI5ABWs+AfeRTqmZt6+6B7oIghrB19
+      ABEBAAGJAR8EGAECAAkFAldDN1ACGwwACgkQL1m1+Zsb4LRPzgf9FTfPA0d2N37q
+      su5av3bYZJ+w6pvWF3aK2Zdy9ednhCBfPNmhvBRN6mXWixo0DuKEoQMjVpkX0hrq
+      B9FxEVwCPZ9K/JuJgzMROq7T+7R3rcv+TPMdwk8rjIMeRiw2hFLwbrJ0w/v7/3wT
+      MESv3GfXbuT0huEedK7bLfqGMgtmqMeCNkoI7Rf3GO2xArGQ6Zc2rTd4L9+D5HHS
+      IPEixwFZS+Debc7pg3os0bKXEsqMtitvocClOAuPnXpCy04PK450UTr6ZVdirWhJ
+      Oq8SrSERQwqEJ4PMHybiDKwzSr6mcBURre3G71uTAp7h/DISLTpfVMadcB6eoLWr
+      /4fBqejAWg==
+      =wh5k
+      -----END PGP PUBLIC KEY BLOCK-----
+
+  - path: /etc/apt/sources.list.d/nodesource.list
+    permissions: "0644"
+    content: |
+      deb [signed-by=/etc/apt/keyrings/nodesource.asc] https://deb.nodesource.com/node_24.x nodistro main
+
+  # A third-party archive in the VM that runs untrusted code gets exactly ONE
+  # package. -1 keeps everything else it publishes uninstallable — today that is
+  # `nsolid`, its own runtime — and keeps it from ever shadowing git, python3,
+  # ca-certificates or anything Debian provides; 600 lets its nodejs win over
+  # Debian's 18.x. apt ranks the named record above `*` whatever the order
+  # (checked both ways).
+  - path: /etc/apt/preferences.d/nodesource
+    permissions: "0644"
+    content: |
+      Package: nodejs
+      Pin: origin deb.nodesource.com
+      Pin-Priority: 600
+
+      Package: *
+      Pin: origin deb.nodesource.com
+      Pin-Priority: -1
+
   # The in-guest audit runner. Invoked once at first boot (runcmd below).
   - path: /opt/worker-audit.sh
     permissions: "0755"
@@ -51,7 +128,13 @@ write_files:
       fi
       command -v uv   >/dev/null 2>&1 || fail "uv not on PATH after install"
       command -v git  >/dev/null 2>&1 || fail "git missing (apt)"
-      command -v npx  >/dev/null 2>&1 || fail "npx missing (apt nodejs/npm)"
+      command -v npx  >/dev/null 2>&1 || fail "npx missing (apt nodejs from NodeSource)"
+      # Present is not enough. Without NodeSource, Debian's nodejs still provides
+      # `node` (but no `npx`, so the line above catches that case today). Re-adding
+      # Debian's `npm` to "fix" a missing npx would bring npx back on node 18, and
+      # promptfoo would exit 1 at eval time again. Refuse at boot instead.
+      node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 24 ? 0 : 1)' \
+        || fail "node $(node --version 2>/dev/null) is below 24 — the NodeSource source or its pin did not apply"
 
       echo "[worker] cloning auditor @ ${AUDITOR_REF}"
       rm -rf /opt/auditor
