@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the Stadtkreise fixture is a recorded response, not a drawing
+
+`geo_layer_stadtkreise.json` backed the geo layer A contract test and the
+`geo_features` test in both profiles, and the weekly live probe held it
+against the real WFS. It was hand-made: a 500-metre square in LV95
+coordinates, a `crs` block and `knr`/`kname` fields the endpoint has never
+returned. The live probe reported exactly that — run 2026-10-14 before this
+change: `drift=true`, four paths only in the fixture, nine only in the
+endpoint.
+
+It is now **recorded**: the first two features of `Stadtkreise` /
+`adm_stadtkreise_a` (`maxFeatures=2`), byte-for-byte what the endpoint sent —
+checked by a round trip against the saved response. Only the layout differs:
+each geometry sits on one line, so the properties stay readable next to
+~5,500 coordinate pairs (114 KB).
+
+**The live probe keeps its full-layer URL.** All twelve districts were checked
+against the two recorded ones: the same 19 structural paths, all `Polygon`. A
+probe narrowed to the two recorded features would be equally green today and
+blind tomorrow to a change in the other ten.
+
+Measured after the change: live probe `drift=false`, `geo_wfs_stadtkreise`
+structurally in sync (19 paths); `determ` against the target 13/13; `graded`,
+deterministic part, 10/11 as before (the UNION finding).
+
+**What the real data showed at once:** with the drawn fixture,
+`zurich_geo_features` listed "Feature 1", "Feature 2". With the recorded one it
+lists **"6.0"** and **"11.0"** — it labels a district by its numeric `name`
+field, rendered as a float, rather than by `bezeichnung` ("Kreis 6"). A
+presentation defect in the target, invisible as long as the fixture had no
+such field.
+
+**Not addressed:** the `datastore_search_sql` probe fails with HTTP 409 — its
+manifest URL queries a resource id ending in `-000000000000` that does not
+exist.
+
 ### Fixed — the promptfoo profiles never reached the tools they tested
 
 The key-less `determ` profile, run against `zurich-opendata-mcp@c2e3b2d`, passed
