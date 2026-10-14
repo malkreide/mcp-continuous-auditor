@@ -202,6 +202,21 @@ have happened. `scripts/drift_issue.py` is that step done under the same rule â€
 nothing. It is a script and not a heredoc for the same reason: the collapse sat
 in inline YAML for the life of the file because nothing there can be tested.
 
+**The collapse had moved one step up, not gone.** The router keeps three states
+â€” but it learns a probe's answer only from `alert=`, and both probes wrote
+`alert=false` whenever nothing was *found*, including when nothing was
+*measured*. The report said "probe failed"; the verdict said "all clear". Two
+real runs show it: `datastore_search_sql` answered HTTP 409 on every run until
+2026-10, and a recall canary run against a server lacking every tool in its
+manifest failed all three calls. Both wrote `alert=false`, and `drift_issue.py`
+classifies that `clear`, the state that closes. (Nothing was closed in
+`zurich-opendata-mcp`: the template is not installed there.) Each script was
+tested on its own; the handover between them was not. Now a run that failed a
+comparison and found nothing writes **no** `alert=` (`live_probe.alert_verdict`,
+shared by both probes), which the router reads as "did not run" by its own
+rule. The tests in `tests/test_recall_floors.py` drive each probe's `main()` and
+hand its output to `drift_issue.classify()`, so the handover is now covered.
+
 ### The rule also applies to a pipeline, not only to a data source
 
 `redteam-regen.yml.template` is the third place this rule landed, and the first

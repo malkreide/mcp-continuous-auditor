@@ -17,13 +17,32 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from typing import Any, ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import drift_issue as di  # noqa: E402
 import live_probe as lp  # noqa: E402
 import recall_canary as rc  # noqa: E402
+
+
+def _outputs(path: Path) -> dict[str, str]:
+    """$GITHUB_OUTPUT as a dict. A key that was never written is absent."""
+    return dict(
+        line.split("=", 1)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+
+
+def _route(name: str, out: dict[str, str], report: Path) -> str:
+    """What drift_issue.py makes of one probe step — the spec exactly as
+    live-probe.yml.template builds it: `NAME:OUTCOME:ALERT:REPORT`, where an
+    alert the step never wrote arrives as the empty string."""
+    spec = f"{name}:success:{out.get('alert', '')}:{report.name}"
+    return di.classify([di.parse_probe(spec, report.parent)])
 
 
 class CountRecordsTest(unittest.TestCase):
@@ -63,8 +82,8 @@ class CountRecordsTest(unittest.TestCase):
         self.assertIsNone(lp.count_records({"total": 42}, "total"))
 
 
-class LiveProbeRecallReportTest(unittest.TestCase):
-    """A floor breach must be reported and signalled — separately from drift."""
+class _LiveProbeRun(unittest.TestCase):
+    """Runs live_probe.main() offline. Holds no tests of its own."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -76,24 +95,21 @@ class LiveProbeRecallReportTest(unittest.TestCase):
         os.environ.update(self._env)
         self.tmp.cleanup()
 
-    def _run(self, payload, probe_extra: dict) -> tuple[str, dict]:
+    def _run(
+        self, payload, probe_extra: dict, *, fetch=None, probes=None
+    ) -> tuple[str, dict]:
         """Drive live_probe.main() with the fetch and fixture stubbed out."""
         manifest = self.dir / "manifest.json"
-        manifest.write_text(
-            json.dumps(
+        if probes is None:
+            probes = [
                 {
-                    "probes": [
-                        {
-                            "name": "p",
-                            "fixture": "f",
-                            "url": "https://example.invalid/x",
-                            **probe_extra,
-                        }
-                    ]
+                    "name": "p",
+                    "fixture": "f",
+                    "url": "https://example.invalid/x",
+                    **probe_extra,
                 }
-            ),
-            encoding="utf-8",
-        )
+            ]
+        manifest.write_text(json.dumps({"probes": probes}), encoding="utf-8")
 
         outputs = self.dir / "gh_out"
         os.environ["DRIFT_REPORT"] = str(self.dir / "report.md")
@@ -106,7 +122,7 @@ class LiveProbeRecallReportTest(unittest.TestCase):
         )
         try:
             lp._MANIFEST = manifest
-            lp._fetch = lambda probe: payload
+            lp._fetch = fetch or (lambda probe: payload)
             lp._load_fixture = lambda name: payload  # identical → no schema drift
             self.assertEqual(lp.main(), 0)
         finally:
@@ -117,12 +133,11 @@ class LiveProbeRecallReportTest(unittest.TestCase):
             )
 
         report = (self.dir / "report.md").read_text(encoding="utf-8")
-        parsed = dict(
-            line.split("=", 1)
-            for line in outputs.read_text(encoding="utf-8").splitlines()
-            if "=" in line
-        )
-        return report, parsed
+        return report, _outputs(outputs)
+
+
+class LiveProbeRecallReportTest(_LiveProbeRun):
+    """A floor breach must be reported and signalled — separately from drift."""
 
     def test_breached_floor_sets_recall_drop_and_alert_but_not_drift(self):
         report, out = self._run(
@@ -151,12 +166,85 @@ class LiveProbeRecallReportTest(unittest.TestCase):
         report, out = self._run({"status": "ok"}, {"min_count": 5})
         self.assertIn("no countable collection", report)
         self.assertEqual(out["recall_drop"], "false")
+        # The floor was never compared, so the run may not clear anything.
+        self.assertNotIn("alert", out)
 
     def test_probe_without_min_count_is_unaffected(self):
         report, out = self._run({"entries": []}, {})
         self.assertNotIn("Recall below floor", report)
         self.assertEqual(out["recall_drop"], "false")
         self.assertEqual(out["alert"], "false")
+        self.assertEqual(_route("live-probe", out, self.dir / "report.md"), di.CLEAR)
+
+
+class LiveProbeVerdictTest(_LiveProbeRun):
+    """A probe that failed compared nothing, and the router must hear that.
+
+    `datastore_search_sql` answered HTTP 409 every week until 2026-10, the probe
+    wrote `alert=false`, and drift_issue.py — which only knows what `alert`
+    says — classified the run `clear`: the state that closes the tracking
+    issue. The report said "probe failed"; the verdict said "nothing found".
+    """
+
+    def _fails(self, probe):
+        raise urllib.error.HTTPError(probe["url"], 409, "Conflict", None, None)
+
+    def test_a_failed_fetch_writes_no_verdict(self):
+        report, out = self._run({}, {}, fetch=self._fails)
+        self.assertIn("HTTP Error 409", report)
+        self.assertNotIn("alert", out)
+        self.assertEqual(out["drift"], "false")
+        self.assertEqual(_route("live-probe", out, self.dir / "report.md"), di.UNKNOWN)
+
+    def test_one_failed_probe_keeps_the_others_from_clearing(self):
+        probes = [
+            {"name": "ok", "fixture": "f", "url": "https://example.invalid/ok"},
+            {"name": "bad", "fixture": "f", "url": "https://example.invalid/bad"},
+        ]
+
+        def fetch(probe):
+            if probe["name"] == "bad":
+                self._fails(probe)
+            return {"entries": [1]}
+
+        report, out = self._run({"entries": [1]}, {}, fetch=fetch, probes=probes)
+        self.assertIn("`ok` — structurally in sync", report)
+        self.assertNotIn("alert", out)
+        self.assertEqual(_route("live-probe", out, self.dir / "report.md"), di.UNKNOWN)
+
+    def test_drift_is_a_finding_even_when_a_sibling_failed(self):
+        probes = [
+            {"name": "moved", "fixture": "f", "url": "https://example.invalid/m"},
+            {"name": "bad", "fixture": "f", "url": "https://example.invalid/bad"},
+        ]
+
+        def fetch(probe):
+            if probe["name"] == "bad":
+                self._fails(probe)
+            return {"entries": [1], "new_field": "x"}
+
+        _, out = self._run({"entries": [1]}, {}, fetch=fetch, probes=probes)
+        self.assertEqual(out["alert"], "true")
+        self.assertEqual(_route("live-probe", out, self.dir / "report.md"), di.FINDING)
+
+    def test_an_empty_manifest_compared_nothing(self):
+        _, out = self._run({}, {}, probes=[])
+        self.assertNotIn("alert", out)
+        self.assertEqual(_route("live-probe", out, self.dir / "report.md"), di.UNKNOWN)
+
+
+class AlertVerdictTest(unittest.TestCase):
+    """The one rule both probes hand to drift_issue.py."""
+
+    def test_a_finding_is_true_whatever_else_failed(self):
+        self.assertEqual(lp.alert_verdict(finding=True, incomplete=False), "true")
+        self.assertEqual(lp.alert_verdict(finding=True, incomplete=True), "true")
+
+    def test_complete_and_quiet_is_false(self):
+        self.assertEqual(lp.alert_verdict(finding=False, incomplete=False), "false")
+
+    def test_incomplete_and_quiet_is_no_verdict(self):
+        self.assertIsNone(lp.alert_verdict(finding=False, incomplete=True))
 
 
 class RecallCanaryTest(unittest.TestCase):
@@ -230,6 +318,19 @@ class RecallCanaryTest(unittest.TestCase):
 
         self.assertEqual(rc._tool_payload(Result()), {"entries": [1]})
 
+    def test_tool_payload_refuses_an_error_result(self):
+        """`Unknown tool`, a validation error, a tool that raised: the server
+        answers all of them with an ordinary result flagged as an error. Parsed
+        as a payload, the text was then "uncountable" and the report advised
+        fixing `count_path` — for a tool that does not exist."""
+        for flag in ("is_error", "isError"):  # SDK 2.x / SDK 1.x spelling
+            with self.subTest(flag=flag):
+                result = _Result("Unknown tool: search_terms")
+                setattr(result, flag, True)
+                with self.assertRaises(rc.ToolCallError) as cm:
+                    rc._tool_payload(result)
+                self.assertIn("Unknown tool: search_terms", str(cm.exception))
+
     def test_manifest_ships_valid_json_with_required_keys(self):
         path = (
             Path(__file__).resolve().parents[1]
@@ -242,6 +343,130 @@ class RecallCanaryTest(unittest.TestCase):
             for key in ("name", "tool", "min_count"):
                 self.assertIn(key, entry, f"{entry.get('name')} lacks {key}")
             self.assertIsInstance(entry["min_count"], int)
+
+
+class _Text:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _Result:
+    """A CallToolResult as the official SDK 2.x client returns it."""
+
+    def __init__(self, text: str, is_error: bool = False) -> None:
+        self.content = [_Text(text)]
+        self.is_error = is_error
+
+
+class _Client:
+    """Stands in for the in-memory client; `answer(tool, args)` is the server."""
+
+    def __init__(self, answer) -> None:
+        self.answer = answer
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
+
+    async def call_tool(self, tool: str, args: dict):
+        return self.answer(tool, args)
+
+
+def _entries(n: int) -> _Result:
+    return _Result(json.dumps({"entries": list(range(n))}))
+
+
+class RecallCanaryRoutingTest(unittest.TestCase):
+    """What the canary hands to drift_issue.py, through main() and _call().
+
+    Measured 2026-10-14 against zurich-opendata-mcp with the shipped example
+    manifest: every tool it names is absent from that server, every call failed
+    — and the canary wrote `alert=false`, which drift_issue.py classified
+    `clear`, the state that closes the tracking issue. Each part was tested on
+    its own; the handover between them was not.
+    """
+
+    CANARIES: ClassVar[list[dict[str, Any]]] = [
+        {"name": "a", "tool": "t", "args": {"q": "a"}, "min_count": 10},
+        {"name": "b", "tool": "t", "args": {"q": "b"}, "min_count": 1},
+    ]
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self._env = dict(os.environ)
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self._env)
+        self.tmp.cleanup()
+
+    def _run(self, answer) -> tuple[str, dict, str]:
+        manifest = self.dir / "manifest.json"
+        manifest.write_text(json.dumps({"canaries": self.CANARIES}), encoding="utf-8")
+        report_path = self.dir / "recall-canary-report.md"
+        outputs = self.dir / "gh_out"
+        os.environ["RECALL_REPORT"] = str(report_path)
+        os.environ["GITHUB_OUTPUT"] = str(outputs)
+
+        saved = rc._MANIFEST, rc._load_server, rc.in_memory_client
+        try:
+            rc._MANIFEST = manifest
+            rc._load_server = lambda: object()
+            rc.in_memory_client = lambda server: _Client(answer)
+            self.assertEqual(rc.main(), 0)
+        finally:
+            rc._MANIFEST, rc._load_server, rc.in_memory_client = saved
+
+        out = _outputs(outputs)
+        report = report_path.read_text(encoding="utf-8")
+        return report, out, _route("recall-canary", out, report_path)
+
+    def test_a_tool_the_server_lacks_is_a_failed_call_and_clears_nothing(self):
+        report, out, state = self._run(
+            lambda tool, args: _Result(f"Unknown tool: {tool}", is_error=True)
+        )
+        self.assertIn("call failed", report)
+        self.assertIn("Unknown tool: t", report)
+        self.assertNotIn("count_path", report, "the manifest path is not the cause")
+        self.assertEqual(out["errors"], "true")
+        self.assertNotIn("alert", out)
+        self.assertEqual(state, di.UNKNOWN)
+
+    def test_one_failed_canary_keeps_the_run_from_clearing(self):
+        def answer(tool, args):
+            if args["q"] == "b":
+                return _Result("upstream 503", is_error=True)
+            return _entries(20)
+
+        report, out, state = self._run(answer)
+        self.assertIn("`a` (`t`) — 20 ≥ floor 10", report)
+        self.assertNotIn("alert", out)
+        self.assertEqual(state, di.UNKNOWN)
+
+    def test_an_uncountable_answer_clears_nothing(self):
+        report, out, state = self._run(lambda tool, args: _Result("## Markdown"))
+        self.assertIn("no countable collection", report)
+        self.assertNotIn("alert", out)
+        self.assertEqual(state, di.UNKNOWN)
+
+    def test_a_breach_is_a_finding_even_when_a_sibling_failed(self):
+        def answer(tool, args):
+            if args["q"] == "b":
+                return _Result("upstream 503", is_error=True)
+            return _entries(1)
+
+        _, out, state = self._run(answer)
+        self.assertEqual(out["alert"], "true")
+        self.assertEqual(state, di.FINDING)
+
+    def test_every_canary_measured_above_its_floor_clears(self):
+        _, out, state = self._run(lambda tool, args: _entries(20))
+        self.assertEqual(out["errors"], "false")
+        self.assertEqual(out["alert"], "false")
+        self.assertEqual(state, di.CLEAR)
 
 
 if __name__ == "__main__":

@@ -7,11 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a probe that measured nothing no longer hands the router an all-clear
+
+`drift_issue.py` keeps three states, and only `clear` closes the tracking
+issue. It learns each probe's answer from `alert=` alone — and both
+`live_probe.py` and `recall_canary.py` wrote `alert=false` whenever nothing was
+*found*, including when nothing was *measured*. The report said "probe failed";
+the verdict said "all clear".
+
+Measured 2026-10-14, running both probes of `live-probe.yml.template` against
+`zurich-opendata-mcp`: the endpoint probe was green, the recall canary failed
+all three calls — its shipped manifest still names `termdat-mcp`'s tools —
+and `drift_issue.py --dry-run` classified the run **`clear`**. With an open
+tracking issue that run would have closed it. The live probe did the same on
+every run of its HTTP 409, until #112.
+
+The canary also named the wrong cause. The official SDK client does not raise
+on `Unknown tool`; it returns a result flagged `is_error`. Parsed as a payload,
+that text was "uncountable", and the report said to fix `count_path` in the
+manifest — for a tool that does not exist. It said the same when the canary was
+pointed at `zurich_opendata_mcp.app:mcp`, an instance with no tools registered
+yet; the right import is `zurich_opendata_mcp.server:mcp`. The real message
+would have named both mistakes at once.
+
+* **`live_probe.alert_verdict()`**, used by both probes: a finding is `true`;
+  every comparison made and nothing found is `false`; a failed comparison and
+  nothing found writes **no** `alert=`, which `drift_issue.probe_ran()` reads
+  as "did not run" — the convention `regen_guard.py` already follows. A live
+  probe with an empty manifest also writes none.
+* **`recall_canary._tool_payload()`** raises `ToolCallError` on an error result
+  (`is_error`, or `isError` in SDK 1.x), so the report says
+  `call failed — ToolCallError: Unknown tool: search_terms`.
+* Both reports say under their errors that the run clears nothing.
+* **Tests** (`tests/test_recall_floors.py`) drive each probe's `main()` and hand
+  the output to `drift_issue.classify()`, in the spec format the workflow
+  builds. That handover had no test, and it was the broken part. Each new
+  condition was mutation-checked: seven mutants, all killed.
+
+Still open, in the target repository: `live-probe.yml.template` is not
+installed there, and its recall canary needs a manifest naming that server's
+own tools.
+
 ### Fixed — the datastore probe queries a table that exists; its fixtures come from it
 
 The live probe's `datastore_search_sql` entry asked for resource
 `a2f7c7d4-3f2a-4f9a-9b3d-000000000000` — an id that exists nowhere — and failed
-every week with HTTP 409. So the one probe for the target's main SQL surface
+on every run with HTTP 409. So the one probe for the target's main SQL surface
 had never compared anything, and nothing said so beyond a warning line.
 
 It now queries **ugz_ogd_air_h1_2026** (`90410203-4b4f-4a65-9015-1fca2792e04d`),
