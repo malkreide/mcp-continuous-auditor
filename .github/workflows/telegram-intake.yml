@@ -62,9 +62,9 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "TELEGRAM_BOT_TOKEN is not set — intake skipped."
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.config.outputs.enabled == 'true'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: steps.config.outputs.enabled == 'true'
         with:
           python-version: "3.12"

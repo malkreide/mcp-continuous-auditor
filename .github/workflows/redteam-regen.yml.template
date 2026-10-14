@@ -69,11 +69,14 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       REDTEAM_SET: promptfoo/redteam/redteam.generated.yaml
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      # Cache off: setup-node caches by default since v5, and a restored cache
+      # is untrusted input to a job that can write to the repository.
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
-      - uses: actions/setup-python@v5
+          package-manager-cache: false
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -89,7 +92,7 @@ jobs:
       - name: Open a PR if the red-team set changed
         id: pr
         continue-on-error: true
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           add-paths: promptfoo/redteam/redteam.generated.yaml
           branch: redteam/regen
@@ -164,7 +167,7 @@ jobs:
 
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: redteam-regen-report
           path: redteam-regen-report.md

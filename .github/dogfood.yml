@@ -182,46 +182,46 @@ steps:
   # Reine Plumbing-Schritte. Sie stehen hier, damit die Liste vollstaendig ist,
   # nicht weil sie etwas auferlegen.
 
-  "ci.yml.template::verify::actions/checkout@v4":
+  "ci.yml.template::verify::actions/checkout@v7":
     status: setup
 
   "ci.yml.template::verify::Install uv":
     status: setup
 
-  "ci.yml.template::determ::actions/checkout@v4":
+  "ci.yml.template::determ::actions/checkout@v7":
     status: setup
 
-  "ci.yml.template::determ::actions/setup-node@v4":
+  "ci.yml.template::determ::actions/setup-node@v7":
     status: setup
 
   "ci.yml.template::determ::Install uv":
     status: setup
 
-  "ci.yml.template::graded::actions/checkout@v4":
+  "ci.yml.template::graded::actions/checkout@v7":
     status: setup
 
-  "ci.yml.template::graded::actions/setup-node@v4":
+  "ci.yml.template::graded::actions/setup-node@v7":
     status: setup
 
   "ci.yml.template::graded::Install uv":
     status: setup
 
-  "live-probe.yml.template::probe::actions/checkout@v4":
+  "live-probe.yml.template::probe::actions/checkout@v7":
     status: setup
 
-  "live-probe.yml.template::probe::actions/setup-python@v5":
+  "live-probe.yml.template::probe::actions/setup-python@v7":
     status: setup
 
   "live-probe.yml.template::probe::Upload reports":
     status: setup
 
-  "redteam-regen.yml.template::regen::actions/checkout@v4":
+  "redteam-regen.yml.template::regen::actions/checkout@v7":
     status: setup
 
-  "redteam-regen.yml.template::regen::actions/setup-node@v4":
+  "redteam-regen.yml.template::regen::actions/setup-node@v7":
     status: setup
 
-  "redteam-regen.yml.template::regen::actions/setup-python@v5":
+  "redteam-regen.yml.template::regen::actions/setup-python@v7":
     status: setup
 
   "live-probe.yml.template::probe::Route the drift tracking issue (open / update / close)":

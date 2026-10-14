@@ -30,9 +30,12 @@ jobs:
     name: ruff + mypy + pytest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      # An exact version, unlike every other action here: setup-uv stopped
+      # publishing floating major tags after v7 (astral-sh/setup-uv#826), so
+      # `@v10` does not exist. Raising it is a deliberate edit, as for the rest.
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.3.0
       - name: Set up Python
         run: uv python install 3.11
       - name: Sync dependencies
@@ -126,12 +129,16 @@ jobs:
       # which it is; do not change this value because of a rename.
       MCP_SERVER_IMPORT: zurich_opendata_mcp.server:mcp
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      # setup-node caches by default since v5 whenever it detects a package
+      # manager; v4 did not. Off, to keep the behaviour these jobs had — and
+      # because a restored cache is untrusted input to a job holding secrets.
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
+          package-manager-cache: false
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.3.0
       # Installs the target's OWN deps. The in-memory client comes from whichever
       # SDK the target already depends on — the official `mcp` (>=2) or the
       # standalone `fastmcp` package. Neither is added here: they are different
@@ -173,12 +180,13 @@ jobs:
       PROMPTFOO_VERSION: "0.121.17"
       MCP_SERVER_IMPORT: zurich_opendata_mcp.server:mcp
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
+          package-manager-cache: false
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.3.0
       # Installs the target's OWN deps. The in-memory client comes from whichever
       # SDK the target already depends on — the official `mcp` (>=2) or the
       # standalone `fastmcp` package. Neither is added here: they are different
