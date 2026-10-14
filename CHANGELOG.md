@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the datastore tests send the query their fixture answered
+
+Every `zurich_datastore_sql` test that is not about rejection sent
+`SELECT * FROM "x" …` while its fixture, since #112, is a recorded response
+from table `90410203-4b4f-4a65-9015-1fca2792e04d`. The test asked one thing
+and was answered another. This mattered only on paper until the target got a
+table guard (zurich-opendata-mcp, "SQL-Gate: nur DataStore-Ressourcen"), which
+refuses `"x"` before any request. Measured with this repository's `main`
+against the guarded target: determ **11/13**, the graded profile's
+deterministic part **7/11** — six red tests, none of them about tables.
+
+A seventh stayed green and should not have: the FID-003 check "the server
+does not assert absence" lists phrases that must be absent, and the guard's
+error text contains none of them. It now asserts `notAnError` first.
+
+* **Every fixture-backed datastore test now sends the fixture's own `sql`**,
+  and `tests/test_promptfoo_profiles.py` holds that structurally.
+* **The UNION refusal test reads a real table first.** With `"x"` a table
+  guard would refuse the query for `"x"` and the test would pass without
+  `users` being looked at.
+* **Its counterpart, new in the determ profile:** a UNION across the two
+  tables the target reads itself must reach upstream verbatim
+  (`contract.js:forwardedVerbatim`, fixture `datastore_sql_union.json`,
+  recorded 2026-10-14). A guard that refused every UNION would otherwise pass
+  every refusal test here.
+
+Measured against zurich-opendata-mcp: determ **14/14** both at `c2e3b2d` and
+with the table guard; the graded profile's deterministic part **11/11** with
+the guard (10/11 before — the UNION finding is closed by it).
+
+**Order:** merge this before the target's table guard. These tests pass
+against both, so the order is safe this way round and red the other.
+
+### Removed — a stray wheel at the repository root
+
+#108 committed `nothing-0.0.3-py2.py3-none-any.whl` by mistake: the PyPI
+package "nothing" ("a simple package that does nothing"), a leftover from a
+test during that change. Nothing referenced it. It is gone, and
+`.gitignore` now ignores wheels at the root so the same slip cannot recur.
+
 ### Fixed — a probe that measured nothing no longer hands the router an all-clear
 
 `drift_issue.py` keeps three states, and only `clear` closes the tracking

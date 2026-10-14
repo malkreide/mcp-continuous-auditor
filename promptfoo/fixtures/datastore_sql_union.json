@@ -1,0 +1,28 @@
+{
+  "_comment": "RECORDED 2026-10-14T15:56Z from https://data.stadt-zuerich.ch/api/3/action/datastore_search_sql?sql=SELECT%20%22Standort%22%20FROM%20%2290410203-4b4f-4a65-9015-1fca2792e04d%22%20UNION%20SELECT%20%22Standort%22%20FROM%20%22f9aa1373-404f-443b-b623-03ff02d2d0b7%22%20ORDER%20BY%201 — a UNION across two DataStore resources: ugz_ogd_air_h1_2026 (90410203-4b4f-4a65-9015-1fca2792e04d) and ugz_ogd_meteo_h1_2026 (f9aa1373-404f-443b-b623-03ff02d2d0b7), the two tables the target reads itself. UNCHANGED: the response as CKAN sent it. Backs the test that a legitimate UNION is forwarded verbatim, so a table guard in the target cannot shut out what the tool is for.",
+  "help": "https://ckan-prod.zurich.datopian.com/api/3/action/help_show?name=datastore_search_sql",
+  "success": true,
+  "result": {
+    "sql": "SELECT \"Standort\" FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" UNION SELECT \"Standort\" FROM \"f9aa1373-404f-443b-b623-03ff02d2d0b7\" ORDER BY 1",
+    "records": [
+      {
+        "Standort": "Zch_Heubeeribüel"
+      },
+      {
+        "Standort": "Zch_Rosengartenstrasse"
+      },
+      {
+        "Standort": "Zch_Schimmelstrasse"
+      },
+      {
+        "Standort": "Zch_Stampfenbachstrasse"
+      }
+    ],
+    "fields": [
+      {
+        "id": "Standort",
+        "type": "text"
+      }
+    ]
+  }
+}

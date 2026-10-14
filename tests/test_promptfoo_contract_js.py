@@ -101,6 +101,25 @@ class ContractAssertionsTest(unittest.TestCase):
         self.assertFalse(_call("quoteDoubledUpstream", "", _ctx(args, []))["pass"])
         self.assertFalse(_call("quoteDoubledUpstream", "", _ctx(args))["pass"])
 
+    def test_forwarded_means_the_exact_query_went_upstream(self) -> None:
+        """notForwarded's counterpart. Without it a guard that refused every
+        query would pass every refusal test."""
+        sql = 'SELECT "a" FROM "t1" UNION SELECT "a" FROM "t2"'
+        args = {"params": {"sql": sql}}
+        rows = FENCED.format(rows=json.dumps([{"a": 1}]))
+        sent = [{"url": "https://x", "params": {"sql": sql}}]
+        self.assertTrue(_call("forwardedVerbatim", rows, _ctx(args, sent))["pass"])
+
+        altered = [{"url": "https://x", "params": {"sql": sql + " LIMIT 1"}}]
+        self.assertFalse(_call("forwardedVerbatim", rows, _ctx(args, altered))["pass"])
+        self.assertFalse(_call("forwardedVerbatim", rows, _ctx(args, []))["pass"])
+        missing = _call("forwardedVerbatim", rows, _ctx(args))
+        self.assertFalse(missing["pass"])
+        self.assertIn("not measured", missing["reason"])
+        refused = _call("forwardedVerbatim", "Fehler: nur DataStore", _ctx(args, sent))
+        self.assertFalse(refused["pass"], "an error text is never a forwarded result")
+        self.assertFalse(_call("forwardedVerbatim", rows, _ctx({}, sent))["pass"])
+
 
 if __name__ == "__main__":
     unittest.main()

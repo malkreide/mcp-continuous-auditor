@@ -154,6 +154,28 @@ class AssertionsThatCanRunTest(unittest.TestCase):
                     with self.subTest(profile=profile, test=desc):
                         self.assertTrue((PF / v[len("file://") :]).is_file(), v)
 
+    def test_a_fixture_backed_query_is_the_query_it_was_recorded_with(self) -> None:
+        """Each datastore fixture is a recorded response and carries the SQL it
+        answered. A test sending other SQL stops being about that response — and
+        `FROM "x"` stops reaching the tool at all once the target refuses tables
+        that are not DataStore resources."""
+        import json
+
+        for profile in EVAL_PROFILES:
+            for t in _load(profile).get("tests", []) or []:
+                v = t.get("vars") or {}
+                if v.get("tool") != "zurich_datastore_sql" or not v.get("fixture"):
+                    continue
+                fixture = json.loads(
+                    (PF / "fixtures" / f"{v['fixture']}.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                with self.subTest(profile=profile, test=t.get("description")):
+                    self.assertEqual(
+                        json.loads(v["args"])["params"]["sql"], fixture["result"]["sql"]
+                    )
+
     def test_schema_files_name_a_resolvable_meta_schema(self) -> None:
         """draft-07's identifier is http://. Written as https://, Ajv cannot
         resolve it and every is-json against the file errors out — which hid,

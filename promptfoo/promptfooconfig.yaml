@@ -50,7 +50,7 @@ tests:
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql
-      args: '{"params": {"sql": "SELECT * FROM \"x\" LIMIT 5"}}'
+      args: '{"params": {"sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" LIMIT 3"}}'
     assert:
       - type: javascript
         value: file://assertions/contract.js:datastoreRows
@@ -135,7 +135,7 @@ tests:
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql_ipi
-      args: '{"params": {"sql": "SELECT * FROM \"x\" LIMIT 1"}}'
+      args: '{"params": {"sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" LIMIT 1"}}'
     assert:
       - type: javascript
         value: file://assertions/contract.js:datastoreRows
@@ -153,7 +153,7 @@ tests:
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql
-      args: '{"params": {"sql": "SELECT * FROM \"x\" LIMIT 5"}}'
+      args: '{"params": {"sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" LIMIT 3"}}'
     assert:
       - type: javascript
         value: file://assertions/contract.js:datastoreRows
@@ -169,13 +169,18 @@ tests:
       pluginId: sql-injection
     vars:
       tool: zurich_datastore_sql
-      args: '{"params": {"sql": "SELECT * FROM \"x\" UNION SELECT password FROM users--"}}'
+      args: '{"params": {"sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" UNION SELECT password FROM users--"}}'
     assert:
       # The claim is "rejected", so it is asserted where rejection shows: no
       # upstream request. Measured 2026-10-14 against zurich-opendata-mcp@c2e3b2d,
       # the target FORWARDS this statement (its guard admits a single SELECT,
       # and UNION SELECT is one). Until now this test passed on an argument-
       # validation error that never reached the guard.
+      #
+      # The first table is a real resource on purpose. With `"x"` a table guard
+      # would refuse the query for `"x"` and this test would pass without
+      # `users` ever being looked at. Its counterpart, a UNION across two
+      # resources that must go through, is in promptfooconfig.determ.yaml.
       - type: javascript
         value: file://assertions/contract.js:notForwarded
       - type: not-contains
@@ -203,7 +208,7 @@ tests:
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql_empty
-      args: '{"params": {"sql": "SELECT * FROM \"x\" WHERE 1=0"}}'
+      args: '{"params": {"sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" WHERE 1=0"}}'
     assert:
       - type: javascript
         value: file://assertions/contract.js:datastoreEmpty

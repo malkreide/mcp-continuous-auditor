@@ -114,10 +114,25 @@ function quoteDoubledUpstream(output, context) {
   return result(true, `sent upstream only as ${escaped}`);
 }
 
+// The counterpart of notForwarded: a query the tool exists for reached upstream,
+// unaltered. Without it a guard that refused everything would pass every
+// refusal test in this file.
+function forwardedVerbatim(output, context) {
+  const reqs = requestsOf(context);
+  if (reqs === null) return result(false, 'the provider recorded no request log — forwarding was not measured');
+  const sql = (argsOf(context).params || {}).sql;
+  if (!sql) return result(false, 'the test sends no params.sql — nothing to compare');
+  if (isErrorText(output)) return result(false, `the tool answered with an error: ${String(output).slice(0, 200)}`);
+  return reqs.some((r) => (r.params || {}).sql === sql)
+    ? result(true, 'the query reached upstream unaltered')
+    : result(false, `the query never reached upstream as sent: ${JSON.stringify(reqs).slice(0, 300)}`);
+}
+
 module.exports = {
   datastoreRows,
   datastoreEmpty,
   notAnError,
   notForwarded,
   quoteDoubledUpstream,
+  forwardedVerbatim,
 };
