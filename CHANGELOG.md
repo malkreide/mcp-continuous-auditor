@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the Worker microVM could not run promptfoo; it now gets Node 24
+
+The entry below ends on a measurement: the Worker installs Debian 12's `nodejs`,
+which is `18.20.4`, and the pinned promptfoo refuses to start on it (exit 1).
+Every nightly `determ` run on a Worker built from this template stopped at eval.
+The bootstrap said the opposite — "Debian's nodejs (>=18) is enough for
+promptfoo" — and `npm ci` only warns (`EBADENGINE`), so nothing contradicted it
+until eval time.
+
+`nodejs` now comes from NodeSource's `node_24.x`, under the bootstrap's own rule
+— signed apt, no `curl | sh`, nothing fetched and trusted at boot:
+
+* **The key is pinned in the template**, ASCII-armored, written by `write_files`
+  to `/etc/apt/keyrings/nodesource.asc` and named in the source's `signed-by`.
+  Fingerprint `6F71 F525 2828 41EE DAF8 51B4 2F59 B5F9 9B1B E0B4`; on
+  2026-10-14 the copy from `deb.nodesource.com` and the one from
+  `keyserver.ubuntu.com` were identical, and it validates
+  `node_24.x/dists/nodistro/InRelease`.
+* **Not cloud-init's `apt: sources: key:`.** That path dearmors the key with
+  `gpg`, and Debian 12's cloud image does not ship `gpg` (its manifest has
+  `gpgv` only). apt reads a `.asc` keyring itself.
+* **An apt pin admits one package.** NodeSource also publishes `nsolid`; `*` from
+  that origin is pinned to -1, `nodejs` to 600. A third-party archive in the VM
+  that runs untrusted code cannot shadow `git`, `python3` or anything else.
+* **`npm` is dropped from `packages:`.** NodeSource's `nodejs` declares
+  `Provides: npm` and `Conflicts: npm`; with Debian's `npm` listed, the install
+  does not resolve at all (unmet dependencies — measured).
+* **A boot check refuses a Node below 24.** Without NodeSource, Debian's
+  `nodejs` still provides `node` but no `npx` (its `.deb` ships `node` and
+  `nodejs` only), so the existing `npx` check already powers off in that case.
+  What it cannot see is the obvious repair of that failure — putting Debian's
+  `npm` back — which returns `npx` on node 18 and the eval-time exit 1 with it.
+  `worker-audit.sh` now powers off at bootstrap for any Node below 24, like
+  every other bootstrap failure, with the version in the message.
+* **`worker-allow.txt`** admits `deb.nodesource.com`; without it a Worker behind
+  the forward proxy cannot reach the source.
+
+How it was checked, without booting a VM: the template was rendered with the
+same seven placeholders `build-worker-image.sh` substitutes, the three files
+were taken from the rendered `write_files`, and apt resolved the Worker's
+package list against the real Debian 12 archive (verified with Debian's archive
+keys) and the real NodeSource archive, for **amd64 and arm64**. Candidate:
+`nodejs 24.21.0-1nodesource1` at 600; Debian's `18.20.4` at 500 loses; `git`,
+`python3` and `ca-certificates` come from Debian; 241 packages, no conflict.
+Negative controls: with a different key in `signed-by`, apt rejects the source
+("is not signed") and the candidate falls back to 18.20.4 — the case the boot
+check exists for. The boot check, taken verbatim from the rendered script,
+fails on Node 18.20.4 and 20.20.2 and passes on 24.21.0. The `.deb` matches the
+SHA-256 in the signed index and ships `/usr/bin/node`, `npm` and `npx`.
+
+What that does not cover: a real first boot of the image — cloud-init's module
+order is taken from its 22.4.2 config (`write-files` in the init stage, package
+install in the final stage), not observed.
+
 ### Changed — promptfoo runs on Node 24 in the templates
 
 The previous entry left `node-version: "20"` in `ci.yml.template` and

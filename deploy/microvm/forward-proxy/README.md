@@ -5,7 +5,8 @@ The nft rulesets (`egress-allowlist.nft`, `broker-egress-allowlist.nft`) enforce
 *which* web domains port 443 reaches — stateless nft cannot match a CDN's shifting
 IPs by domain. This is the tier that does: a tinyproxy with a **default-deny domain
 allowlist**, so egress is limited to named hosts (GitHub, PyPI, npm, Debian,
-Zürich for the Worker; the LLM/grader, GitHub and Telegram APIs for the Broker).
+NodeSource, Zürich for the Worker; the LLM/grader, GitHub and Telegram APIs for
+the Broker).
 
 Until this proxy is in place, HTTPS exfil to an arbitrary host is still possible
 over the nft `tcp dport 443 accept` rule (the Worker holds no credentials and the
