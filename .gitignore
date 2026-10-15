@@ -11,6 +11,9 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+# A `pip download` run in the checkout drops its wheel here; one was committed
+# by mistake in #108. The repo ships no wheels.
+/*.whl
 
 # Node / promptfoo
 node_modules/

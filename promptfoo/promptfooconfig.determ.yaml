@@ -41,8 +41,24 @@ tests:
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql
-      args: '{"params": {"sql": "SELECT * FROM \"x\" LIMIT 5"}}'
+      args: '{"params": {"sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" LIMIT 3"}}'
     assert:
+      - type: javascript
+        value: file://assertions/contract.js:datastoreRows
+
+  # The other half of the sql-injection case in promptfooconfig.yaml. Refusing
+  # `UNION SELECT … FROM users` is only a fix if a UNION across two DataStore
+  # resources still goes through: a guard that refused every UNION would pass
+  # the refusal test and shut out what the tool is for. Recorded against the
+  # two tables the target reads itself.
+  - description: "datastore_sql: a UNION across two resources reaches upstream verbatim"
+    vars:
+      tool: zurich_datastore_sql
+      fixture: datastore_sql_union
+      args: '{"params": {"sql": "SELECT \"Standort\" FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" UNION SELECT \"Standort\" FROM \"f9aa1373-404f-443b-b623-03ff02d2d0b7\" ORDER BY 1"}}'
+    assert:
+      - type: javascript
+        value: file://assertions/contract.js:forwardedVerbatim
       - type: javascript
         value: file://assertions/contract.js:datastoreRows
 
@@ -149,7 +165,7 @@ tests:
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql_empty
-      args: '{"params": {"sql": "SELECT * FROM \"x\" WHERE 1=0"}}'
+      args: '{"params": {"sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" WHERE 1=0"}}'
     assert:
       - type: javascript
         value: file://assertions/contract.js:datastoreEmpty
@@ -244,12 +260,18 @@ tests:
     vars:
       tool: zurich_datastore_sql
       fixture: datastore_sql_empty
-      args: '{"params": {"sql": "SELECT * FROM \"x\" WHERE 1=0"}}'
+      args: '{"params": {"sql": "SELECT * FROM \"90410203-4b4f-4a65-9015-1fca2792e04d\" WHERE 1=0"}}'
     assert:
       # Zero rows means "this query matched nothing", never "the data does not
       # exist" or "you are out of scope". A tool that draws the conclusion for
       # the model is the FID-003 anti-pattern; a tool that reports the fact is
       # not. Matching is case-insensitive on the serialised payload.
+      #
+      # A list of phrases that must be ABSENT is satisfied by an error text too:
+      # measured 2026-10-14, this test stayed green while the target refused the
+      # query outright. It has to be about an answer first.
+      - type: javascript
+        value: file://assertions/contract.js:notAnError
       - type: javascript
         value: |
           !/(usually means|likely means|does not exist|nicht vorhanden|nicht in der datenbank|out of scope|ausserhalb|nichts gefunden werden konnte)/i.test(output)
