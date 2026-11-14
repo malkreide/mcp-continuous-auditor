@@ -328,14 +328,16 @@ class RetryTest(unittest.TestCase):
         Three refusals are evidence about the endpoint, not a dropped packet, and
         the sweep must still count that repository as one it did not see.
         """
-        self._urlopen(*[http.client.RemoteDisconnected("zu") for _ in range(3)])
+        self._urlopen(
+            *[http.client.RemoteDisconnected("zu") for _ in range(ph._ATTEMPTS)]
+        )
         with self.assertRaises(ph.Unreachable) as caught:
             ph._get("https://api.github.com/x", "tok")
         # The report says how hard it tried; "RemoteDisconnected" alone reads
         # like one unlucky packet.
         self.assertIn("RemoteDisconnected", str(caught.exception))
-        self.assertIn("3", str(caught.exception))
-        self.assertEqual(len(self.slept), 2)
+        self.assertIn(str(ph._ATTEMPTS), str(caught.exception))
+        self.assertEqual(len(self.slept), ph._ATTEMPTS - 1)
 
     def test_a_404_is_not_retried(self) -> None:
         """A 404 answered three times is still a 404 — only slower."""
@@ -349,6 +351,23 @@ class RetryTest(unittest.TestCase):
         self._urlopen(self._http_error(503), {"ok": True})
         self.assertEqual(ph._get("https://api.github.com/x", "tok"), {"ok": True})
         self.assertEqual(len(self.slept), 1)
+
+    def test_a_503_that_outlasts_a_few_seconds_is_still_answered(self) -> None:
+        """Run 43246726740: seven repositories lost to a 503 burst of a few seconds."""
+        self._urlopen(
+            *[self._http_error(503) for _ in range(ph._ATTEMPTS - 1)], {"ok": True}
+        )
+        self.assertEqual(ph._get("https://api.github.com/x", "tok"), {"ok": True})
+        # Without jitter the waits are 1, 2, 4, 8 s; jitter only lengthens them.
+        self.assertGreaterEqual(sum(self.slept), 15.0)
+
+    def test_a_503_that_never_ends_is_raised_not_swallowed(self) -> None:
+        """The longer window must not turn "GitHub is down" into "nothing found"."""
+        self._urlopen(*[self._http_error(503) for _ in range(ph._ATTEMPTS)])
+        with self.assertRaises(ph.urllib.error.HTTPError) as caught:
+            ph._get("https://api.github.com/x", "tok")
+        self.assertEqual(caught.exception.code, 503)
+        self.assertEqual(len(self.slept), ph._ATTEMPTS - 1)
 
     def test_retry_after_beats_the_computed_backoff(self) -> None:
         """GitHub's own number is better than a guess about GitHub."""
