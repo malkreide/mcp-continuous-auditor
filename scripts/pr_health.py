@@ -192,7 +192,11 @@ class Unreachable(RuntimeError):
 # A 404 or 403 answered three times is still a 404 or 403, and repeating it only
 # buys the sweep three times the wall clock.
 _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
-_ATTEMPTS = 3
+# Five, not three. Run 43246726740 lost seven repositories to HTTP 503 that
+# outlasted three attempts (about 3-6 s of waiting); the next day's run on the
+# same commit was green. Five attempts wait 15-30 s in total, enough for a short
+# GitHub hiccup, and an endpoint still shut after that still counts as unreached.
+_ATTEMPTS = 5
 _BACKOFF = 2.0
 _MAX_SLEEP = 30.0
 # `urlopen` without a timeout waits forever on a half-open socket. A sweep that

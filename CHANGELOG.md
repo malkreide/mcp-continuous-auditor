@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — pr_health waits out a short GitHub 503 burst
+
+Run 43246726740 (2026-11-12) went red with 0 findings in 36 open pull requests:
+seven repositories answered HTTP 503 on all three attempts, coverage read
+40/47, and the gate failed the run as it should. The runs before and after, on
+the same commit, were green. Three attempts waited about 3-6 s in total, too
+short for a GitHub hiccup.
+
+* **`_ATTEMPTS` 3 → 5** in `scripts/pr_health.py`. The jittered backoff now
+  waits 15-30 s in total before giving up on a request. The coverage gate is
+  unchanged: an endpoint still shut after five attempts still counts as
+  unreached, and the run still fails.
+* **Cost:** a partial outage like the one above adds up to about 30 s per
+  affected request. If GitHub is down entirely, a sweep takes about 47 × 30 s
+  before it reports, instead of about 47 × 6 s.
+* **Tests:** the "stays shut" test reads `_ATTEMPTS` instead of a literal 3;
+  two new tests cover a 503 that clears on the last attempt (≥ 15 s waited) and
+  one that never clears (still raised).
+
 ### Changed — the datastore tests send the query their fixture answered
 
 Every `zurich_datastore_sql` test that is not about rejection sent
